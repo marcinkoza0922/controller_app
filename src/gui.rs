@@ -14,7 +14,8 @@ use iced::{
 
 use crate::{
     config::{
-        Analog, Button, ButtonAction, Combo, Config, GestureKind, MouseButton, Rule, RuleKind, Zone, Profile, Stick, StickAction, StickConfig,
+        Analog, Button, ButtonAction, Combo, Config, GestureKind, MouseButton, Rule, RuleKind,
+        WheelDirection, Zone, Profile, Stick, StickAction, StickConfig,
         Trigger, TriggerAction,
     },
     ipc::{self, FocusBackend, InputSnapshot, Request, Response, Status, WindowInfo},
@@ -1207,6 +1208,7 @@ enum ActionKind {
     Gamepad,
     Keys,
     Mouse,
+    Wheel,
     NextProfile,
     Multiple,
 }
@@ -1218,17 +1220,20 @@ impl fmt::Display for ActionKind {
             ActionKind::Gamepad => "Gamepad button",
             ActionKind::Keys => "Keyboard",
             ActionKind::Mouse => "Mouse button",
+            ActionKind::Wheel => "Scroll wheel",
             ActionKind::NextProfile => "Next profile",
             ActionKind::Multiple => "Multiple…",
         })
     }
 }
 
-const ACTION_KINDS: [ActionKind; 6] = [
+/// Multiple must stay last: nested editors offer every kind but it.
+const ACTION_KINDS: [ActionKind; 7] = [
     ActionKind::Disabled,
     ActionKind::Gamepad,
     ActionKind::Keys,
     ActionKind::Mouse,
+    ActionKind::Wheel,
     ActionKind::NextProfile,
     ActionKind::Multiple,
 ];
@@ -1253,10 +1258,12 @@ fn action_editor<'a>(
         ButtonAction::Gamepad(_) => ActionKind::Gamepad,
         ButtonAction::Keys(_) => ActionKind::Keys,
         ButtonAction::Mouse(_) => ActionKind::Mouse,
+        ButtonAction::Wheel(_) => ActionKind::Wheel,
         ButtonAction::NextProfile => ActionKind::NextProfile,
         ButtonAction::Multi(_) => ActionKind::Multiple,
     };
-    let kinds: &'static [ActionKind] = if nested { &ACTION_KINDS[..5] } else { &ACTION_KINDS };
+    let kinds: &'static [ActionKind] =
+        if nested { &ACTION_KINDS[..ACTION_KINDS.len() - 1] } else { &ACTION_KINDS };
     let kind_picker = {
         let on_change = on_change.clone();
         pick_list(kinds, Some(kind), move |k| {
@@ -1265,6 +1272,7 @@ fn action_editor<'a>(
                 ActionKind::Gamepad => ButtonAction::Gamepad(default_button),
                 ActionKind::Keys => ButtonAction::Keys(Vec::new()),
                 ActionKind::Mouse => ButtonAction::Mouse(MouseButton::Left),
+                ActionKind::Wheel => ButtonAction::Wheel(WheelDirection::Up),
                 ActionKind::NextProfile => ButtonAction::NextProfile,
                 // Keep what was there as the first entry.
                 ActionKind::Multiple => ButtonAction::Multi(match action {
@@ -1284,6 +1292,11 @@ fn action_editor<'a>(
         .into(),
         ButtonAction::Mouse(m) => pick_list(MouseButton::ALL, Some(*m), move |m| {
             on_change(ButtonAction::Mouse(m))
+        })
+        .width(220)
+        .into(),
+        ButtonAction::Wheel(d) => pick_list(WheelDirection::ALL, Some(*d), move |d| {
+            on_change(ButtonAction::Wheel(d))
         })
         .width(220)
         .into(),

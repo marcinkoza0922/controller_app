@@ -130,13 +130,58 @@ pub enum ButtonAction {
     /// Pressed together, released together (e.g. `["KEY_LEFTCTRL", "KEY_C"]`).
     Keys(Vec<String>),
     Mouse(MouseButton),
+    /// One wheel notch on press; keeps scrolling while held (after a short delay).
+    Wheel(WheelDirection),
     NextProfile,
     /// Several actions at once, pressed in order and released in reverse.
     Multi(Vec<ButtonAction>),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum WheelDirection {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+impl WheelDirection {
+    pub const ALL: [WheelDirection; 4] =
+        [WheelDirection::Up, WheelDirection::Down, WheelDirection::Left, WheelDirection::Right];
+
+    /// Notches as (horizontal, vertical); up and right are positive, like REL_WHEEL/HWHEEL.
+    pub fn vector(self) -> (f32, f32) {
+        match self {
+            WheelDirection::Up => (0.0, 1.0),
+            WheelDirection::Down => (0.0, -1.0),
+            WheelDirection::Left => (-1.0, 0.0),
+            WheelDirection::Right => (1.0, 0.0),
+        }
+    }
+}
+
+impl fmt::Display for WheelDirection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            WheelDirection::Up => "Scroll up",
+            WheelDirection::Down => "Scroll down",
+            WheelDirection::Left => "Scroll left",
+            WheelDirection::Right => "Scroll right",
+        })
+    }
+}
+
 impl ButtonAction {
     /// Every key name used by this action, including inside `Multi`.
+    /// Wheel directions this action scrolls in, including inside `Multi`.
+    pub fn wheel_directions(&self) -> Vec<WheelDirection> {
+        match self {
+            ButtonAction::Wheel(d) => vec![*d],
+            ButtonAction::Multi(actions) => actions.iter().flat_map(|a| a.wheel_directions()).collect(),
+            _ => Vec::new(),
+        }
+    }
+
     pub fn key_names(&self) -> Vec<&String> {
         match self {
             ButtonAction::Keys(keys) => keys.iter().collect(),
@@ -512,7 +557,8 @@ impl Profile {
     }
 
     /// Mouse-driven strategy games: pointer on the left stick, arrow-key camera pan on the
-    /// right, held Ctrl/Shift modifiers on the bumpers and control groups on the D-pad.
+    /// right, zoom on the stick clicks, held Ctrl/Shift modifiers on the bumpers and control
+    /// groups on the D-pad.
     pub fn strategy(name: &str) -> Self {
         use ButtonAction::*;
         let key = |k: &str| Keys(vec![k.into()]);
@@ -526,8 +572,9 @@ impl Profile {
                 (Button::North, key("KEY_SPACE")),
                 (Button::LeftBumper, key("KEY_LEFTCTRL")),
                 (Button::RightBumper, key("KEY_LEFTSHIFT")),
-                (Button::LeftStick, Disabled),
-                (Button::RightStick, Disabled),
+                // Camera zoom, which strategy games put on the wheel.
+                (Button::LeftStick, Wheel(WheelDirection::Up)),
+                (Button::RightStick, Wheel(WheelDirection::Down)),
                 (Button::DpadUp, key("KEY_1")),
                 (Button::DpadRight, key("KEY_2")),
                 (Button::DpadDown, key("KEY_3")),

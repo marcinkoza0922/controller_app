@@ -22,7 +22,7 @@ On most desktops (systemd-logind with `uaccess`), your user can already open `/d
 
 Each profile maps:
 
-- **buttons**: to a gamepad button, a key or key combo (`LEFTCTRL+C`), a mouse button, *next profile*, or **several of these at once**.
+- **buttons**: to a gamepad button, a key or key combo (`LEFTCTRL+C`), a mouse button, the scroll wheel (one notch per press, continuous while held), *next profile*, or **several of these at once**.
 - **sticks**: to a gamepad stick, mouse pointer, scroll wheel, or direction keys (WASD/arrows), with a deadzone, a response curve, and an adjustable key threshold.
 - **triggers**: to an analog gamepad trigger, or to a button action past a threshold.
 
@@ -37,7 +37,7 @@ The defaults are **Gamepad** (1:1 passthrough) and **Desktop** (left stick moves
 More templates are available under "New from template…" in the GUI:
 
 - **PC action**: WASD on the left stick (Shift at full push to sprint), mouse look on the right stick, Mouse 1/2 on RT/LT, A = E (use), B = Space, X = R, Y = F, LB/RB = Q/G, L3/R3 = Ctrl/V, D-pad = 1–4, Start/Select = Esc/Tab.
-- **Strategy**: mouse pointer on the left stick, arrow-key camera on the right, A/B/X = left/right/middle click, RT = left click for drag-select, LB/RB = held Ctrl/Shift, D-pad = control groups 1–4.
+- **Strategy**: mouse pointer on the left stick, arrow-key camera on the right, A/B/X = left/right/middle click, RT = left click for drag-select, L3/R3 = zoom (wheel up/down), LB/RB = held Ctrl/Shift, D-pad = control groups 1–4.
 - **Retro / platformer**: arrows on the D-pad and left stick, A/B/X/Y = Z/X/C/V, for keyboard-only indie games and emulators.
 
 ## Per-game profiles

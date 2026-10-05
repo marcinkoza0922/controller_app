@@ -19,6 +19,10 @@ const ZONE_HYSTERESIS: f32 = 0.02;
 /// A trigger mapped to a button releases this far below its press threshold.
 const TRIGGER_HYSTERESIS: f32 = 0.05;
 const WHEEL_UNITS_PER_NOTCH: f32 = 120.0;
+/// A held wheel action scrolls one notch at once, then continuously after this delay...
+const WHEEL_REPEAT_DELAY: f32 = 0.35;
+/// ...at this many notches per second.
+const WHEEL_REPEAT_RATE: f32 = 10.0;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum Source {
@@ -65,6 +69,9 @@ pub struct Engine {
     stick_keys: HashMap<Stick, Vec<KeyCode>>,
     mouse_acc: (f32, f32),
     scroll_acc: (f32, f32),
+    /// Seconds each held action containing a wheel direction has been held.
+    wheel_held: HashMap<Source, f32>,
+    wheel_acc: (f32, f32),
 }
 
 impl Engine {
@@ -377,13 +384,15 @@ impl Engine {
         self.zones(profile, Analog::Stick(s), x.hypot(y).min(1.0), out)
     }
 
-    /// Whether `tick` currently has anything to do (a mouse/scroll stick is deflected).
+    /// Whether `tick` currently has anything to do: a mouse/scroll stick is deflected or a
+    /// wheel action is held.
     pub fn needs_tick(&self, profile: &Profile) -> bool {
-        [Stick::Left, Stick::Right].into_iter().any(|s| {
+        let sticks = [Stick::Left, Stick::Right].into_iter().any(|s| {
             let cfg = profile.stick(s);
             matches!(cfg.action, StickAction::Mouse { .. } | StickAction::Scroll { .. })
                 && self.stick_pos(s, cfg.deadzone) != (0.0, 0.0)
-        })
+        });
+        sticks || self.held.values().any(|a| !a.wheel_directions().is_empty())
     }
 
     /// Advances continuous outputs (mouse motion, scrolling) by `dt` seconds.
@@ -415,6 +424,33 @@ impl Engine {
                 _ => {}
             }
         }
+        self.tick_wheel(dt, out);
+    }
+
+    /// Keeps scrolling for wheel actions held past the repeat delay.
+    fn tick_wheel(&mut self, dt: f32, out: &mut Vec<OutEvent>) {
+        self.wheel_held.retain(|src, _| self.held.contains_key(src));
+        let (mut h, mut v) = (0.0, 0.0);
+        for (src, action) in &self.held {
+            let directions = action.wheel_directions();
+            if directions.is_empty() {
+                continue;
+            }
+            let held_for = self.wheel_held.entry(src.clone()).or_insert(0.0);
+            *held_for += dt;
+            if *held_for > WHEEL_REPEAT_DELAY {
+                for d in directions {
+                    let (dh, dv) = d.vector();
+                    h += dh;
+                    v += dv;
+                }
+            }
+        }
+        let units = WHEEL_REPEAT_RATE * WHEEL_UNITS_PER_NOTCH * dt;
+        let (h, v) = take_whole(&mut self.wheel_acc, h * units, v * units);
+        if h != 0 || v != 0 {
+            out.push(OutEvent::Wheel { vertical: v, horizontal: h });
+        }
     }
 
     /// Releases everything this engine holds down and centers the virtual pad. Used before a
@@ -437,6 +473,8 @@ impl Engine {
         }
         self.mouse_acc = (0.0, 0.0);
         self.scroll_acc = (0.0, 0.0);
+        self.wheel_held.clear();
+        self.wheel_acc = (0.0, 0.0);
     }
 
     /// Re-applies current analog state under a (new) profile, e.g. after switching.
@@ -456,6 +494,16 @@ fn emit_action(action: &ButtonAction, pressed: bool, out: &mut Vec<OutEvent>) ->
         ButtonAction::Disabled => {}
         ButtonAction::Gamepad(b) => out.push(OutEvent::PadButton(*b, pressed)),
         ButtonAction::Mouse(m) => out.push(OutEvent::MouseButton(*m, pressed)),
+        // One notch right away; `tick_wheel` continues while held.
+        ButtonAction::Wheel(d) => {
+            if pressed {
+                let (h, v) = d.vector();
+                out.push(OutEvent::Wheel {
+                    vertical: (v * WHEEL_UNITS_PER_NOTCH) as i32,
+                    horizontal: (h * WHEEL_UNITS_PER_NOTCH) as i32,
+                });
+            }
+        }
         ButtonAction::Keys(keys) => {
             let codes = keys.iter().filter_map(|k| parse_key(k));
             // Press modifiers first, release them last.
@@ -989,5 +1037,63 @@ mod tests {
         let mut out = Vec::new();
         e.tick(&p, 0.1, &mut out);
         assert!(matches!(out.as_slice(), [OutEvent::MouseMove(dx, 0)] if *dx > 0), "{out:?}");
+    }
+
+    fn wheel_total(out: &[OutEvent]) -> (i32, i32) {
+        out.iter().fold((0, 0), |(v, h), ev| match ev {
+            OutEvent::Wheel { vertical, horizontal } => (v + vertical, h + horizontal),
+            _ => (v, h),
+        })
+    }
+
+    fn hold_for(e: &mut Engine, p: &Profile, seconds: f32) -> Vec<OutEvent> {
+        let mut out = Vec::new();
+        let steps = (seconds / 0.004).round() as usize;
+        for _ in 0..steps {
+            e.tick(p, 0.004, &mut out);
+        }
+        out
+    }
+
+    #[test]
+    fn wheel_button_scrolls_a_notch_then_repeats_while_held() {
+        use crate::config::WheelDirection;
+        let mut p = Profile::passthrough("p");
+        p.set_button(Button::RightBumper, ButtonAction::Wheel(WheelDirection::Down));
+        let mut e = Engine::default();
+        assert_eq!(
+            run(&mut e, &p, InputEvent::Button(Button::RightBumper, true)),
+            vec![OutEvent::Wheel { vertical: -120, horizontal: 0 }]
+        );
+        assert!(e.needs_tick(&p));
+        // Nothing more during the repeat delay...
+        assert_eq!(wheel_total(&hold_for(&mut e, &p, 0.3)), (0, 0));
+        // ...then ~10 notches/s: 0.65 s more is ~0.6 s past the delay, about 6 notches.
+        let (v, h) = wheel_total(&hold_for(&mut e, &p, 0.65));
+        assert!((-720..=-600).contains(&v) && h == 0, "scrolled {v}");
+        // Releasing stops it.
+        assert!(run(&mut e, &p, InputEvent::Button(Button::RightBumper, false)).is_empty());
+        assert!(!e.needs_tick(&p));
+        assert_eq!(wheel_total(&hold_for(&mut e, &p, 1.0)), (0, 0));
+    }
+
+    #[test]
+    fn wheel_inside_multi_and_horizontal() {
+        use crate::config::WheelDirection;
+        let mut p = Profile::passthrough("p");
+        p.set_button(
+            Button::West,
+            ButtonAction::Multi(vec![
+                ButtonAction::Keys(vec!["KEY_LEFTSHIFT".into()]),
+                ButtonAction::Wheel(WheelDirection::Right),
+            ]),
+        );
+        let mut e = Engine::default();
+        assert_eq!(
+            run(&mut e, &p, InputEvent::Button(Button::West, true)),
+            vec![OutEvent::Key(KeyCode::KEY_LEFTSHIFT, true), OutEvent::Wheel { vertical: 0, horizontal: 120 }]
+        );
+        let (v, h) = wheel_total(&hold_for(&mut e, &p, 1.0));
+        assert!(v == 0 && h > 0, "{v} {h}");
     }
 }
