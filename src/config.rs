@@ -135,6 +135,10 @@ pub enum ButtonAction {
     NextProfile,
     /// Several actions at once, pressed in order and released in reverse.
     Multi(Vec<ButtonAction>),
+    /// First press holds the inner action down, the next press releases it.
+    Toggle(Box<ButtonAction>),
+    /// While held, presses and releases the inner action `rate` times per second.
+    Turbo { action: Box<ButtonAction>, rate: f32 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -173,7 +177,8 @@ impl fmt::Display for WheelDirection {
 
 impl ButtonAction {
     /// Every key name used by this action, including inside `Multi`.
-    /// Wheel directions this action scrolls in, including inside `Multi`.
+    /// Wheel directions this action scrolls in while held, including inside `Multi`. Toggle and
+    /// Turbo are left out: they press their inner action on their own schedule.
     pub fn wheel_directions(&self) -> Vec<WheelDirection> {
         match self {
             ButtonAction::Wheel(d) => vec![*d],
@@ -186,6 +191,7 @@ impl ButtonAction {
         match self {
             ButtonAction::Keys(keys) => keys.iter().collect(),
             ButtonAction::Multi(actions) => actions.iter().flat_map(|a| a.key_names()).collect(),
+            ButtonAction::Toggle(inner) | ButtonAction::Turbo { action: inner, .. } => inner.key_names(),
             _ => Vec::new(),
         }
     }
@@ -919,6 +925,21 @@ mod tests {
             // Guide always cycles profiles, so no template can trap you in it.
             assert_eq!(p.button(Button::Guide), &ButtonAction::NextProfile, "{}", p.name);
         }
+    }
+
+    #[test]
+    fn toggle_and_turbo_roundtrip_through_toml() {
+        let mut config = Config::default();
+        let crouch = ButtonAction::Toggle(Box::new(ButtonAction::Keys(vec!["KEY_C".into()])));
+        let auto_fire = ButtonAction::Toggle(Box::new(ButtonAction::Turbo {
+            action: Box::new(ButtonAction::Mouse(MouseButton::Left)),
+            rate: 12.0,
+        }));
+        config.profiles[0].set_button(Button::RightStick, crouch);
+        config.profiles[0].set_button(Button::West, auto_fire);
+        let back: Config = toml::from_str(&toml::to_string_pretty(&config).unwrap()).unwrap();
+        assert_eq!(config, back);
+        assert_eq!(config.profiles[0].button(Button::RightStick).key_names(), [&"KEY_C".to_string()]);
     }
 
     #[test]

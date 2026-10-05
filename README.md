@@ -28,6 +28,7 @@ Each profile maps:
 
 On top of that:
 
+- **Toggle and Turbo**: wrap any action to make it a toggle (press once to hold it down, press again to release, e.g. hold-to-crouch games) or turbo (repeats 2–30 times a second while held). They combine: Toggle → Turbo is auto-fire you switch on and off.
 - **Combos**: buttons pressed together (e.g. LB+RB) act as their own input. Combo members wait a short window (default 60 ms) for the rest of the combo. A member whose own action is *Disabled* works as a modifier with no time limit.
 - **Gestures**: double tap, triple tap and long press per button. The final tap of a sequence fires on press and holds, so "double-tap and hold" works. A single press on a button with gestures fires once the gesture is decided.
 - **Zones**: extra actions held while a stick or trigger is within part of its travel. For example, Left Shift on a partial stick push gives walk/run with WASD, and a half versus full trigger pull can do different things. Zones are hidden for controllers whose triggers are on/off only (e.g. Switch pads).

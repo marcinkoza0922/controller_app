@@ -72,6 +72,21 @@ pub struct Engine {
     /// Seconds each held action containing a wheel direction has been held.
     wheel_held: HashMap<Source, f32>,
     wheel_acc: (f32, f32),
+    /// Toggles that are on, keyed by input and position in the action tree.
+    toggled: HashMap<StateId, ButtonAction>,
+    turbo: HashMap<StateId, TurboState>,
+}
+
+/// Identifies a Toggle/Turbo node: the input it belongs to and its pre-order position among
+/// the stateful nodes of that input's action, so press and release find the same state.
+type StateId = (Source, usize);
+
+struct TurboState {
+    action: ButtonAction,
+    /// Seconds between press and release (half a turbo cycle).
+    half_period: f32,
+    elapsed: f32,
+    down: bool,
 }
 
 impl Engine {
@@ -288,13 +303,114 @@ impl Engine {
             if self.held.contains_key(&src) {
                 return false;
             }
-            self.held.insert(src, action.clone());
-            emit_action(action, true, out)
+            self.held.insert(src.clone(), action.clone());
+            self.emit(&src, action, true, 0, out)
         } else {
             if let Some(action) = self.held.remove(&src) {
-                emit_action(&action, false, out);
+                self.emit(&src, &action, false, 0, out);
             }
             false
+        }
+    }
+
+    /// Emits press/release for an action. `slot` is the position of this node among the
+    /// Toggle/Turbo nodes of the input's action (see [`StateId`]). Returns true if it
+    /// requests the next profile.
+    fn emit(&mut self, src: &Source, action: &ButtonAction, pressed: bool, slot: usize, out: &mut Vec<OutEvent>) -> bool {
+        match action {
+            ButtonAction::Disabled => {}
+            ButtonAction::Gamepad(b) => out.push(OutEvent::PadButton(*b, pressed)),
+            ButtonAction::Mouse(m) => out.push(OutEvent::MouseButton(*m, pressed)),
+            // One notch right away; `tick_wheel` continues while held.
+            ButtonAction::Wheel(d) => {
+                if pressed {
+                    let (h, v) = d.vector();
+                    out.push(OutEvent::Wheel {
+                        vertical: (v * WHEEL_UNITS_PER_NOTCH) as i32,
+                        horizontal: (h * WHEEL_UNITS_PER_NOTCH) as i32,
+                    });
+                }
+            }
+            ButtonAction::Keys(keys) => {
+                let codes = keys.iter().filter_map(|k| parse_key(k));
+                // Press modifiers first, release them last.
+                if pressed {
+                    out.extend(codes.map(|k| OutEvent::Key(k, true)));
+                } else {
+                    let codes: Vec<_> = codes.collect();
+                    out.extend(codes.into_iter().rev().map(|k| OutEvent::Key(k, false)));
+                }
+            }
+            ButtonAction::NextProfile => return pressed,
+            ButtonAction::Multi(actions) => {
+                // Child slots depend only on position, so reverse-order release matches.
+                let mut slots = Vec::with_capacity(actions.len());
+                let mut next = slot;
+                for a in actions {
+                    slots.push(next);
+                    next += stateful_nodes(a);
+                }
+                let mut switch = false;
+                if pressed {
+                    for (a, s) in actions.iter().zip(&slots) {
+                        switch |= self.emit(src, a, true, *s, out);
+                    }
+                } else {
+                    for (a, s) in actions.iter().zip(&slots).rev() {
+                        self.emit(src, a, false, *s, out);
+                    }
+                }
+                return switch;
+            }
+            // Only presses matter: each one flips the inner action on or off.
+            ButtonAction::Toggle(inner) => {
+                if !pressed {
+                    return false;
+                }
+                let id = (src.clone(), slot);
+                if let Some(inner) = self.toggled.remove(&id) {
+                    self.emit(src, &inner, false, slot + 1, out);
+                    return false;
+                }
+                self.toggled.insert(id, (**inner).clone());
+                return self.emit(src, inner, true, slot + 1, out);
+            }
+            ButtonAction::Turbo { action: inner, rate } => {
+                let id = (src.clone(), slot);
+                if pressed {
+                    if self.turbo.contains_key(&id) {
+                        return false;
+                    }
+                    let half_period = 0.5 / rate.clamp(0.5, 60.0);
+                    self.turbo.insert(id, TurboState { action: (**inner).clone(), half_period, elapsed: 0.0, down: true });
+                    return self.emit(src, inner, true, slot + 1, out);
+                }
+                if let Some(state) = self.turbo.remove(&id)
+                    && state.down
+                {
+                    self.emit(src, &state.action, false, slot + 1, out);
+                }
+            }
+        }
+        false
+    }
+
+    /// Advances turbo actions: each flips between pressed and released every half period.
+    fn tick_turbo(&mut self, dt: f32, out: &mut Vec<OutEvent>) {
+        let ids: Vec<StateId> = self.turbo.keys().cloned().collect();
+        for id in ids {
+            let Some(state) = self.turbo.get_mut(&id) else { continue };
+            state.elapsed += dt;
+            let mut flips = Vec::new();
+            while state.elapsed >= state.half_period {
+                state.elapsed -= state.half_period;
+                state.down = !state.down;
+                flips.push(state.down);
+            }
+            let action = state.action.clone();
+            for down in flips {
+                self.emit(&id.0, &action, down, id.1 + 1, out);
+            }
         }
     }
 
@@ -392,7 +508,7 @@ impl Engine {
             matches!(cfg.action, StickAction::Mouse { .. } | StickAction::Scroll { .. })
                 && self.stick_pos(s, cfg.deadzone) != (0.0, 0.0)
         });
-        sticks || self.held.values().any(|a| !a.wheel_directions().is_empty())
+        sticks || !self.turbo.is_empty() || self.held.values().any(|a| !a.wheel_directions().is_empty())
     }
 
     /// Advances continuous outputs (mouse motion, scrolling) by `dt` seconds.
@@ -425,6 +541,7 @@ impl Engine {
             }
         }
         self.tick_wheel(dt, out);
+        self.tick_turbo(dt, out);
     }
 
     /// Keeps scrolling for wheel actions held past the repeat delay.
@@ -456,8 +573,20 @@ impl Engine {
     /// Releases everything this engine holds down and centers the virtual pad. Used before a
     /// profile switch or when the device goes away.
     pub fn release_all(&mut self, out: &mut Vec<OutEvent>) {
-        for (_, action) in self.held.drain() {
-            emit_action(&action, false, out);
+        let held: Vec<_> = self.held.drain().collect();
+        for (src, action) in held {
+            self.emit(&src, &action, false, 0, out);
+        }
+        // Toggled-on actions are released too (this also stops toggled turbos).
+        let toggled: Vec<_> = self.toggled.drain().collect();
+        for ((src, slot), inner) in toggled {
+            self.emit(&src, &inner, false, slot + 1, out);
+        }
+        // Anything still repeating (normally nothing by now) is stopped as well.
+        for ((src, slot), state) in self.turbo.drain().collect::<Vec<_>>() {
+            if state.down {
+                self.emit(&src, &state.action, false, slot + 1, out);
+            }
         }
         // Held combo members stay silent until released rather than firing under a new profile.
         for m in self.members.values_mut() {
@@ -488,48 +617,13 @@ impl Engine {
     }
 }
 
-/// Emits press/release for an action. Returns true if it requests the next profile.
-fn emit_action(action: &ButtonAction, pressed: bool, out: &mut Vec<OutEvent>) -> bool {
+/// Number of Toggle/Turbo nodes in an action, each of which owns a [`StateId`] slot.
+fn stateful_nodes(action: &ButtonAction) -> usize {
     match action {
-        ButtonAction::Disabled => {}
-        ButtonAction::Gamepad(b) => out.push(OutEvent::PadButton(*b, pressed)),
-        ButtonAction::Mouse(m) => out.push(OutEvent::MouseButton(*m, pressed)),
-        // One notch right away; `tick_wheel` continues while held.
-        ButtonAction::Wheel(d) => {
-            if pressed {
-                let (h, v) = d.vector();
-                out.push(OutEvent::Wheel {
-                    vertical: (v * WHEEL_UNITS_PER_NOTCH) as i32,
-                    horizontal: (h * WHEEL_UNITS_PER_NOTCH) as i32,
-                });
-            }
-        }
-        ButtonAction::Keys(keys) => {
-            let codes = keys.iter().filter_map(|k| parse_key(k));
-            // Press modifiers first, release them last.
-            if pressed {
-                out.extend(codes.map(|k| OutEvent::Key(k, true)));
-            } else {
-                let codes: Vec<_> = codes.collect();
-                out.extend(codes.into_iter().rev().map(|k| OutEvent::Key(k, false)));
-            }
-        }
-        ButtonAction::NextProfile => return pressed,
-        ButtonAction::Multi(actions) => {
-            let mut switch = false;
-            if pressed {
-                for a in actions {
-                    switch |= emit_action(a, true, out);
-                }
-            } else {
-                for a in actions.iter().rev() {
-                    emit_action(a, false, out);
-                }
-            }
-            return switch;
-        }
+        ButtonAction::Toggle(inner) | ButtonAction::Turbo { action: inner, .. } => 1 + stateful_nodes(inner),
+        ButtonAction::Multi(actions) => actions.iter().map(stateful_nodes).sum(),
+        _ => 0,
     }
-    false
 }
 
 pub fn parse_key(name: &str) -> Option<KeyCode> {
@@ -1095,5 +1189,126 @@ mod tests {
         );
         let (v, h) = wheel_total(&hold_for(&mut e, &p, 1.0));
         assert!(v == 0 && h > 0, "{v} {h}");
+    }
+
+    fn toggle(inner: ButtonAction) -> ButtonAction {
+        ButtonAction::Toggle(Box::new(inner))
+    }
+
+    fn turbo(inner: ButtonAction, rate: f32) -> ButtonAction {
+        ButtonAction::Turbo { action: Box::new(inner), rate }
+    }
+
+    fn c_key() -> ButtonAction {
+        ButtonAction::Keys(vec!["KEY_C".into()])
+    }
+
+    fn clicks(out: &[OutEvent]) -> Vec<bool> {
+        out.iter()
+            .filter_map(|ev| match ev {
+                OutEvent::MouseButton(MouseButton::Left, down) => Some(*down),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn toggle_holds_until_pressed_again() {
+        let mut p = Profile::passthrough("p");
+        p.set_button(Button::RightStick, toggle(c_key()));
+        let mut e = Engine::default();
+        let press = |e: &mut Engine, down| run(e, &p, InputEvent::Button(Button::RightStick, down));
+        assert_eq!(press(&mut e, true), vec![OutEvent::Key(KeyCode::KEY_C, true)]);
+        assert!(press(&mut e, false).is_empty(), "letting go keeps crouching");
+        assert_eq!(press(&mut e, true), vec![OutEvent::Key(KeyCode::KEY_C, false)]);
+        assert!(press(&mut e, false).is_empty());
+        assert_eq!(press(&mut e, true), vec![OutEvent::Key(KeyCode::KEY_C, true)]);
+    }
+
+    #[test]
+    fn turbo_repeats_at_rate_while_held() {
+        let mut p = Profile::passthrough("p");
+        p.set_button(Button::West, turbo(ButtonAction::Mouse(MouseButton::Left), 10.0));
+        let mut e = Engine::default();
+        assert_eq!(clicks(&run(&mut e, &p, InputEvent::Button(Button::West, true))), [true]);
+        assert!(e.needs_tick(&p));
+        // 10/s for one second: alternating up/down every 50 ms, 20 flips.
+        let flips = clicks(&hold_for(&mut e, &p, 1.0));
+        assert!((19..=21).contains(&flips.len()), "{flips:?}");
+        assert!(flips.windows(2).all(|w| w[0] != w[1]), "must alternate: {flips:?}");
+        // Releasing mid-press releases the button and stops repeating.
+        let mut all = flips;
+        all.extend(clicks(&run(&mut e, &p, InputEvent::Button(Button::West, false))));
+        assert_eq!(all.last(), Some(&false));
+        assert!(!e.needs_tick(&p));
+        assert!(clicks(&hold_for(&mut e, &p, 0.5)).is_empty());
+    }
+
+    #[test]
+    fn toggled_turbo_keeps_firing_after_release_until_toggled_off() {
+        let mut p = Profile::passthrough("p");
+        p.set_button(Button::West, toggle(turbo(ButtonAction::Mouse(MouseButton::Left), 10.0)));
+        let mut e = Engine::default();
+        run(&mut e, &p, InputEvent::Button(Button::West, true));
+        run(&mut e, &p, InputEvent::Button(Button::West, false));
+        assert!(clicks(&hold_for(&mut e, &p, 0.5)).len() >= 9, "auto-fire continues hands-off");
+        let mut out = run(&mut e, &p, InputEvent::Button(Button::West, true));
+        out.extend(hold_for(&mut e, &p, 0.5));
+        assert!(clicks(&out).iter().all(|down| !down), "only a final release: {out:?}");
+        assert!(!e.needs_tick(&p));
+    }
+
+    #[test]
+    fn toggle_inside_multi_keeps_its_state_across_reverse_release() {
+        let mut p = Profile::passthrough("p");
+        p.set_button(
+            Button::South,
+            ButtonAction::Multi(vec![ButtonAction::Keys(vec!["KEY_LEFTSHIFT".into()]), toggle(c_key())]),
+        );
+        let mut e = Engine::default();
+        let shift = KeyCode::KEY_LEFTSHIFT;
+        assert_eq!(
+            run(&mut e, &p, InputEvent::Button(Button::South, true)),
+            vec![OutEvent::Key(shift, true), OutEvent::Key(KeyCode::KEY_C, true)]
+        );
+        assert_eq!(run(&mut e, &p, InputEvent::Button(Button::South, false)), vec![OutEvent::Key(shift, false)]);
+        assert_eq!(
+            run(&mut e, &p, InputEvent::Button(Button::South, true)),
+            vec![OutEvent::Key(shift, true), OutEvent::Key(KeyCode::KEY_C, false)]
+        );
+    }
+
+    #[test]
+    fn profile_switch_releases_toggles_and_stops_turbo() {
+        let mut p = Profile::passthrough("p");
+        p.set_button(Button::North, toggle(c_key()));
+        p.set_button(Button::West, turbo(ButtonAction::Mouse(MouseButton::Left), 10.0));
+        let mut e = Engine::default();
+        run(&mut e, &p, InputEvent::Button(Button::North, true));
+        run(&mut e, &p, InputEvent::Button(Button::North, false));
+        run(&mut e, &p, InputEvent::Button(Button::West, true));
+        let mut out = Vec::new();
+        e.release_all(&mut out);
+        assert!(out.contains(&OutEvent::Key(KeyCode::KEY_C, false)), "{out:?}");
+        assert!(out.contains(&OutEvent::MouseButton(MouseButton::Left, false)), "{out:?}");
+        assert!(!e.needs_tick(&p));
+    }
+
+    #[test]
+    fn double_tap_can_toggle() {
+        let mut p = Profile::passthrough("p");
+        p.gestures.insert(
+            Button::East,
+            crate::config::Gestures { double_tap: Some(toggle(c_key())), ..Default::default() },
+        );
+        let mut e = Engine::default();
+        let t0 = Instant::now();
+        let mut out = Vec::new();
+        for (down, at) in [(true, 0), (false, 50), (true, 120)] {
+            out.extend(press(&mut e, &p, Button::East, down, ms(t0, at)));
+        }
+        assert_eq!(out, vec![OutEvent::Key(KeyCode::KEY_C, true)]);
+        // Releasing the double tap leaves the toggle on.
+        assert!(press(&mut e, &p, Button::East, false, ms(t0, 200)).is_empty());
     }
 }

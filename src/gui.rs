@@ -946,6 +946,10 @@ fn action_at<'a>(action: &'a mut ButtonAction, path: &[usize]) -> Option<&'a mut
         None => Some(action),
         Some((i, rest)) => match action {
             ButtonAction::Multi(list) => action_at(list.get_mut(*i)?, rest),
+            // Toggle and Turbo wrap a single action, addressed as index 0.
+            ButtonAction::Toggle(inner) | ButtonAction::Turbo { action: inner, .. } if *i == 0 => {
+                action_at(inner, rest)
+            }
             _ => None,
         },
     }
@@ -1096,7 +1100,7 @@ fn button_rows(p: &Profile) -> Vec<Element<'_, Message>> {
             .into_iter()
             .filter(|k| gestures.and_then(|g| g.get(*k)).is_none())
             .collect();
-        let mut line = row![labeled(b.to_string(), action_editor(p.button(b), b, false, set_action(Target::Button(b)), KeyField::root(Target::Button(b))))]
+        let mut line = row![labeled(b.to_string(), action_editor(p.button(b), b, &ACTION_KINDS, set_action(Target::Button(b)), KeyField::root(Target::Button(b))))]
             .align_y(Alignment::Center);
         if !missing.is_empty() {
             line = line.push(space::horizontal()).push(
@@ -1112,7 +1116,7 @@ fn button_rows(p: &Profile) -> Vec<Element<'_, Message>> {
                 rows.push(labeled(
                     format!("    {kind}"),
                     row![
-                        action_editor(action, b, false, set_action(Target::Gesture(b, kind)), KeyField::root(Target::Gesture(b, kind))),
+                        action_editor(action, b, &ACTION_KINDS, set_action(Target::Gesture(b, kind)), KeyField::root(Target::Gesture(b, kind))),
                         button(text("✕").size(13))
                             .style(button::secondary)
                             .on_press(Message::RemoveGesture(b, kind)),
@@ -1169,7 +1173,7 @@ fn combo_rows(p: &Profile) -> Vec<Element<'_, Message>> {
                             .on_press(Message::RemoveCombo(i)),
                     ]
                     .align_y(Alignment::Center),
-                    labeled("    Action", action_editor(&combo.action, Button::South, false, set_action(Target::Combo(i)), KeyField::root(Target::Combo(i)))),
+                    labeled("    Action", action_editor(&combo.action, Button::South, &ACTION_KINDS, set_action(Target::Combo(i)), KeyField::root(Target::Combo(i)))),
                 ]
                 .spacing(8),
             )
@@ -1210,6 +1214,8 @@ enum ActionKind {
     Mouse,
     Wheel,
     NextProfile,
+    Toggle,
+    Turbo,
     Multiple,
 }
 
@@ -1222,21 +1228,54 @@ impl fmt::Display for ActionKind {
             ActionKind::Mouse => "Mouse button",
             ActionKind::Wheel => "Scroll wheel",
             ActionKind::NextProfile => "Next profile",
+            ActionKind::Toggle => "Toggle (press on / off)…",
+            ActionKind::Turbo => "Turbo (repeat while held)…",
             ActionKind::Multiple => "Multiple…",
         })
     }
 }
 
-/// Multiple must stay last: nested editors offer every kind but it.
-const ACTION_KINDS: [ActionKind; 7] = [
+/// Every kind, for a top-level action.
+const ACTION_KINDS: [ActionKind; 9] = [
     ActionKind::Disabled,
     ActionKind::Gamepad,
     ActionKind::Keys,
     ActionKind::Mouse,
     ActionKind::Wheel,
     ActionKind::NextProfile,
+    ActionKind::Toggle,
+    ActionKind::Turbo,
     ActionKind::Multiple,
 ];
+/// Entries of a Multiple list.
+const MULTI_ENTRY_KINDS: &[ActionKind] = &[
+    ActionKind::Disabled,
+    ActionKind::Gamepad,
+    ActionKind::Keys,
+    ActionKind::Mouse,
+    ActionKind::Wheel,
+    ActionKind::NextProfile,
+];
+/// What a Toggle can hold down: basic outputs, a turbo (toggleable auto-fire) or several.
+const TOGGLE_INNER_KINDS: &[ActionKind] = &[
+    ActionKind::Disabled,
+    ActionKind::Gamepad,
+    ActionKind::Keys,
+    ActionKind::Mouse,
+    ActionKind::Wheel,
+    ActionKind::Turbo,
+    ActionKind::Multiple,
+];
+/// What a Turbo can repeat.
+const TURBO_INNER_KINDS: &[ActionKind] = &[
+    ActionKind::Disabled,
+    ActionKind::Gamepad,
+    ActionKind::Keys,
+    ActionKind::Mouse,
+    ActionKind::Wheel,
+    ActionKind::Multiple,
+];
+const DEFAULT_TURBO_RATE: f32 = 10.0;
 
 /// Callback that turns an edited action into a message; lets editors nest inside `Multi`.
 type OnAction<'a> = Rc<dyn Fn(ButtonAction) -> Message + 'a>;
@@ -1249,7 +1288,7 @@ fn set_action<'a>(target: Target) -> OnAction<'a> {
 fn action_editor<'a>(
     action: &'a ButtonAction,
     default_button: Button,
-    nested: bool,
+    kinds: &'static [ActionKind],
     on_change: OnAction<'a>,
     field: KeyField,
 ) -> Element<'a, Message> {
@@ -1261,9 +1300,16 @@ fn action_editor<'a>(
         ButtonAction::Wheel(_) => ActionKind::Wheel,
         ButtonAction::NextProfile => ActionKind::NextProfile,
         ButtonAction::Multi(_) => ActionKind::Multiple,
+        ButtonAction::Toggle(_) => ActionKind::Toggle,
+        ButtonAction::Turbo { .. } => ActionKind::Turbo,
     };
-    let kinds: &'static [ActionKind] =
-        if nested { &ACTION_KINDS[..ACTION_KINDS.len() - 1] } else { &ACTION_KINDS };
+    // When wrapping in Toggle/Turbo, keep a simple existing action as the thing wrapped.
+    let wrappable = match action {
+        ButtonAction::Gamepad(_) | ButtonAction::Keys(_) | ButtonAction::Mouse(_) | ButtonAction::Wheel(_) => {
+            Some(action.clone())
+        }
+        _ => None,
+    };
     let kind_picker = {
         let on_change = on_change.clone();
         pick_list(kinds, Some(kind), move |k| {
@@ -1275,10 +1321,14 @@ fn action_editor<'a>(
                 ActionKind::Wheel => ButtonAction::Wheel(WheelDirection::Up),
                 ActionKind::NextProfile => ButtonAction::NextProfile,
                 // Keep what was there as the first entry.
-                ActionKind::Multiple => ButtonAction::Multi(match action {
-                    ButtonAction::Disabled | ButtonAction::Multi(_) => Vec::new(),
-                    other => vec![other.clone()],
-                }),
+                ActionKind::Multiple => ButtonAction::Multi(wrappable.iter().cloned().collect()),
+                ActionKind::Toggle => ButtonAction::Toggle(Box::new(
+                    wrappable.clone().unwrap_or(ButtonAction::Keys(Vec::new())),
+                )),
+                ActionKind::Turbo => ButtonAction::Turbo {
+                    action: Box::new(wrappable.clone().unwrap_or(ButtonAction::Mouse(MouseButton::Left))),
+                    rate: DEFAULT_TURBO_RATE,
+                },
             })
         })
         .width(170)
@@ -1307,6 +1357,37 @@ fn action_editor<'a>(
             Message::OpenKeyPicker(field, keys.clone(), false),
         ),
         ButtonAction::Multi(list) => multi_editor(list, default_button, on_change, field),
+        ButtonAction::Toggle(inner) => {
+            let parent = on_change.clone();
+            let wrap: OnAction<'a> = Rc::new(move |a| parent(ButtonAction::Toggle(Box::new(a))));
+            column![
+                text("Each press turns this on or off:").size(12).color(MUTED_COLOR),
+                action_editor(inner, default_button, TOGGLE_INNER_KINDS, wrap, field.child(0)),
+            ]
+            .spacing(4)
+            .into()
+        }
+        ButtonAction::Turbo { action: inner, rate } => {
+            let rate = *rate;
+            let parent = on_change.clone();
+            let wrap: OnAction<'a> = Rc::new(move |a| parent(ButtonAction::Turbo { action: Box::new(a), rate }));
+            let set_rate = {
+                let inner = inner.clone();
+                move |r: f32| on_change(ButtonAction::Turbo { action: inner.clone(), rate: r })
+            };
+            column![
+                text("Repeats while held:").size(12).color(MUTED_COLOR),
+                action_editor(inner, default_button, TURBO_INNER_KINDS, wrap, field.child(0)),
+                row![
+                    slider(2.0..=30.0, rate, set_rate).step(1.0_f32).width(200),
+                    text(format!("{rate:.0} presses/s")).size(13),
+                ]
+                .spacing(10)
+                .align_y(Alignment::Center),
+            ]
+            .spacing(4)
+            .into()
+        }
         ButtonAction::Disabled | ButtonAction::NextProfile => space().into(),
     };
     row![kind_picker, value].spacing(8).align_y(Alignment::Start).into()
@@ -1334,7 +1415,7 @@ fn multi_editor<'a>(
         });
         col = col.push(
             row![
-                action_editor(sub, default_button, true, entry, field.child(i)),
+                action_editor(sub, default_button, MULTI_ENTRY_KINDS, entry, field.child(i)),
                 button(text("✕").size(13)).style(button::secondary).on_press(with(&|v| {
                     v.remove(i);
                 })),
@@ -1555,7 +1636,7 @@ fn zone_editor(analog: Analog, zones: &[Zone]) -> Element<'_, Message> {
         .align_y(Alignment::Center);
         let mut body = column![
             range,
-            action_editor(&zone.action, Button::South, false, set_action(Target::Zone(analog, i)), KeyField::root(Target::Zone(analog, i))),
+            action_editor(&zone.action, Button::South, &ACTION_KINDS, set_action(Target::Zone(analog, i)), KeyField::root(Target::Zone(analog, i))),
         ]
         .spacing(8);
         if min >= max {
@@ -1673,7 +1754,7 @@ fn trigger_editor<'a>(
         TriggerAction::Button { action: inner, threshold } => {
             rows = rows.push(labeled(
                 "    Action",
-                action_editor(inner, Button::South, false, set_action(Target::Trigger(t)), KeyField::root(Target::Trigger(t))),
+                action_editor(inner, Button::South, &ACTION_KINDS, set_action(Target::Trigger(t)), KeyField::root(Target::Trigger(t))),
             ));
             if analog {
                 let inner = inner.clone();
@@ -1832,6 +1913,21 @@ mod tests {
         assert_eq!(names, ["Gamepad", "Desktop", "PC Action", "PC Action 2"]);
         assert_eq!(app.profile().unwrap().name, "PC Action 2");
         assert_eq!(app.validate(), None);
+    }
+
+    #[test]
+    fn wrapping_in_toggle_keeps_the_action_and_picker_writes_inside_it() {
+        let mut app = app();
+        app.config.profiles[0].set_button(Button::RightStick, ButtonAction::Keys(vec!["KEY_C".into()]));
+        // What choosing "Toggle" in the kind list produces for an existing key action.
+        let wrapped = ButtonAction::Toggle(Box::new(ButtonAction::Keys(vec!["KEY_C".into()])));
+        let _ = app.update(Message::SetAction(Target::Button(Button::RightStick), wrapped));
+        let field = KeyField::root(Target::Button(Button::RightStick)).child(0);
+        pick(&mut app, field, false, &["KEY_LEFTCTRL"]);
+        assert_eq!(
+            app.config.profiles[0].button(Button::RightStick),
+            &ButtonAction::Toggle(Box::new(ButtonAction::Keys(vec!["KEY_LEFTCTRL".into()])))
+        );
     }
 
     #[test]
