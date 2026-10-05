@@ -62,8 +62,8 @@ enum Mode {
     Held,
     /// Opened by a Toggle: up until the opener is pressed again.
     Toggled,
-    /// Opened by something that can't be watched (the command line, a tap that was already
-    /// let go): up until an item is chosen or the menu's back button closes it.
+    /// Opened by something that can't be held (the command line, an analog zone): up until
+    /// an item is chosen or the menu's back button closes it.
     Unwatched,
 }
 
@@ -173,14 +173,16 @@ impl MenuSession {
         Some(session)
     }
 
-    /// Tells the session what the controller is holding as the menu opens. An opener that
-    /// is already let go (a quick tap) can't hold the menu up, so it stays until used.
-    pub fn prime(&mut self, menus: &[Menu], buttons: impl IntoIterator<Item = Button>, axes: impl IntoIterator<Item = (Axis, f32)>) {
+    /// Tells the session what the controller is holding as the menu opens. Returns false if
+    /// the opener is already let go (e.g. a quick tap), so the menu shouldn't show at all;
+    /// a tap opens a menu only through a Toggle.
+    #[must_use]
+    pub fn prime(&mut self, menus: &[Menu], buttons: impl IntoIterator<Item = Button>, axes: impl IntoIterator<Item = (Axis, f32)>) -> bool {
         self.held = buttons.into_iter().collect();
         self.axes = axes.into_iter().collect();
         self.opener_down = self.opener_is_down();
         match self.mode {
-            Mode::Held if !self.opener_down => self.mode = Mode::Unwatched,
+            Mode::Held if !self.opener_down => return false,
             Mode::Toggled if !self.opener_down => self.armed = true,
             _ => {}
         }
@@ -189,6 +191,7 @@ impl MenuSession {
         {
             self.aim(&menu, stick);
         }
+        true
     }
 
     fn opener_is_down(&self) -> bool {
@@ -745,14 +748,18 @@ mod tests {
     }
 
     #[test]
-    fn openers_already_let_go_fall_back_to_a_close_button() {
+    fn openers_already_let_go_open_nothing_unless_toggled() {
         let menus = [menu("L", MenuKind::List, numbers(2))];
         let mut s = MenuSession::open(&menus, "L", held_by(Button::LeftBumper)).unwrap();
-        s.prime(&menus, [], []);
+        assert!(!s.prime(&menus, [], []), "a tap can't hold a menu up");
+        let toggled = Opener { buttons: vec![Button::LeftBumper], toggled: true, ..Opener::default() };
+        let mut s = MenuSession::open(&menus, "L", toggled).unwrap();
+        assert!(s.prime(&menus, [], []));
+        assert_eq!(s.handle(&menus, InputEvent::Button(Button::LeftBumper, true), Instant::now()), Some(MenuOutcome::Close));
+        // With nothing to hold (the command line), B closes it.
+        let mut s = MenuSession::open(&menus, "L", Opener::default()).unwrap();
+        assert!(s.prime(&menus, [], []));
         assert!(s.view(&menus).unwrap().hint.contains("B close"));
-        assert!(matches!(press(&mut s, &menus, Button::South), Some(MenuOutcome::Choose { close: true, .. })));
-        let mut s = MenuSession::open(&menus, "L", held_by(Button::LeftBumper)).unwrap();
-        s.prime(&menus, [], []);
         assert_eq!(press(&mut s, &menus, Button::East), Some(MenuOutcome::Close));
     }
 
@@ -760,7 +767,7 @@ mod tests {
     fn stick_direction_openers_hold_the_menu() {
         let menus = [menu("L", MenuKind::List, numbers(2))];
         let mut s = MenuSession::open(&menus, "L", held_by(Button::LeftStickUp)).unwrap();
-        s.prime(&menus, [], [(Axis::LeftY, -0.9)]);
+        assert!(s.prime(&menus, [], [(Axis::LeftY, -0.9)]));
         let now = Instant::now();
         assert_eq!(s.handle(&menus, InputEvent::Axis(Axis::LeftY, -0.5), now), None);
         assert_eq!(s.handle(&menus, InputEvent::Axis(Axis::LeftY, -0.1), now), Some(MenuOutcome::Close));

@@ -72,11 +72,14 @@ impl Source {
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum GestureState {
     /// Held, undecided. `taps` counts presses in this sequence including this one.
-    Down { taps: u8, long_deadline: Option<Instant> },
+    /// `hold_deadline`: held this long, a first press is a plain hold, not a tap.
+    Down { taps: u8, long_deadline: Option<Instant>, hold_deadline: Option<Instant> },
     /// Released, waiting to see whether another tap follows.
     Up { taps: u8, deadline: Instant },
     /// A gesture action fired and is held until release.
     Holding,
+    /// Held past the tap window: the button's own action is pressed until release.
+    Pressed,
 }
 
 /// State of a held button that belongs to at least one combo.
@@ -446,7 +449,9 @@ impl Engine {
             .gestures
             .iter()
             .filter(|(_, g)| match g {
-                GestureState::Down { long_deadline: Some(d), .. } => *d <= now,
+                GestureState::Down { long_deadline, hold_deadline, .. } => {
+                    long_deadline.is_some_and(|d| d <= now) || hold_deadline.is_some_and(|d| d <= now)
+                }
                 GestureState::Up { deadline, .. } => *deadline <= now,
                 _ => false,
             })
@@ -459,18 +464,24 @@ impl Engine {
             };
             match state {
                 // Held long enough: the long press fires and stays held until release.
-                GestureState::Down { .. } => {
+                GestureState::Down { long_deadline: Some(_), .. } => {
                     self.gestures.insert(b, GestureState::Holding);
                     if let Some(action) = &gestures.long_press {
                         switch |= self.digital(Source::Gesture(b), action, true, out);
                     }
+                }
+                // Held past the tap window with no long press set: a plain press, held (so
+                // e.g. a menu on it stays up while held).
+                GestureState::Down { .. } => {
+                    self.gestures.insert(b, GestureState::Pressed);
+                    switch |= self.digital(Source::Button(b), profile.button(b), true, out);
                 }
                 // No further tap came: the sequence so far is final.
                 GestureState::Up { taps, .. } => {
                     self.gestures.remove(&b);
                     switch |= self.tap_sequence(profile, b, taps, out);
                 }
-                GestureState::Holding => {}
+                GestureState::Holding | GestureState::Pressed => {}
             }
         }
         switch
@@ -483,9 +494,9 @@ impl Engine {
             _ => None,
         });
         let gestures = self.gestures.values().filter_map(|g| match g {
-            GestureState::Down { long_deadline, .. } => *long_deadline,
+            GestureState::Down { long_deadline, hold_deadline, .. } => long_deadline.or(*hold_deadline),
             GestureState::Up { deadline, .. } => Some(*deadline),
-            GestureState::Holding => None,
+            GestureState::Holding | GestureState::Pressed => None,
         });
         combos.chain(gestures).min()
     }
@@ -495,8 +506,16 @@ impl Engine {
     fn solo(&mut self, profile: &Profile, b: Button, pressed: bool, now: Instant, out: &mut Vec<OutEvent>) -> bool {
         let Some(gestures) = profile.gestures(b) else {
             // Gestures may have been removed mid-sequence; a release still has to land.
-            if !pressed && self.gestures.remove(&b) == Some(GestureState::Holding) {
-                return self.digital(Source::Gesture(b), &ButtonAction::Disabled, false, out);
+            if !pressed {
+                match self.gestures.remove(&b) {
+                    Some(GestureState::Holding) => {
+                        return self.digital(Source::Gesture(b), &ButtonAction::Disabled, false, out);
+                    }
+                    Some(GestureState::Pressed) => {
+                        return self.digital(Source::Button(b), &ButtonAction::Disabled, false, out);
+                    }
+                    _ => {}
+                }
             }
             return self.digital(Source::Button(b), profile.button(b), pressed, out);
         };
@@ -514,13 +533,16 @@ impl Engine {
             }
             let long_deadline = (taps == 1 && gestures.long_press.is_some())
                 .then(|| now + Duration::from_millis(profile.long_press_ms));
-            self.gestures.insert(b, GestureState::Down { taps, long_deadline });
+            let hold_deadline = (taps == 1 && gestures.long_press.is_none())
+                .then(|| now + Duration::from_millis(profile.tap_window_ms));
+            self.gestures.insert(b, GestureState::Down { taps, long_deadline, hold_deadline });
             false
         } else {
             match self.gestures.remove(&b) {
                 Some(GestureState::Holding) => {
                     self.digital(Source::Gesture(b), &ButtonAction::Disabled, false, out)
                 }
+                Some(GestureState::Pressed) => self.digital(Source::Button(b), &ButtonAction::Disabled, false, out),
                 Some(GestureState::Down { taps, .. }) if taps < max_taps => {
                     let deadline = now + Duration::from_millis(profile.tap_window_ms);
                     self.gestures.insert(b, GestureState::Up { taps, deadline });
@@ -1440,6 +1462,31 @@ mod tests {
             vec![OutEvent::PadButton(Button::North, true), OutEvent::PadButton(Button::North, false)]
         );
         assert_eq!(e.next_deadline(), None);
+    }
+
+    #[test]
+    fn holding_past_the_tap_window_presses_and_holds_the_buttons_own_action() {
+        // e.g. RB: hold for a weapon wheel, double tap to holster.
+        let mut p = Profile::passthrough("p");
+        p.set_button(Button::RightBumper, ButtonAction::OpenMenu("Weapons".into()));
+        p.gestures.insert(
+            Button::RightBumper,
+            crate::config::Gestures { double_tap: Some(ButtonAction::Keys(vec!["KEY_H".into()])), ..Default::default() },
+        );
+        let mut e = Engine::default();
+        let t0 = Instant::now();
+        press(&mut e, &p, Button::RightBumper, true, t0);
+        assert_eq!(e.take_menu_request(), None, "undecided inside the tap window");
+        fire_timers(&mut e, &p, ms(t0, p.tap_window_ms + 1));
+        let (name, opener) = e.take_menu_request().expect("held past the window: the menu opens");
+        assert_eq!((name.as_str(), opener.buttons), ("Weapons", vec![Button::RightBumper]));
+        // The double tap still works.
+        press(&mut e, &p, Button::RightBumper, false, ms(t0, 400));
+        press(&mut e, &p, Button::RightBumper, true, ms(t0, 1000));
+        press(&mut e, &p, Button::RightBumper, false, ms(t0, 1050));
+        let out = press(&mut e, &p, Button::RightBumper, true, ms(t0, 1100));
+        assert_eq!(out, vec![OutEvent::Key(KeyCode::KEY_H, true)]);
+        assert_eq!(e.take_menu_request(), None);
     }
 
     #[test]

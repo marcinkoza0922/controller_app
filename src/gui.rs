@@ -2557,8 +2557,9 @@ fn view_profile<'a>(p: &'a Profile, ui: &Ui, tab: ProfileTab) -> Element<'a, Mes
             "Buttons",
             Some(
                 "Click a button's name to edit it. Add a double tap, triple tap or long press with \
-                 \"+ Gesture\". Buttons with gestures act once the gesture is decided: a single press \
-                 fires after the tap window (or on release if only a long press is set)."
+                 \"+ Gesture\". Buttons with gestures act once the gesture is decided: a quick tap \
+                 fires after the tap window; held past the tap window, the button's own action presses \
+                 and holds until release (unless a long press is set, which takes over when held)."
                     .into(),
             ),
             button_rows(p, ui),

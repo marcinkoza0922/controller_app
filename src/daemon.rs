@@ -349,8 +349,11 @@ impl Daemon {
         if !self.ensure_overlay_process() {
             return;
         }
-        if let Some(dev) = self.devices.get(&device) {
-            session.prime(&self.config.menus, dev.view.buttons(), dev.view.axes());
+        if let Some(dev) = self.devices.get(&device)
+            && !session.prime(&self.config.menus, dev.view.buttons(), dev.view.axes())
+        {
+            log!("menu {name:?} not shown: its button was already let go (use a Toggle to open it with a tap)");
+            return;
         }
         self.release_mappings();
         self.active = Some(Active::Menu { session, device });
