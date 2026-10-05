@@ -125,8 +125,8 @@ pub struct Engine {
     /// Stick-direction gamepad outputs held by actions (reference counted), pushing the
     /// virtual stick that way.
     pushed_directions: HashMap<Button, u32>,
-    /// Set when a ToggleOverlay action fires; the daemon takes it.
-    overlay_toggled: bool,
+    /// Set when a ToggleOverlay/ToggleNumpad action fires; the daemon takes it.
+    overlay_toggled: Option<crate::keyboard::Layout>,
     /// Set when an OpenMenu action fires; the daemon takes it.
     menu_request: Option<(String, Opener)>,
     /// Set while a Toggle turns its inner action on.
@@ -218,9 +218,9 @@ impl Engine {
         switch
     }
 
-    /// Whether a ToggleOverlay action fired since the last call.
-    pub fn take_overlay_toggle(&mut self) -> bool {
-        std::mem::take(&mut self.overlay_toggled)
+    /// Which on-screen keyboard (or numpad) a toggle action asked for since the last call.
+    pub fn take_overlay_toggle(&mut self) -> Option<crate::keyboard::Layout> {
+        self.overlay_toggled.take()
     }
 
     /// Replaces the macro definitions `ButtonAction::Macro` refers to (from the config).
@@ -644,7 +644,12 @@ impl Engine {
             ButtonAction::NextProfile => return pressed,
         ButtonAction::ToggleOverlay => {
             if pressed {
-                self.overlay_toggled = true;
+                self.overlay_toggled = Some(crate::keyboard::Layout::Keyboard);
+            }
+        }
+        ButtonAction::ToggleNumpad => {
+            if pressed {
+                self.overlay_toggled = Some(crate::keyboard::Layout::Numpad);
             }
         }
         ButtonAction::OpenMenu(name) => {

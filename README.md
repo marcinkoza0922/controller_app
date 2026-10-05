@@ -71,6 +71,8 @@ The "On-screen keyboard" action (also a button on the Overview tab, and `control
 
 New Desktop profiles open it with a long press of Guide. It needs a compositor with layer-shell (KDE Plasma, Sway, Hyprland, …).
 
+The "On-screen numpad" action (or `controller_app numpad-toggle`) opens a smaller pad with the digits 0–9 and a dot, for codes and number fields: move with the D-pad or left stick, A presses a number, X is backspace, Start presses Enter, and holding B closes it. It types the top-row number keys, so it works whatever the Num Lock state. Both pads have their own position, size and colors on the Overlays tab, and opening one closes the other.
+
 ## Menus
 
 The Overlays tab also holds on-screen **action menus**, shared by all profiles. Open one from any button, gesture, combo, trigger or stick direction with the "Open menu…" action (or `controller_app menu <name>`). A menu is on screen only while that input is held, and letting go closes it. To keep a menu up without holding, wrap the action in "Toggle…": the menu then stays until the input is pressed again. Choosing an item taps its action like a button press, so items can be keys, macros, toggles or the keyboard, and the menu stays up for more picks.
@@ -117,7 +119,7 @@ Problems that would block saving (unknown keys, missing macros, incomplete combo
 
 ## CLI
 
-`controller_app status | enable | disable | profile <name> | next-profile | reload | overlay-toggle | menu <name> | daemon`
+`controller_app status | enable | disable | profile <name> | next-profile | reload | overlay-toggle | numpad-toggle | menu <name> | daemon`
 
 When `controller_app daemon` runs in a terminal, it keeps a live status line showing each controller's input and what is being output.
 

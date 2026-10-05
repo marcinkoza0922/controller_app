@@ -213,6 +213,8 @@ pub enum ButtonAction {
     /// Opens or closes the on-screen overlay (keyboard). While it is open the controller
     /// drives the overlay; holding East closes it.
     ToggleOverlay,
+    /// Opens or closes the on-screen numpad (works like the keyboard).
+    ToggleNumpad,
     /// Shows the menu named here. As a menu item's action it opens a submenu.
     OpenMenu(String),
 }
@@ -459,8 +461,19 @@ impl OverlayStyle {
     }
 }
 
+impl OverlayStyle {
+    /// The on-screen numpad's default: out of the way in the bottom-right corner.
+    pub fn numpad() -> Self {
+        OverlayStyle { position: ScreenPosition::BottomRight, ..OverlayStyle::default() }
+    }
+}
+
 fn default_keyboard_style() -> OverlayStyle {
     OverlayStyle::keyboard()
+}
+
+fn default_numpad_style() -> OverlayStyle {
+    OverlayStyle::numpad()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1351,6 +1364,8 @@ pub struct Config {
     pub menus: Vec<Menu>,
     #[serde(default = "default_keyboard_style")]
     pub keyboard_style: OverlayStyle,
+    #[serde(default = "default_numpad_style")]
+    pub numpad_style: OverlayStyle,
     pub profiles: Vec<Profile>,
 }
 
@@ -1365,6 +1380,7 @@ impl Default for Config {
             macros: Vec::new(),
             menus: Vec::new(),
             keyboard_style: OverlayStyle::keyboard(),
+            numpad_style: OverlayStyle::numpad(),
             profiles: vec![Profile::passthrough("Gamepad"), Profile::desktop("Desktop")],
         }
     }
@@ -1695,6 +1711,7 @@ mod tests {
         assert_eq!(menu.kind, MenuKind::Directional { cluster: Cluster::DPad });
         assert_eq!(menu.style, OverlayStyle::default());
         assert_eq!(Config::default().keyboard_style.position, ScreenPosition::BottomCenter);
+        assert_eq!(Config::default().numpad_style.position, ScreenPosition::BottomRight);
     }
 
     #[test]

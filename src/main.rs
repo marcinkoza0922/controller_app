@@ -30,6 +30,7 @@ commands:
   next-profile     switch to the next profile
   reload           re-read the config file
   overlay-toggle   open or close the on-screen keyboard overlay
+  numpad-toggle    open or close the on-screen numpad overlay
   menu <name>      show an on-screen menu";
 
 fn main() -> Result<()> {
@@ -46,6 +47,7 @@ fn main() -> Result<()> {
         ["reload"] => send(Request::Reload),
         ["overlay"] => overlay::run(),
         ["overlay-toggle"] => send(Request::ToggleOverlay),
+        ["numpad-toggle"] => send(Request::ToggleNumpad),
         ["menu", name] => send(Request::OpenMenu(name.to_string())),
         ["-h" | "--help" | "help"] => {
             println!("{USAGE}");

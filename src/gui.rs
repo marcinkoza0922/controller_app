@@ -22,7 +22,8 @@ use crate::{
     engine::Opener,
     ipc::{self, FocusBackend, InputSnapshot, Request, Response, Status, WindowInfo},
     menu::MenuSession,
-    keyboard, pad_svg, style,
+    keyboard::{self, Layout},
+    pad_svg, style,
 };
 
 pub fn run() -> iced::Result {
@@ -63,6 +64,8 @@ struct App {
     open_menus: HashSet<usize>,
     /// Appearance editors that are open: a menu's, or the keyboard's (`None`).
     open_appearance: HashSet<Option<usize>>,
+    /// The numpad card's Appearance section is open.
+    numpad_appearance: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -557,7 +560,7 @@ enum Message {
     Poll,
     LiveInput(Option<InputSnapshot>),
     StatusLoaded(Result<Status, String>),
-    ConfigLoaded(Config, Option<String>),
+    ConfigLoaded(Box<Config>, Option<String>),
     SetEnabled(bool),
     ActivateProfile(String),
     Done(Result<(), String>),
@@ -578,6 +581,9 @@ enum Message {
     SetRuleProfile(usize, String),
     TestRumble(String),
     ToggleOverlay,
+    ToggleNumpad,
+    ToggleNumpadAppearance,
+    SetNumpadStyle(OverlayStyle),
     CalibrateGyro(String),
     CopyMotionRuleCommand,
     SetGyro(GyroConfig),
@@ -714,15 +720,16 @@ impl App {
             open_macros: HashSet::new(),
             open_menus: HashSet::new(),
             open_appearance: HashSet::new(),
+            numpad_appearance: false,
         };
         let load = Task::perform(
             async {
                 match call(Request::GetConfig).await {
                     Ok(Response::Config(c)) => (c, None),
                     _ => match tokio::task::spawn_blocking(Config::load).await {
-                        Ok(Ok(c)) => (c, None),
-                        Ok(Err(e)) => (Config::default(), Some(format!("{e:#}"))),
-                        Err(e) => (Config::default(), Some(e.to_string())),
+                        Ok(Ok(c)) => (Box::new(c), None),
+                        Ok(Err(e)) => (Box::default(), Some(format!("{e:#}"))),
+                        Err(e) => (Box::default(), Some(e.to_string())),
                     },
                 }
             },
@@ -774,6 +781,7 @@ impl App {
             }
             Message::StatusLoaded(Err(_)) => self.status = None,
             Message::ConfigLoaded(config, err) => {
+                let config = *config;
                 self.editing = config
                     .profiles
                     .iter()
@@ -788,6 +796,9 @@ impl App {
             Message::SetEnabled(on) => return call_ok(Request::SetEnabled(on)),
             Message::TestRumble(path) => return call_ok(Request::TestRumble(path)),
             Message::ToggleOverlay => return call_ok(Request::ToggleOverlay),
+            Message::ToggleNumpad => return call_ok(Request::ToggleNumpad),
+            Message::ToggleNumpadAppearance => self.numpad_appearance = !self.numpad_appearance,
+            Message::SetNumpadStyle(style) => self.config.numpad_style = style,
             Message::CalibrateGyro(path) => {
                 self.message = Some(("Calibrating gyro: keep the controller still for 2 seconds.".into(), false));
                 return call_ok(Request::CalibrateGyro(path));
@@ -2039,8 +2050,9 @@ impl App {
     }
 
     fn view_overlays<'a>(&'a self, names: &Names) -> Element<'a, Message> {
-        // The keyboard is always there, so it stays on top; new menus are added just below it.
-        let mut col = column![self.view_keyboard_card(), view_new_menu_card()].spacing(16);
+        // The keyboard and numpad are always there, so they stay on top; new menus are added
+        // just below them.
+        let mut col = column![self.view_keyboard_card(), self.view_numpad_card(), view_new_menu_card()].spacing(16);
         for (i, menu) in self.config.menus.iter().enumerate() {
             col = col.push(self.view_menu_card(i, menu, names));
         }
@@ -2065,8 +2077,9 @@ impl App {
             let style = &self.config.keyboard_style;
             rows.push(style_editor(style, Rc::new(Message::SetKeyboardStyle)));
             let sample = crate::overlay::KeyboardView {
+                layout: Layout::Keyboard,
                 style: preview_style(style),
-                cursor: crate::keyboard::find("KEY_H").unwrap_or_default(),
+                cursor: crate::keyboard::find(Layout::Keyboard, "KEY_H").unwrap_or_default(),
                 latched: vec!["KEY_LEFTSHIFT".into()],
                 pressed: None,
                 closing: 0.0,
@@ -2079,6 +2092,44 @@ impl App {
                 "A keyboard over everything, typed with the controller: D-pad or stick to move, A to \
                  press, X backspace, Y space, Start enter, hold B to close. Map \"On-screen keyboard\" \
                  to a button or gesture to open it from the controller."
+                    .into(),
+            ),
+            rows,
+        )
+    }
+
+    fn view_numpad_card(&self) -> Element<'_, Message> {
+        let numpad_open = self.status.as_ref().is_some_and(|s| s.numpad_visible);
+        let mut rows: Vec<Element<'_, Message>> = vec![
+            row![
+                button(text(if numpad_open { "Close it" } else { "Open it now" }).size(14))
+                    .style(button::secondary)
+                    .on_press(Message::ToggleNumpad),
+                disclosure("Appearance", self.numpad_appearance, Message::ToggleNumpadAppearance),
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center)
+            .into(),
+        ];
+        if self.numpad_appearance {
+            let style = &self.config.numpad_style;
+            rows.push(style_editor(style, Rc::new(Message::SetNumpadStyle)));
+            let sample = crate::overlay::KeyboardView {
+                layout: Layout::Numpad,
+                style: preview_style(style),
+                cursor: Layout::Numpad.home(),
+                latched: Vec::new(),
+                pressed: None,
+                closing: 0.0,
+            };
+            rows.push(preview(crate::overlay::draw::keyboard_panel(&sample)));
+        }
+        section(
+            "On-screen numpad",
+            Some(
+                "Digits 0–9 and a dot, typed with the controller: D-pad or stick to move, A to press, \
+                 X backspace, Start enter, hold B to close. Map \"On-screen numpad\" to a button or \
+                 gesture to open it from the controller."
                     .into(),
             ),
             rows,
@@ -2636,6 +2687,7 @@ fn summarize(action: &ButtonAction) -> String {
         ButtonAction::Wheel(d) => d.to_string(),
         ButtonAction::NextProfile => "Next profile".into(),
         ButtonAction::ToggleOverlay => "On-screen keyboard".into(),
+        ButtonAction::ToggleNumpad => "On-screen numpad".into(),
         ButtonAction::OpenMenu(name) => format!("Menu “{name}”"),
         ButtonAction::Multi(list) if list.is_empty() => "(nothing)".into(),
         ButtonAction::Multi(list) => list.iter().map(summarize).collect::<Vec<_>>().join(" & "),
@@ -3129,6 +3181,7 @@ enum ActionKind {
     Wheel,
     NextProfile,
     Overlay,
+    Numpad,
     Toggle,
     Turbo,
     Macro,
@@ -3146,6 +3199,7 @@ impl fmt::Display for ActionKind {
             ActionKind::Wheel => "Scroll wheel",
             ActionKind::NextProfile => "Next profile",
             ActionKind::Overlay => "On-screen keyboard",
+            ActionKind::Numpad => "On-screen numpad",
             ActionKind::Toggle => "Toggle (press on / off)…",
             ActionKind::Macro => "Macro…",
             ActionKind::Menu => "Open menu…",
@@ -3156,7 +3210,7 @@ impl fmt::Display for ActionKind {
 }
 
 /// Every kind, for a top-level action.
-const ACTION_KINDS: [ActionKind; 12] = [
+const ACTION_KINDS: [ActionKind; 13] = [
     ActionKind::Disabled,
     ActionKind::Gamepad,
     ActionKind::Keys,
@@ -3164,13 +3218,13 @@ const ACTION_KINDS: [ActionKind; 12] = [
     ActionKind::Wheel,
     ActionKind::NextProfile,
     ActionKind::Overlay,
+    ActionKind::Numpad,
     ActionKind::Toggle,
     ActionKind::Turbo,
     ActionKind::Macro,
     ActionKind::Menu,
     ActionKind::Multiple,
 ];
-/// What a menu item can do: anything a button can, including opening a submenu.
 /// Radial menu items: everything but opening another menu.
 const RADIAL_ITEM_KINDS: &[ActionKind] = &[
     ActionKind::Disabled,
@@ -3180,10 +3234,12 @@ const RADIAL_ITEM_KINDS: &[ActionKind] = &[
     ActionKind::Wheel,
     ActionKind::NextProfile,
     ActionKind::Overlay,
+    ActionKind::Numpad,
     ActionKind::Toggle,
     ActionKind::Macro,
     ActionKind::Multiple,
 ];
+/// What a menu item can do: anything a button can, including opening a submenu.
 const MENU_ITEM_KINDS: &[ActionKind] = &[
     ActionKind::Disabled,
     ActionKind::Gamepad,
@@ -3192,6 +3248,7 @@ const MENU_ITEM_KINDS: &[ActionKind] = &[
     ActionKind::Wheel,
     ActionKind::NextProfile,
     ActionKind::Overlay,
+    ActionKind::Numpad,
     ActionKind::Toggle,
     ActionKind::Macro,
     ActionKind::Menu,
@@ -3276,6 +3333,7 @@ fn action_kind(action: &ButtonAction) -> ActionKind {
         ButtonAction::Wheel(_) => ActionKind::Wheel,
         ButtonAction::NextProfile => ActionKind::NextProfile,
         ButtonAction::ToggleOverlay => ActionKind::Overlay,
+        ButtonAction::ToggleNumpad => ActionKind::Numpad,
         ButtonAction::Multi(_) => ActionKind::Multiple,
         ButtonAction::Toggle(_) => ActionKind::Toggle,
         ButtonAction::Turbo { .. } => ActionKind::Turbo,
@@ -3301,6 +3359,7 @@ fn new_action(k: ActionKind, default_button: Button, current: &ButtonAction, nam
         ActionKind::Wheel => ButtonAction::Wheel(WheelDirection::Up),
         ActionKind::NextProfile => ButtonAction::NextProfile,
         ActionKind::Overlay => ButtonAction::ToggleOverlay,
+        ActionKind::Numpad => ButtonAction::ToggleNumpad,
         // Keep what was there as the first entry.
         ActionKind::Multiple => ButtonAction::Multi(wrappable.into_iter().collect()),
         ActionKind::Toggle => ButtonAction::Toggle(Box::new(wrappable.unwrap_or(ButtonAction::Keys(Vec::new())))),
@@ -3401,7 +3460,7 @@ fn action_value<'a>(
             line.into()
         }
         ButtonAction::Disabled | ButtonAction::NextProfile => space().into(),
-        ButtonAction::ToggleOverlay => {
+        ButtonAction::ToggleOverlay | ButtonAction::ToggleNumpad => {
             text("Hold B on the controller to close it.").size(12).color(MUTED_COLOR).into()
         }
         ButtonAction::OpenMenu(_) if names.menus.is_empty() => {

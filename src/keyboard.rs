@@ -81,6 +81,42 @@ const NUMPAD: [&[Key]; 6] = [
     &[w("0", "KEY_KP0", 2.0), k(".", "KEY_KPDOT"), gap(1.0)],
 ];
 
+/// The on-screen numpad. Digits are the top-row keys, which type numbers whatever the
+/// Num Lock state (keypad keys turn into arrows and Home/End with it off).
+pub const PAD: [&[Key]; 4] = [
+    &[k("7", "KEY_7"), k("8", "KEY_8"), k("9", "KEY_9")],
+    &[k("4", "KEY_4"), k("5", "KEY_5"), k("6", "KEY_6")],
+    &[k("1", "KEY_1"), k("2", "KEY_2"), k("3", "KEY_3")],
+    &[w("0", "KEY_0", 2.0), k(".", "KEY_DOT")],
+];
+
+/// Which on-screen key layout the controller drives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Layout {
+    #[default]
+    Keyboard,
+    Numpad,
+}
+
+impl Layout {
+    pub fn rows(self) -> &'static [&'static [Key]] {
+        match self {
+            Layout::Keyboard => &MAIN,
+            Layout::Numpad => &PAD,
+        }
+    }
+
+    /// Where the cursor starts the first time.
+    pub fn home(self) -> Cursor {
+        let code = match self {
+            Layout::Keyboard => "KEY_Q",
+            Layout::Numpad => "KEY_5",
+        };
+        find(self, code).unwrap_or_default()
+    }
+}
+
 const MEDIA: &[Key] = &[
     w("Mute", "KEY_MUTE", 2.0),
     w("Vol −", "KEY_VOLUMEDOWN", 2.0),
@@ -155,16 +191,18 @@ pub fn label(code: &str) -> String {
     }
 }
 
-/// A key position in the main block for controller navigation (gaps skipped).
+/// A key position in a layout for controller navigation (gaps skipped).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct Cursor {
     pub row: usize,
     pub col: usize,
 }
 
-/// The main block without spacers: each key with its horizontal center in key units.
-pub fn grid() -> Vec<Vec<(&'static Key, f32)>> {
-    MAIN.iter()
+/// A layout without spacers: each key with its horizontal center in key units.
+pub fn grid(layout: Layout) -> Vec<Vec<(&'static Key, f32)>> {
+    layout
+        .rows()
+        .iter()
         .map(|row| {
             let mut x = 0.0;
             let mut keys = Vec::new();
@@ -180,16 +218,16 @@ pub fn grid() -> Vec<Vec<(&'static Key, f32)>> {
 }
 
 /// The key under the cursor (clamped into the grid).
-pub fn key_at(cursor: Cursor) -> &'static Key {
-    let grid = grid();
+pub fn key_at(layout: Layout, cursor: Cursor) -> &'static Key {
+    let grid = grid(layout);
     let row = &grid[cursor.row.min(grid.len() - 1)];
     row[cursor.col.min(row.len() - 1)].0
 }
 
 /// Moves the cursor one step: left/right along the row (wrapping), up/down to the key in
 /// the next row whose center lines up best (also wrapping).
-pub fn step(cursor: Cursor, dx: i32, dy: i32) -> Cursor {
-    let grid = grid();
+pub fn step(layout: Layout, cursor: Cursor, dx: i32, dy: i32) -> Cursor {
+    let grid = grid(layout);
     let row = cursor.row.min(grid.len() - 1);
     let col = cursor.col.min(grid[row].len() - 1);
     if dy == 0 {
@@ -208,8 +246,8 @@ pub fn step(cursor: Cursor, dx: i32, dy: i32) -> Cursor {
 }
 
 /// Where a key code sits in the grid.
-pub fn find(code: &str) -> Option<Cursor> {
-    grid().iter().enumerate().find_map(|(row, keys)| {
+pub fn find(layout: Layout, code: &str) -> Option<Cursor> {
+    grid(layout).iter().enumerate().find_map(|(row, keys)| {
         keys.iter().position(|(k, _)| k.code == code).map(|col| Cursor { row, col })
     })
 }
@@ -223,7 +261,7 @@ mod tests {
     use super::*;
 
     fn all_keys() -> impl Iterator<Item = &'static Key> {
-        MAIN.iter().chain(NAV.iter()).chain(NUMPAD.iter()).flat_map(|r| r.iter()).chain(MEDIA)
+        MAIN.iter().chain(NAV.iter()).chain(NUMPAD.iter()).chain(PAD.iter()).flat_map(|r| r.iter()).chain(MEDIA)
     }
 
     #[test]
@@ -237,7 +275,7 @@ mod tests {
 
     #[test]
     fn rows_in_a_block_have_equal_width() {
-        for block in [&MAIN, &NAV, &NUMPAD] {
+        for block in [&MAIN[..], &NAV[..], &NUMPAD[..], &PAD[..]] {
             let widths: Vec<f32> = block.iter().map(|r| r.iter().map(|k| k.width).sum()).collect();
             assert!(widths.iter().all(|w| (w - widths[0]).abs() < 1e-3), "{widths:?}");
         }
@@ -245,7 +283,9 @@ mod tests {
 
     #[test]
     fn controller_navigation_follows_the_layout() {
-        let at = |c: Cursor| key_at(c).code;
+        let at = |c: Cursor| key_at(Layout::Keyboard, c).code;
+        let step = |c, dx, dy| step(Layout::Keyboard, c, dx, dy);
+        let find = |code| find(Layout::Keyboard, code);
         let q = find("KEY_Q").unwrap();
         assert_eq!(at(step(q, 1, 0)), "KEY_W");
         assert_eq!(at(step(q, -1, 0)), "KEY_TAB");
@@ -259,6 +299,21 @@ mod tests {
         let esc = find("KEY_ESC").unwrap();
         assert_eq!(at(step(esc, -1, 0)), "KEY_F12");
         assert_eq!(step(step(esc, 0, -1), 0, 1).row, esc.row);
+    }
+
+    #[test]
+    fn numpad_navigation() {
+        let at = |c: Cursor| key_at(Layout::Numpad, c).code;
+        let five = Layout::Numpad.home();
+        assert_eq!(at(five), "KEY_5");
+        assert_eq!(at(step(Layout::Numpad, five, 0, -1)), "KEY_8");
+        assert_eq!(at(step(Layout::Numpad, five, 1, 0)), "KEY_6");
+        // Down from 2 lands on the wide 0; 0 to the right is the dot.
+        let two = step(Layout::Numpad, five, 0, 1);
+        let zero = step(Layout::Numpad, two, 0, 1);
+        assert_eq!(at(zero), "KEY_0");
+        assert_eq!(at(step(Layout::Numpad, zero, 1, 0)), "KEY_DOT");
+        assert_eq!(step(Layout::Numpad, zero, 0, 1).row, 0, "columns wrap");
     }
 
     #[test]

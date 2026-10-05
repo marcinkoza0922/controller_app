@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     config::Button,
     input::{Axis, InputEvent},
-    keyboard::{self, Cursor},
+    keyboard::{self, Cursor, Layout},
 };
 
 /// Holding East this long closes the overlay.
@@ -48,9 +48,11 @@ pub enum OverlayView {
     Menu(crate::menu::MenuView),
 }
 
-/// The on-screen keyboard's state.
+/// The on-screen keyboard's (or numpad's) state.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KeyboardView {
+    #[serde(default)]
+    pub layout: Layout,
     /// Set by the daemon from the config.
     #[serde(default = "crate::config::OverlayStyle::keyboard")]
     pub style: crate::config::OverlayStyle,
@@ -71,6 +73,7 @@ pub enum OverlayAction {
 
 /// Turns controller input into keyboard navigation and key presses.
 pub struct OverlayController {
+    layout: Layout,
     cursor: Cursor,
     latched: Vec<KeyCode>,
     pressed: Option<KeyCode>,
@@ -91,8 +94,9 @@ fn tap(name: &str) -> Vec<OverlayAction> {
 }
 
 impl OverlayController {
-    pub fn new(cursor: Cursor) -> Self {
+    pub fn new(layout: Layout, cursor: Cursor) -> Self {
         OverlayController {
+            layout,
             cursor,
             latched: Vec::new(),
             pressed: None,
@@ -108,9 +112,14 @@ impl OverlayController {
         self.cursor
     }
 
+    pub fn layout(&self) -> Layout {
+        self.layout
+    }
+
     pub fn view(&self, now: Instant) -> KeyboardView {
         let name = |k: KeyCode| format!("{k:?}");
         KeyboardView {
+            layout: self.layout,
             style: crate::config::OverlayStyle::keyboard(),
             cursor: self.cursor,
             latched: self.latched.iter().map(|k| name(*k)).collect(),
@@ -159,7 +168,7 @@ impl OverlayController {
             (Button::South, true) => self.press_selected(),
             (Button::South, false) => self.release_selected(),
             (Button::West, true) => self.shortcut("KEY_BACKSPACE"),
-            (Button::North, true) => self.shortcut("KEY_SPACE"),
+            (Button::North, true) if self.layout == Layout::Keyboard => self.shortcut("KEY_SPACE"),
             (Button::Start, true) => self.shortcut("KEY_ENTER"),
             (Button::East, true) => {
                 self.east_since = Some(now);
@@ -195,12 +204,12 @@ impl OverlayController {
     }
 
     fn start_moving(&mut self, dir: (i32, i32), now: Instant) {
-        self.cursor = keyboard::step(self.cursor, dir.0, dir.1);
+        self.cursor = keyboard::step(self.layout, self.cursor, dir.0, dir.1);
         self.repeat = Some((dir, now + REPEAT_DELAY));
     }
 
     fn press_selected(&mut self) -> Vec<OverlayAction> {
-        let name = keyboard::key_at(self.cursor).code;
+        let name = keyboard::key_at(self.layout, self.cursor).code;
         let Some(k) = code(name) else { return Vec::new() };
         // Modifiers latch (held down) until the next key, like sticky keys.
         if MODIFIERS.contains(&name) {
@@ -247,7 +256,7 @@ impl OverlayController {
         }
         if let Some((dir, mut next)) = self.repeat {
             while now >= next {
-                self.cursor = keyboard::step(self.cursor, dir.0, dir.1);
+                self.cursor = keyboard::step(self.layout, self.cursor, dir.0, dir.1);
                 next += REPEAT_EVERY;
                 changed = true;
             }
@@ -507,11 +516,14 @@ pub mod draw {
     pub fn keyboard_panel<'a, M: 'a>(v: &KeyboardView) -> Element<'a, M> {
         let c = colors(&v.style);
         let s = v.style.scale.clamp(0.5, 2.0);
-        let unit = UNIT * s;
+        let numpad = v.layout == crate::keyboard::Layout::Numpad;
+        // Numpad keys are fewer, so bigger.
+        let unit = if numpad { UNIT * 1.5 } else { UNIT } * s;
         let gap = GAP * s;
-        let cursor_code = keyboard::key_at(v.cursor).code;
+        let cursor_code = keyboard::key_at(v.layout, v.cursor).code;
+        let label_size = if numpad { 22.0 } else { 14.0 };
         let mut rows = column![].spacing(gap);
-        for keys in keyboard::MAIN.iter() {
+        for keys in v.layout.rows().iter() {
             let mut line = row![].spacing(gap);
             for key in keys.iter() {
                 let width = key.width * (unit + gap) - gap;
@@ -529,7 +541,7 @@ pub mod draw {
                 } else {
                     (c.item, c.item_text, Color { a: 0.12, ..c.item_text })
                 };
-                let cap = container(text(key.label).size(if selected { 16.0 } else { 14.0 } * s).color(fg))
+                let cap = container(text(key.label).size(if selected { label_size + 2.0 } else { label_size } * s).color(fg))
                     .center_x(width)
                     .center_y(unit)
                     .style(move |_| container::Style {
@@ -542,18 +554,29 @@ pub mod draw {
             rows = rows.push(line);
         }
         let hint = |t: &'static str| text(t).size(14.0 * s).color(c.background_text);
-        let legend = row![
-            hint("A  press"),
-            hint("X  backspace"),
-            hint("Y  space"),
-            hint("Start  enter"),
-            hint("Shift/Ctrl/Alt latch for the next key"),
-            space::horizontal(),
-            hint("hold B to close"),
-        ]
-        .spacing(18.0 * s)
-        .align_y(Alignment::Center);
-        let mut body = column![rows, legend].spacing(12.0 * s).width(15.0 * (unit + gap));
+        let (legend, width): (Element<'a, M>, f32) = if numpad {
+            let legend = column![
+                row![hint("A  press"), hint("X  backspace")].spacing(14.0 * s),
+                row![hint("Start  enter"), hint("hold B to close")].spacing(14.0 * s),
+            ]
+            .spacing(4.0 * s)
+            .align_x(Alignment::Center);
+            (legend.into(), (3.0 * (unit + gap)).max(230.0 * s))
+        } else {
+            let legend = row![
+                hint("A  press"),
+                hint("X  backspace"),
+                hint("Y  space"),
+                hint("Start  enter"),
+                hint("Shift/Ctrl/Alt latch for the next key"),
+                space::horizontal(),
+                hint("hold B to close"),
+            ]
+            .spacing(18.0 * s)
+            .align_y(Alignment::Center);
+            (legend.into(), 15.0 * (unit + gap))
+        };
+        let mut body = column![rows, legend].spacing(12.0 * s).width(width).align_x(Alignment::Center);
         if v.closing > 0.0 {
             body = body.push(progress_bar(0.0..=1.0, v.closing).girth(4.0 * s));
         }
@@ -722,7 +745,7 @@ mod tests {
     use super::*;
 
     fn at(c: &OverlayController) -> &'static str {
-        keyboard::key_at(c.cursor()).code
+        keyboard::key_at(Layout::Keyboard, c.cursor()).code
     }
 
     fn ms(t: Instant, n: u64) -> Instant {
@@ -730,7 +753,7 @@ mod tests {
     }
 
     fn start() -> OverlayController {
-        OverlayController::new(keyboard::find("KEY_Q").unwrap())
+        OverlayController::new(Layout::Keyboard, keyboard::find(Layout::Keyboard, "KEY_Q").unwrap())
     }
 
     #[test]
@@ -766,7 +789,7 @@ mod tests {
 
     #[test]
     fn a_holds_the_selected_key_and_modifiers_latch_for_one_key() {
-        let mut c = OverlayController::new(keyboard::find("KEY_LEFTSHIFT").unwrap());
+        let mut c = OverlayController::new(Layout::Keyboard, keyboard::find(Layout::Keyboard, "KEY_LEFTSHIFT").unwrap());
         let t0 = Instant::now();
         let shift = KeyCode::KEY_LEFTSHIFT;
         assert_eq!(c.handle(InputEvent::Button(Button::South, true), t0), vec![OverlayAction::Key(shift, true)]);
@@ -796,6 +819,22 @@ mod tests {
     }
 
     #[test]
+    fn numpad_types_digits_and_enter_and_closes_with_b() {
+        let mut c = OverlayController::new(Layout::Numpad, Layout::Numpad.home());
+        let t0 = Instant::now();
+        let tap = |k| vec![OverlayAction::Key(k, true), OverlayAction::Key(k, false)];
+        c.handle(InputEvent::Button(Button::DpadUp, true), t0);
+        c.handle(InputEvent::Button(Button::DpadUp, false), t0);
+        assert_eq!(c.handle(InputEvent::Button(Button::South, true), t0), vec![OverlayAction::Key(KeyCode::KEY_8, true)]);
+        assert_eq!(c.handle(InputEvent::Button(Button::South, false), t0), vec![OverlayAction::Key(KeyCode::KEY_8, false)]);
+        assert_eq!(c.handle(InputEvent::Button(Button::Start, true), t0), tap(KeyCode::KEY_ENTER));
+        assert!(c.handle(InputEvent::Button(Button::North, true), t0).is_empty(), "no space bar on a numpad");
+        assert_eq!(c.view(t0).layout, Layout::Numpad);
+        c.handle(InputEvent::Button(Button::East, true), t0);
+        assert_eq!(c.tick(ms(t0, 700)).0, vec![OverlayAction::Close]);
+    }
+
+    #[test]
     fn holding_east_closes_but_a_tap_does_not() {
         let mut c = start();
         let t0 = Instant::now();
@@ -812,7 +851,7 @@ mod tests {
 
     #[test]
     fn closing_releases_everything_held() {
-        let mut c = OverlayController::new(keyboard::find("KEY_LEFTCTRL").unwrap());
+        let mut c = OverlayController::new(Layout::Keyboard, keyboard::find(Layout::Keyboard, "KEY_LEFTCTRL").unwrap());
         let t0 = Instant::now();
         c.handle(InputEvent::Button(Button::South, true), t0);
         c.handle(InputEvent::Button(Button::South, false), t0);

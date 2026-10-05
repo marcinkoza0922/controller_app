@@ -28,6 +28,7 @@ use crate::{
     engine::{Engine, Opener},
     focus::{self, FocusEvent},
     input::{self, InputEvent, MotionFrame, MotionNormalizer, MotionSample, Normalizer},
+    keyboard::Layout,
     ipc::{self, DeviceInfo, FocusBackend, InputSnapshot, Request, Response, Status, WindowInfo},
     monitor::{self, InputView, OutputView, log},
     output::{FfCaps, OutEvent, VIRTUAL_PREFIX, VirtualKbm, VirtualPad},
@@ -159,7 +160,8 @@ struct Daemon {
     /// What the on-screen overlay is showing; while set it gets all controller input.
     active: Option<Active>,
     /// Where the overlay keyboard's cursor was, for the next time it opens.
-    overlay_cursor: crate::keyboard::Cursor,
+    /// Where each on-screen layout's cursor was left, to pick up there next time.
+    overlay_cursors: HashMap<Layout, crate::keyboard::Cursor>,
     overlay_watchers: Vec<Sender<Option<OverlayView>>>,
     overlay_process: Option<std::process::Child>,
     tx: Sender<Msg>,
@@ -194,7 +196,7 @@ pub fn run() -> Result<()> {
         recent_windows: Vec::new(),
         scan_target: None,
         active: None,
-        overlay_cursor: crate::keyboard::find("KEY_Q").unwrap_or_default(),
+        overlay_cursors: HashMap::new(),
         overlay_watchers: Vec::new(),
         overlay_process: None,
         tx,
@@ -296,7 +298,7 @@ impl Daemon {
         }
         let Some(profile) = self.config.active() else { return };
         let mut switch = false;
-        let mut toggle_overlay = false;
+        let mut toggle_overlay = None;
         let mut menu_request = None;
         for (id, dev) in self.devices.iter_mut() {
             if dev.engine.next_deadline().is_none_or(|d| d > now) {
@@ -305,7 +307,7 @@ impl Daemon {
             let mut out = Vec::new();
             switch |= dev.engine.timers(profile, now, &mut out);
             dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
-            toggle_overlay |= dev.engine.take_overlay_toggle();
+            toggle_overlay = dev.engine.take_overlay_toggle().or(toggle_overlay);
             if let Some(request) = dev.engine.take_menu_request() {
                 menu_request = Some((*id, request));
             }
@@ -314,18 +316,19 @@ impl Daemon {
         if switch && let Some(next) = self.config.next_profile_name() {
             self.switch_profile(next);
         }
-        if toggle_overlay {
-            self.toggle_overlay();
+        if let Some(layout) = toggle_overlay {
+            self.toggle_overlay(layout);
         }
         if let Some((id, (name, opener))) = menu_request {
             self.open_menu(id, name, opener);
         }
     }
 
-    /// Opens or closes the on-screen keyboard.
-    fn toggle_overlay(&mut self) {
-        match self.active {
-            Some(Active::Keyboard(_)) => return self.close_overlay(),
+    /// Opens or closes the on-screen keyboard or numpad (one replaces the other).
+    fn toggle_overlay(&mut self, layout: Layout) {
+        match &self.active {
+            Some(Active::Keyboard(k)) if k.layout() == layout => return self.close_overlay(),
+            Some(Active::Keyboard(_)) => self.close_overlay(),
             Some(Active::Menu { .. }) => return,
             None => {}
         }
@@ -333,8 +336,9 @@ impl Daemon {
             return;
         }
         self.release_mappings();
-        log!("on-screen keyboard open");
-        self.active = Some(Active::Keyboard(OverlayController::new(self.overlay_cursor)));
+        log!("on-screen {} open", layout_name(layout));
+        let cursor = self.overlay_cursors.get(&layout).copied().unwrap_or(layout.home());
+        self.active = Some(Active::Keyboard(OverlayController::new(layout, cursor)));
         self.broadcast_overlay();
     }
 
@@ -394,10 +398,10 @@ impl Daemon {
     fn close_overlay(&mut self) {
         match self.active.take() {
             Some(Active::Keyboard(mut k)) => {
-                self.overlay_cursor = k.cursor();
+                self.overlay_cursors.insert(k.layout(), k.cursor());
                 let actions = k.release_all();
                 self.apply_keyboard(actions);
-                log!("on-screen keyboard closed");
+                log!("on-screen {} closed", layout_name(k.layout()));
             }
             Some(Active::Menu { .. }) => {}
             None => return,
@@ -434,14 +438,14 @@ impl Daemon {
         let menu_request = dev.engine.take_menu_request();
         // Switching profiles or opening the keyboard closes a menu that is still up.
         let menu_up = matches!(self.active, Some(Active::Menu { .. }));
-        if menu_up && (switch || toggle_overlay) {
+        if menu_up && (switch || toggle_overlay.is_some()) {
             self.close_overlay();
         }
         if switch && let Some(next) = self.config.next_profile_name() {
             self.switch_profile(next);
         }
-        if toggle_overlay {
-            self.toggle_overlay();
+        if let Some(layout) = toggle_overlay {
+            self.toggle_overlay(layout);
         }
         if let Some((name, opener)) = menu_request {
             self.open_menu(device, name, opener);
@@ -452,7 +456,10 @@ impl Daemon {
         match &self.active {
             Some(Active::Keyboard(k)) => {
                 let mut view = k.view(Instant::now());
-                view.style = self.config.keyboard_style.clone();
+                view.style = match k.layout() {
+                    Layout::Keyboard => self.config.keyboard_style.clone(),
+                    Layout::Numpad => self.config.numpad_style.clone(),
+                };
                 Some(OverlayView::Keyboard(view))
             }
             Some(Active::Menu { session, .. }) => session.view(&self.config.menus).map(OverlayView::Menu),
@@ -695,8 +702,8 @@ impl Daemon {
         if switch && let Some(next) = self.config.next_profile_name() {
             self.switch_profile(next);
         }
-        if toggle_overlay {
-            self.toggle_overlay();
+        if let Some(layout) = toggle_overlay {
+            self.toggle_overlay(layout);
         }
         if let Some((name, opener)) = menu_request {
             self.open_menu(id, name, opener);
@@ -746,7 +753,7 @@ impl Daemon {
     fn request(&mut self, req: Request) -> Response {
         match req {
             Request::Status => Response::Status(self.status()),
-            Request::GetConfig => Response::Config(self.config.clone()),
+            Request::GetConfig => Response::Config(Box::new(self.config.clone())),
             Request::SetConfig(new) => {
                 let mut new = *new;
                 new.enabled = self.config.enabled;
@@ -782,7 +789,11 @@ impl Daemon {
             // Handled by the connection thread, which registers through `Msg::Watch`.
             Request::WatchInput => Response::Error("WatchInput must be the only request".into()),
             Request::ToggleOverlay => {
-                self.toggle_overlay();
+                self.toggle_overlay(Layout::Keyboard);
+                Response::Ok
+            }
+            Request::ToggleNumpad => {
+                self.toggle_overlay(Layout::Numpad);
                 Response::Ok
             }
             Request::OpenMenu(name) => {
@@ -921,7 +932,8 @@ impl Daemon {
             focused: self.focused.clone(),
             recent_windows: self.recent_windows.clone(),
             motion_access_denied: self.motion_denied.values().cloned().collect(),
-            overlay_visible: matches!(self.active, Some(Active::Keyboard(_))),
+            overlay_visible: matches!(&self.active, Some(Active::Keyboard(k)) if k.layout() == Layout::Keyboard),
+            numpad_visible: matches!(&self.active, Some(Active::Keyboard(k)) if k.layout() == Layout::Numpad),
         }
     }
 
@@ -1132,6 +1144,13 @@ fn read_device(id: u64, mut dev: Device, xbox_labels: bool, stop: Arc<AtomicBool
     }
     // Dropping `dev` closes the fd, which also releases the grab.
     let _ = tx.send(Msg::Gone { id });
+}
+
+fn layout_name(layout: Layout) -> &'static str {
+    match layout {
+        Layout::Keyboard => "keyboard",
+        Layout::Numpad => "numpad",
+    }
 }
 
 fn dispatch(pad: &mut VirtualPad, view: &mut OutputView, kbm: &mut VirtualKbm, out: Vec<OutEvent>) {

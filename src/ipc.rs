@@ -30,8 +30,10 @@ pub enum Request {
     TestRumble(String),
     /// Average the gyro of the controller at this path for a moment, as its drift bias.
     CalibrateGyro(String),
-    /// Open or close the on-screen overlay.
+    /// Open or close the on-screen keyboard.
     ToggleOverlay,
+    /// Open or close the on-screen numpad.
+    ToggleNumpad,
     /// Show the menu with this name (items run on the most recently used controller).
     OpenMenu(String),
     /// Keep the connection open; the daemon streams one `Option<OverlayView>` JSON line per
@@ -43,7 +45,7 @@ pub enum Request {
 pub enum Response {
     Ok,
     Status(Status),
-    Config(Config),
+    Config(Box<Config>),
     Error(String),
 }
 
@@ -63,8 +65,11 @@ pub struct Status {
     /// Controller motion sensors the daemon may not open (needs the udev rule in dist/).
     #[serde(default)]
     pub motion_access_denied: Vec<String>,
+    /// The on-screen keyboard is up.
     #[serde(default)]
     pub overlay_visible: bool,
+    #[serde(default)]
+    pub numpad_visible: bool,
 }
 
 /// How the daemon learns which game is active.
