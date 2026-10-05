@@ -29,7 +29,8 @@ use crate::{
     input::{self, InputEvent, Normalizer},
     ipc::{self, DeviceInfo, InputSnapshot, Request, Response, Status},
     monitor::{self, InputView, OutputView, log},
-    output::{OutEvent, VIRTUAL_PREFIX, VirtualKbm, VirtualPad},
+    output::{FfCaps, OutEvent, VIRTUAL_PREFIX, VirtualKbm, VirtualPad},
+    rumble,
 };
 
 const TICK: Duration = Duration::from_millis(4);
@@ -69,6 +70,7 @@ impl Managed {
 struct SeenGamepad {
     name: String,
     analog_triggers: bool,
+    rumble: bool,
 }
 
 /// A device node identity; the inode changes when a node is recreated for a new device.
@@ -320,6 +322,21 @@ impl Daemon {
             }
             // Handled by the connection thread, which registers through `Msg::Watch`.
             Request::WatchInput => Response::Error("WatchInput must be the only request".into()),
+            Request::TestRumble(path) => {
+                let known = self
+                    .gamepads
+                    .iter()
+                    .find(|((p, _), _)| p.as_os_str() == path.as_str())
+                    .map(|(_, pad)| pad.rumble);
+                match known {
+                    Some(true) => {
+                        rumble::test(PathBuf::from(path));
+                        Response::Ok
+                    }
+                    Some(false) => Response::Error(format!("{path} does not support rumble")),
+                    None => Response::Error(format!("no controller at {path}")),
+                }
+            }
         }
     }
 
@@ -400,6 +417,7 @@ impl Daemon {
                 managed: self.devices.values().any(|d| &d.path == path),
                 ignored: self.config.ignored_devices.contains(&pad.name),
                 analog_triggers: pad.analog_triggers,
+                rumble: pad.rumble,
             })
             .collect();
         devices.sort_by(|a, b| a.path.cmp(&b.path));
@@ -439,7 +457,8 @@ impl Daemon {
                 continue;
             }
             let analog_triggers = input::has_analog_triggers(&dev);
-            self.gamepads.insert(key, SeenGamepad { name: name.clone(), analog_triggers });
+            let rumble = rumble::supports_rumble(&dev);
+            self.gamepads.insert(key, SeenGamepad { name: name.clone(), analog_triggers, rumble });
             if self.config.enabled && !self.config.ignored_devices.contains(&name) {
                 self.manage(path, name, dev);
             }
@@ -453,7 +472,13 @@ impl Daemon {
             log!("cannot grab {name} ({}): {e}", path.display());
             return;
         }
-        let pad = match VirtualPad::new() {
+        // Mirror the controller's rumble support so games see it exactly when it exists.
+        let ff = dev
+            .supported_ff()
+            .filter(|ff| ff.iter().next().is_some() && dev.max_ff_effects() > 0)
+            .map(|effects| FfCaps { effects, max_effects: dev.max_ff_effects() as u32 });
+        let has_rumble = ff.is_some();
+        let pad = match VirtualPad::new(ff) {
             Ok(pad) => pad,
             Err(e) => {
                 log!("cannot create virtual pad: {e:#}");
@@ -469,6 +494,9 @@ impl Daemon {
             let tx = self.tx.clone();
             let xbox_labels = input::uses_xbox_labels(&path);
             thread::spawn(move || read_device(id, dev, xbox_labels, stop, tx));
+        }
+        if has_rumble {
+            rumble::spawn(pad.shared(), path.clone(), stop.clone());
         }
         let mut managed = Managed { path, name, engine: Engine::default(), pad, stop, view: InputView::default(), out_view: OutputView::default() };
         if let Some(profile) = self.config.active() {

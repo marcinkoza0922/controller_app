@@ -38,7 +38,7 @@ The defaults are **Gamepad** (1:1 passthrough) and **Desktop** (left stick moves
 
 - A live controller drawing that shows sticks, buttons and triggers as you use them.
 - Profile editor with an on-screen keyboard for picking keys, so you don't need to know evdev key names.
-- Per-controller "Manage" toggles, plus the enabled switch and the active profile.
+- Per-controller "Manage" toggles and a "Test rumble" button (a strong pulse, then a weak one, for pads that support rumble), plus the enabled switch and the active profile.
 
 ## CLI
 
@@ -50,7 +50,7 @@ When `controller_app daemon` runs in a terminal, it keeps a live status line sho
 
 - Virtual uinput devices, such as Steam Input's pad and our own, are skipped. For a pad this app manages, turn off Steam Input or games may see two controllers.
 - Pads on the `xpad` driver report X/Y by label rather than position; this is corrected automatically.
-- Rumble is not forwarded to the physical pad yet.
+- Rumble from games is forwarded to the physical controller when it supports force feedback. The end-to-end check needs `/dev/uinput`, so it is opt-in: `cargo test -- --ignored rumble`.
 
 ## License
 

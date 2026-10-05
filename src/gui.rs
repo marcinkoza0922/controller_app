@@ -107,6 +107,7 @@ enum Message {
     SetStick(Stick, StickConfig),
     SetTrigger(Trigger, TriggerAction),
     SetIgnored(String, bool),
+    TestRumble(String),
     AddCombo,
     RemoveCombo(usize),
     AddComboButton(usize, Button),
@@ -235,6 +236,7 @@ impl App {
                 }
             }
             Message::SetEnabled(on) => return call_ok(Request::SetEnabled(on)),
+            Message::TestRumble(path) => return call_ok(Request::TestRumble(path)),
             Message::ActivateProfile(name) => {
                 if self.saved.profiles.iter().any(|p| p.name == name) {
                     return Task::batch([call_ok(Request::SetProfile(name)), Task::done(Message::Poll)]);
@@ -675,15 +677,26 @@ impl App {
                         "not grabbed"
                     };
                     let state = if d.analog_triggers { state.to_string() } else { format!("{state} · digital triggers") };
+                    let state = if d.rumble { state } else { format!("{state} · no rumble") };
                     let name = d.name.clone();
+                    let rumble: Element<'_, Message> = if d.rumble {
+                        button(text("Test rumble").size(13))
+                            .style(button::secondary)
+                            .on_press(Message::TestRumble(d.path.clone()))
+                            .into()
+                    } else {
+                        space().into()
+                    };
                     list = list.push(
                         row![
                             column![text(&d.name), text(format!("{} · {state}", d.path)).size(12).color(MUTED_COLOR)]
                                 .width(Length::Fill),
+                            rumble,
                             checkbox(!d.ignored)
                                 .label("Manage")
                                 .on_toggle(move |on| Message::SetIgnored(name.clone(), !on)),
                         ]
+                        .spacing(12)
                         .align_y(Alignment::Center),
                     );
                 }
@@ -1533,7 +1546,7 @@ mod tests {
     }
 
     fn device(name: &str, analog_triggers: bool, ignored: bool) -> ipc::DeviceInfo {
-        ipc::DeviceInfo { name: name.into(), path: String::new(), managed: !ignored, ignored, analog_triggers }
+        ipc::DeviceInfo { name: name.into(), path: String::new(), managed: !ignored, ignored, analog_triggers, rumble: true }
     }
 
     #[test]

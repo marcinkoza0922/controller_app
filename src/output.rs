@@ -1,11 +1,15 @@
 //! Virtual uinput devices the daemon writes to.
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{Arc, Mutex},
+};
 
 use anyhow::Result;
 use evdev::{
-    AbsInfo, AbsoluteAxisCode as Abs, AttributeSet, BusType, EventType, InputEvent, InputId,
-    KeyCode, RelativeAxisCode as Rel, UinputAbsSetup, uinput::VirtualDevice,
+    AbsInfo, AbsoluteAxisCode as Abs, AttributeSet, AttributeSetRef, BusType, EventType,
+    FFEffectCode, InputEvent, InputId, KeyCode, RelativeAxisCode as Rel, UinputAbsSetup,
+    uinput::VirtualDevice,
 };
 
 use crate::{
@@ -29,12 +33,19 @@ pub enum OutEvent {
 }
 
 pub struct VirtualPad {
-    dev: VirtualDevice,
+    /// Shared with the rumble thread, which reads force-feedback requests from it.
+    dev: Arc<Mutex<VirtualDevice>>,
     dpad: HashSet<Button>,
 }
 
+/// Force-feedback support to advertise, copied from the physical controller.
+pub struct FfCaps<'a> {
+    pub effects: &'a AttributeSetRef<FFEffectCode>,
+    pub max_effects: u32,
+}
+
 impl VirtualPad {
-    pub fn new() -> Result<Self> {
+    pub fn new(ff: Option<FfCaps>) -> Result<Self> {
         let mut keys = AttributeSet::<KeyCode>::new();
         for k in [
             KeyCode::BTN_SOUTH,
@@ -73,7 +84,20 @@ impl VirtualPad {
         ] {
             builder = builder.with_absolute_axis(&UinputAbsSetup::new(code, info))?;
         }
-        Ok(VirtualPad { dev: builder.build()?, dpad: HashSet::new() })
+        if let Some(ff) = ff {
+            builder = builder.with_ff(ff.effects)?.with_ff_effects_max(ff.max_effects);
+        }
+        Ok(VirtualPad { dev: Arc::new(Mutex::new(builder.build()?)), dpad: HashSet::new() })
+    }
+
+    pub fn shared(&self) -> Arc<Mutex<VirtualDevice>> {
+        self.dev.clone()
+    }
+
+    fn emit(&self, events: &[InputEvent]) -> Result<()> {
+        let mut dev = self.dev.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        dev.emit(events)?;
+        Ok(())
     }
 
     pub fn button(&mut self, b: Button, pressed: bool) -> Result<()> {
@@ -95,8 +119,7 @@ impl VirtualPad {
                 return self.dpad(b, pressed);
             }
         };
-        self.dev.emit(&[key_event(code, pressed)])?;
-        Ok(())
+        self.emit(&[key_event(code, pressed)])
     }
 
     fn dpad(&mut self, b: Button, pressed: bool) -> Result<()> {
@@ -108,8 +131,7 @@ impl VirtualPad {
         let axis = |neg, pos| self.dpad.contains(&pos) as i32 - self.dpad.contains(&neg) as i32;
         let x = axis(Button::DpadLeft, Button::DpadRight);
         let y = axis(Button::DpadUp, Button::DpadDown);
-        self.dev.emit(&[abs_event(Abs::ABS_HAT0X, x), abs_event(Abs::ABS_HAT0Y, y)])?;
-        Ok(())
+        self.emit(&[abs_event(Abs::ABS_HAT0X, x), abs_event(Abs::ABS_HAT0Y, y)])
     }
 
     pub fn axis(&mut self, axis: Axis, value: f32) -> Result<()> {
@@ -121,8 +143,7 @@ impl VirtualPad {
             Axis::LeftTrigger => (Abs::ABS_Z, (value.clamp(0.0, 1.0) * 255.0).round() as i32),
             Axis::RightTrigger => (Abs::ABS_RZ, (value.clamp(0.0, 1.0) * 255.0).round() as i32),
         };
-        self.dev.emit(&[abs_event(code, raw)])?;
-        Ok(())
+        self.emit(&[abs_event(code, raw)])
     }
 }
 

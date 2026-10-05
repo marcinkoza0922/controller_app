@@ -26,6 +26,8 @@ pub enum Request {
     /// Keep the connection open; the daemon streams one `Option<InputSnapshot>` JSON line per
     /// update (at most ~60/s). `null` means no controller is active.
     WatchInput,
+    /// Play a short test pattern on the controller at this device path.
+    TestRumble(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,6 +55,9 @@ pub struct DeviceInfo {
     /// False when the triggers only report on/off (e.g. Switch controllers).
     #[serde(default = "yes")]
     pub analog_triggers: bool,
+    /// Supports rumble (FF_RUMBLE), so it can be tested and receives game rumble.
+    #[serde(default)]
+    pub rumble: bool,
 }
 
 fn yes() -> bool {

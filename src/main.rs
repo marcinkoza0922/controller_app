@@ -8,6 +8,7 @@ mod keyboard;
 mod monitor;
 mod output;
 mod pad_svg;
+mod rumble;
 
 use anyhow::{Result, bail};
 
@@ -59,7 +60,8 @@ fn status() -> Result<()> {
     for d in s.devices {
         let state = if d.managed { "remapping" } else if d.ignored { "ignored" } else { "idle" };
         let triggers = if d.analog_triggers { "" } else { ", digital triggers" };
-        println!("  {} [{}] {state}{triggers}", d.name, d.path);
+        let rumble = if d.rumble { "" } else { ", no rumble" };
+        println!("  {} [{}] {state}{triggers}{rumble}", d.name, d.path);
     }
     Ok(())
 }
