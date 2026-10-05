@@ -14,7 +14,7 @@ use iced::{
 
 use crate::{
     config::{
-        Analog, Button, ButtonAction, Combo, Config, Direction, GestureKind, GyroActivation, GyroConfig,
+        Analog, Button, ButtonAction, Combo, Config, GestureKind, GyroActivation, GyroConfig,
         GyroHorizontal, GyroInput, GyroMode, Macro, MacroStep, MouseButton, Rule, RuleKind, WheelDirection,
         Zone, Profile, Stick, StickAction, StickConfig,
         Trigger, TriggerAction,
@@ -62,7 +62,6 @@ enum Target {
     Zone(Analog, usize),
     /// Step `.1` of macro `.0` (in `Config::macros`), not part of any profile.
     MacroStep(usize, usize),
-    StickDir(Stick, Direction),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -610,11 +609,6 @@ impl App {
                                 z.action = action;
                             }
                         }
-                        Target::StickDir(s, d) => {
-                            if let Some(slot) = p.stick_mut(s).action.direction_mut(d) {
-                                *slot = action;
-                            }
-                        }
                         Target::MacroStep(..) => {}
                     }
                 }
@@ -897,7 +891,6 @@ impl App {
                     Target::Combo(i) => p.combos.get_mut(i).map(|c| &mut c.action),
                     Target::Gesture(b, kind) => p.gestures.get_mut(&b).and_then(|g| g.slot(kind).as_mut()),
                     Target::Zone(a, i) => p.zones_mut(a).get_mut(i).map(|z| &mut z.action),
-                    Target::StickDir(s, d) => p.stick_mut(s).action.direction_mut(d),
                     // Handled above, outside any profile.
                     Target::MacroStep(..) => None,
                 };
@@ -1643,7 +1636,25 @@ fn view_profile<'a>(p: &'a Profile, analog_triggers: bool, any_gyro: bool, macro
     let buttons = button_rows(p, macros);
     let sticks = [Stick::Left, Stick::Right]
         .into_iter()
-        .map(|s| stick_editor(s, p.stick(s), macros))
+        .flat_map(|s| {
+            let mut rows = vec![
+                stick_editor(s, p.stick(s), macros),
+                labeled(
+                    "",
+                    text(format!(
+                        "{s} directions act as buttons on top of the mode above: give them actions or \
+                         gestures, or use them in combos (e.g. LB + {s} Right)."
+                    ))
+                    .size(12)
+                    .color(MUTED_COLOR)
+                    .into(),
+                ),
+            ];
+            for b in Button::stick_directions(s) {
+                rows.extend(button_row(p, b, macros));
+            }
+            rows
+        })
         .collect();
     let triggers = [Trigger::Left, Trigger::Right]
         .into_iter()
@@ -1868,6 +1879,15 @@ fn button_rows<'a>(p: &'a Profile, macros: &[String]) -> Vec<Element<'a, Message
         value_slider("Long press after", 200.0..=1500.0, p.long_press_ms as f32, 50.0, "ms", Message::SetLongPress),
     ];
     for b in Button::ALL {
+        rows.extend(button_row(p, b, macros));
+    }
+    rows
+}
+
+/// One button's action editor with its "+ Gesture" picker and any gesture rows.
+fn button_row<'a>(p: &'a Profile, b: Button, macros: &[String]) -> Vec<Element<'a, Message>> {
+    let mut rows = Vec::new();
+    {
         let gestures = p.gestures.get(&b);
         let missing: Vec<GestureKind> = GestureKind::ALL
             .into_iter()
@@ -1929,7 +1949,7 @@ fn combo_rows<'a>(p: &'a Profile, macros: &[String]) -> Vec<Element<'a, Message>
             );
         }
         let remaining: Vec<Button> =
-            Button::ALL.into_iter().filter(|b| !combo.buttons.contains(b)).collect();
+            Button::EVERY.into_iter().filter(|b| !combo.buttons.contains(b)).collect();
         members = members.push(
             pick_list(remaining, None::<Button>, move |b| Message::AddComboButton(i, b))
                 .placeholder("Add button…")
@@ -1976,6 +1996,14 @@ fn short_button(b: Button) -> &'static str {
         Button::DpadDown => "Down",
         Button::DpadLeft => "Left",
         Button::DpadRight => "Right",
+        Button::LeftStickUp => "LS↑",
+        Button::LeftStickDown => "LS↓",
+        Button::LeftStickLeft => "LS←",
+        Button::LeftStickRight => "LS→",
+        Button::RightStickUp => "RS↑",
+        Button::RightStickDown => "RS↓",
+        Button::RightStickLeft => "RS←",
+        Button::RightStickRight => "RS→",
     }
 }
 
@@ -2120,7 +2148,7 @@ fn action_editor<'a>(
     };
 
     let value: Element<'a, Message> = match action {
-        ButtonAction::Gamepad(b) => pick_list(Button::ALL, Some(*b), move |b| {
+        ButtonAction::Gamepad(b) => pick_list(Button::EVERY, Some(*b), move |b| {
             on_change(ButtonAction::Gamepad(b))
         })
         .width(220)
@@ -2289,7 +2317,6 @@ enum StickKind {
     Mouse,
     Scroll,
     Keys,
-    Directions,
 }
 
 impl fmt::Display for StickKind {
@@ -2300,7 +2327,6 @@ impl fmt::Display for StickKind {
             StickKind::Mouse => "Mouse pointer",
             StickKind::Scroll => "Scroll wheel",
             StickKind::Keys => "Direction keys",
-            StickKind::Directions => "Direction actions",
         })
     }
 }
@@ -2312,20 +2338,6 @@ fn stick_editor<'a>(s: Stick, cfg: &'a StickConfig, macros: &[String]) -> Elemen
         StickAction::Mouse { .. } => StickKind::Mouse,
         StickAction::Scroll { .. } => StickKind::Scroll,
         StickAction::Keys { .. } => StickKind::Keys,
-        StickAction::Directions { .. } => StickKind::Directions,
-    };
-    // Switching from direction keys to direction actions keeps the keys.
-    let as_actions = match &cfg.action {
-        StickAction::Keys { up, down, left, right } => {
-            let key = |k: &String| if k.is_empty() { ButtonAction::Disabled } else { ButtonAction::Keys(vec![k.clone()]) };
-            StickAction::Directions { up: key(up), down: key(down), left: key(left), right: key(right) }
-        }
-        _ => StickAction::Directions {
-            up: ButtonAction::Disabled,
-            down: ButtonAction::Disabled,
-            left: ButtonAction::Disabled,
-            right: ButtonAction::Disabled,
-        },
     };
     let with = move |action: StickAction| {
         let mut c = cfg.clone();
@@ -2338,7 +2350,6 @@ fn stick_editor<'a>(s: Stick, cfg: &'a StickConfig, macros: &[String]) -> Elemen
         StickKind::Mouse,
         StickKind::Scroll,
         StickKind::Keys,
-        StickKind::Directions,
     ];
     let picker = pick_list(kinds, Some(kind), move |k| {
         with(match k {
@@ -2347,7 +2358,6 @@ fn stick_editor<'a>(s: Stick, cfg: &'a StickConfig, macros: &[String]) -> Elemen
             StickKind::Mouse => StickAction::Mouse { speed: 1200.0 },
             StickKind::Scroll => StickAction::Scroll { speed: 15.0 },
             StickKind::Keys => wasd(),
-            StickKind::Directions => as_actions.clone(),
         })
     })
     .width(170);
@@ -2355,16 +2365,6 @@ fn stick_editor<'a>(s: Stick, cfg: &'a StickConfig, macros: &[String]) -> Elemen
     let mut rows = column![labeled(s.to_string(), picker.into())].spacing(8);
 
     match &cfg.action {
-        StickAction::Directions { .. } => {
-            for d in Direction::ALL {
-                let action = cfg.action.direction(d).unwrap_or(&ButtonAction::Disabled);
-                let target = Target::StickDir(s, d);
-                rows = rows.push(labeled(
-                    format!("    {d}"),
-                    action_editor(action, Button::South, &ACTION_KINDS, set_action(target), KeyField::root(target), macros),
-                ));
-            }
-        }
         StickAction::Gamepad { stick, invert_y } => {
             let invert_y = *invert_y;
             let stick = *stick;
@@ -2442,13 +2442,12 @@ fn stick_editor<'a>(s: Stick, cfg: &'a StickConfig, macros: &[String]) -> Elemen
             Message::SetStick(s, c)
         }));
     }
-    if matches!(cfg.action, StickAction::Keys { .. } | StickAction::Directions { .. }) {
-        rows = rows.push(value_slider("    Press at", 0.05..=0.95, cfg.key_threshold, 0.05, "", move |v| {
-            let mut c = cfg.clone();
-            c.key_threshold = v;
-            Message::SetStick(s, c)
-        }));
-    }
+    // Used by direction keys and by the stick's direction buttons below.
+    rows = rows.push(value_slider("    Directions press at", 0.05..=0.95, cfg.key_threshold, 0.05, "", move |v| {
+        let mut c = cfg.clone();
+        c.key_threshold = v;
+        Message::SetStick(s, c)
+    }));
     rows.push(zone_editor(Analog::Stick(s), &cfg.zones, macros)).into()
 }
 
@@ -2840,32 +2839,29 @@ mod tests {
     }
 
     #[test]
-    fn direction_actions_are_editable_validated_and_follow_macro_renames() {
+    fn stick_direction_buttons_are_editable_validated_and_usable_in_combos() {
         let mut app = app();
         let _ = app.update(Message::NewMacro);
-        let target = Target::StickDir(Stick::Right, Direction::Up);
-        app.config.profiles[0].right_stick.action = StickAction::Directions {
-            up: ButtonAction::Disabled,
-            down: ButtonAction::Disabled,
-            left: ButtonAction::Disabled,
-            right: ButtonAction::Disabled,
-        };
-        let _ = app.update(Message::SetAction(target, ButtonAction::Macro { name: "Macro".into(), repeat: false }));
+        let up = Target::Button(Button::RightStickUp);
+        let _ = app.update(Message::SetAction(up, ButtonAction::Macro { name: "Macro".into(), repeat: false }));
         let _ = app.update(Message::RenameMacro("Hadouken".into()));
         assert_eq!(
-            app.config.profiles[0].right_stick.action.direction(Direction::Up),
-            Some(&ButtonAction::Macro { name: "Hadouken".into(), repeat: false })
+            app.config.profiles[0].button(Button::RightStickUp),
+            &ButtonAction::Macro { name: "Hadouken".into(), repeat: false }
         );
         // The key picker writes into a direction, and validation sees direction keys.
-        let field = KeyField::root(Target::StickDir(Stick::Right, Direction::Down));
-        let _ = app.update(Message::SetAction(Target::StickDir(Stick::Right, Direction::Down), ButtonAction::Keys(vec![])));
-        pick(&mut app, field, false, &["KEY_C"]);
-        assert_eq!(
-            app.config.profiles[0].right_stick.action.direction(Direction::Down),
-            Some(&ButtonAction::Keys(vec!["KEY_C".into()]))
-        );
+        let down = Target::Button(Button::RightStickDown);
+        let _ = app.update(Message::SetAction(down, ButtonAction::Keys(vec![])));
+        pick(&mut app, KeyField::root(down), false, &["KEY_C"]);
+        assert_eq!(app.config.profiles[0].button(Button::RightStickDown), &ButtonAction::Keys(vec!["KEY_C".into()]));
+        // Combos accept stick directions as members.
+        let _ = app.update(Message::AddCombo);
+        let _ = app.update(Message::RemoveComboButton(0, Button::RightBumper));
+        let _ = app.update(Message::AddComboButton(0, Button::RightStickRight));
+        assert_eq!(app.config.profiles[0].combos[0].buttons, [Button::LeftBumper, Button::RightStickRight]);
+
         let _ = app.update(Message::SetAction(
-            Target::StickDir(Stick::Right, Direction::Left),
+            Target::Button(Button::RightStickLeft),
             ButtonAction::Keys(vec!["KEY_NOPE".into()]),
         ));
         app.config.macros[0].steps = vec![MacroStep::Wait(10)];

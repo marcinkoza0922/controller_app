@@ -11,14 +11,14 @@ use evdev::KeyCode;
 
 use crate::{
     config::{
-        Analog, Button, ButtonAction, Direction, GyroActivation, GyroConfig, GyroHorizontal, GyroInput,
-        GyroMode, Macro, MacroStep, Profile, Stick, StickAction, Trigger, TriggerAction,
+        Analog, Button, ButtonAction, GyroActivation, GyroConfig, GyroHorizontal, GyroInput, GyroMode,
+        Macro, MacroStep, Profile, Stick, StickAction, Trigger, TriggerAction,
     },
     input::{Axis, InputEvent, MotionSample},
     output::OutEvent,
 };
 
-/// A stick direction action releases this far below its press threshold.
+/// A stick-direction button releases this far below its press threshold.
 const STICK_DIRECTION_HYSTERESIS: f32 = 0.05;
 /// A held zone stays active this far past its edges, so it doesn't flicker on a boundary.
 const ZONE_HYSTERESIS: f32 = 0.02;
@@ -42,8 +42,6 @@ enum Source {
     Gesture(Button),
     /// An analog zone (index into the stick's or trigger's zone list) that is active.
     Zone(Analog, usize),
-    /// A stick direction in `StickAction::Directions` mode.
-    StickDir(Stick, Direction),
 }
 
 /// Gesture detection for a button acting alone that has gestures configured.
@@ -95,6 +93,11 @@ pub struct Engine {
     macros_running: HashMap<StateId, MacroRun>,
     /// Virtual-pad stick positions set by macro steps, added to physical and gyro input.
     macro_sticks: HashMap<Stick, (f32, f32)>,
+    /// Stick-direction virtual buttons currently pressed by stick movement.
+    stick_buttons: HashSet<Button>,
+    /// Stick-direction gamepad outputs held by actions (reference counted), pushing the
+    /// virtual stick that way.
+    pushed_directions: HashMap<Button, u32>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -265,6 +268,34 @@ impl Engine {
         }
         if !self.gyro_active(gyro) {
             self.set_gyro_stick(None, out);
+        }
+        // After the gyro edge checks above: the direction buttons run their own.
+        if let InputEvent::Axis(axis, _) = ev
+            && let Some(s) = axis_stick(axis)
+        {
+            return self.update_stick_buttons(profile, s, now, out) | switch;
+        }
+        switch
+    }
+
+    /// Presses or releases a stick's direction buttons (e.g. `Button::LeftStickUp`) as it
+    /// moves past its press threshold, feeding them through the normal button path so they
+    /// get actions, gestures and combos.
+    fn update_stick_buttons(&mut self, profile: &Profile, s: Stick, now: Instant, out: &mut Vec<OutEvent>) -> bool {
+        let cfg = profile.stick(s);
+        let (x, y) = self.stick_pos(s, cfg.deadzone);
+        let t = cfg.key_threshold;
+        let [up, down, left, right] = Button::stick_directions(s);
+        let mut switch = false;
+        for (b, v) in [(up, -y), (down, y), (left, -x), (right, x)] {
+            let pressed = self.stick_buttons.contains(&b);
+            if !pressed && v >= t {
+                self.stick_buttons.insert(b);
+                switch |= self.handle(profile, InputEvent::Button(b, true), now, out);
+            } else if pressed && v < t - STICK_DIRECTION_HYSTERESIS {
+                self.stick_buttons.remove(&b);
+                switch |= self.handle(profile, InputEvent::Button(b, false), now, out);
+            }
         }
         switch
     }
@@ -497,7 +528,22 @@ impl Engine {
     fn emit(&mut self, src: &Source, action: &ButtonAction, pressed: bool, slot: usize, out: &mut Vec<OutEvent>) -> bool {
         match action {
             ButtonAction::Disabled => {}
-            ButtonAction::Gamepad(b) => out.push(OutEvent::PadButton(*b, pressed)),
+            ButtonAction::Gamepad(b) => match b.stick_direction() {
+                // A stick direction as output pushes the virtual stick while held.
+                Some((stick, _)) => {
+                    let count = self.pushed_directions.entry(*b).or_insert(0);
+                    if pressed {
+                        *count += 1;
+                    } else {
+                        *count = count.saturating_sub(1);
+                        if *count == 0 {
+                            self.pushed_directions.remove(b);
+                        }
+                    }
+                    self.emit_pad_stick(stick, out);
+                }
+                None => out.push(OutEvent::PadButton(*b, pressed)),
+            },
             ButtonAction::Mouse(m) => out.push(OutEvent::MouseButton(*m, pressed)),
             // One notch right away; `tick_wheel` continues while held.
             ButtonAction::Wheel(d) => {
@@ -669,7 +715,6 @@ impl Engine {
     fn stick(&mut self, profile: &Profile, s: Stick, out: &mut Vec<OutEvent>) -> bool {
         let cfg = profile.stick(s);
         let (x, y) = self.stick_pos(s, cfg.deadzone);
-        let mut switch = false;
         match &cfg.action {
             StickAction::Gamepad { stick, invert_y } => {
                 self.pad_sticks.insert(*stick, (x, if *invert_y { -y } else { y }));
@@ -692,28 +737,15 @@ impl Engine {
                 }
                 *held = want;
             }
-            StickAction::Directions { .. } => {
-                let t = cfg.key_threshold;
-                for (d, v) in [(Direction::Up, -y), (Direction::Down, y), (Direction::Left, -x), (Direction::Right, x)] {
-                    let src = Source::StickDir(s, d);
-                    let held = self.held.contains_key(&src);
-                    let action = cfg.action.direction(d).unwrap_or(&ButtonAction::Disabled);
-                    if !held && v >= t {
-                        switch |= self.digital(src, action, true, out);
-                    } else if held && v < t - STICK_DIRECTION_HYSTERESIS {
-                        self.digital(src, action, false, out);
-                    }
-                }
-            }
             // Mouse and scroll are continuous and driven by `tick`.
             StickAction::Mouse { .. } | StickAction::Scroll { .. } | StickAction::Disabled => {}
         }
-        self.zones(profile, Analog::Stick(s), x.hypot(y).min(1.0), out) | switch
+        self.zones(profile, Analog::Stick(s), x.hypot(y).min(1.0), out)
     }
 
     /// Sends a virtual-pad stick: the physical stick mapped to it plus any gyro deflection.
-    /// Sends a virtual-pad stick: the physical stick mapped to it plus any gyro and macro
-    /// deflection.
+    /// Sends a virtual-pad stick: the physical stick mapped to it plus gyro, macro and
+    /// button-pushed deflection, limited to the stick's circle.
     fn emit_pad_stick(&self, target: Stick, out: &mut Vec<OutEvent>) {
         let (px, py) = self.pad_sticks.get(&target).copied().unwrap_or_default();
         let (gx, gy) = match self.gyro.stick {
@@ -721,9 +753,32 @@ impl Engine {
             _ => (0.0, 0.0),
         };
         let (mx, my) = self.macro_sticks.get(&target).copied().unwrap_or_default();
+        let (bx, by) = self.pushed(target);
+        let (mut x, mut y) = (px + gx + mx + bx, py + gy + my + by);
+        let mag = x.hypot(y);
+        if mag > 1.0 {
+            x /= mag;
+            y /= mag;
+        }
         let (ax, ay) = stick_axes(target);
-        out.push(OutEvent::PadAxis(ax, (px + gx + mx).clamp(-1.0, 1.0)));
-        out.push(OutEvent::PadAxis(ay, (py + gy + my).clamp(-1.0, 1.0)));
+        out.push(OutEvent::PadAxis(ax, x));
+        out.push(OutEvent::PadAxis(ay, y));
+    }
+
+    /// Direction actions push a stick: one direction is full deflection, two make a
+    /// diagonal of the same length.
+    fn pushed(&self, target: Stick) -> (f32, f32) {
+        let (mut x, mut y) = (0.0, 0.0);
+        for b in self.pushed_directions.keys() {
+            if let Some((s, (dx, dy))) = b.stick_direction()
+                && s == target
+            {
+                x += dx;
+                y += dy;
+            }
+        }
+        let mag = f32::hypot(x, y);
+        if mag > 1.0 { (x / mag, y / mag) } else { (x, y) }
     }
 
     /// Changes the gyro's stick deflection, re-sending affected sticks.
@@ -998,6 +1053,15 @@ fn stick_axes(s: Stick) -> (Axis, Axis) {
     match s {
         Stick::Left => (Axis::LeftX, Axis::LeftY),
         Stick::Right => (Axis::RightX, Axis::RightY),
+    }
+}
+
+/// The stick an axis belongs to, if it is a stick axis.
+fn axis_stick(axis: Axis) -> Option<Stick> {
+    match axis {
+        Axis::LeftX | Axis::LeftY => Some(Stick::Left),
+        Axis::RightX | Axis::RightY => Some(Stick::Right),
+        Axis::LeftTrigger | Axis::RightTrigger => None,
     }
 }
 
@@ -1936,41 +2000,78 @@ mod tests {
         assert!(run(&mut e, &mapped(false), InputEvent::Button(Button::West, true)).is_empty());
     }
 
-    fn directions(up: ButtonAction, down: ButtonAction, left: ButtonAction, right: ButtonAction) -> StickAction {
-        StickAction::Directions { up, down, left, right }
-    }
-
     #[test]
-    fn stick_directions_press_any_action_with_hysteresis() {
+    fn stick_directions_are_buttons_with_any_action_alongside_the_stick() {
+        // The right stick stays a gamepad stick; its directions also act as buttons.
         let mut p = Profile::passthrough("p");
-        p.right_stick = StickConfig::new(
-            directions(
-                toggle(key("KEY_C")),
-                key("KEY_S"),
-                ButtonAction::Mouse(MouseButton::Left),
-                ButtonAction::Disabled,
-            ),
-            0.0,
-            1.0,
-        );
+        p.right_stick.deadzone = 0.0;
         p.right_stick.key_threshold = 0.5;
+        p.set_button(Button::RightStickUp, toggle(key("KEY_C")));
+        p.set_button(Button::RightStickDown, key("KEY_S"));
+        p.set_button(Button::RightStickLeft, ButtonAction::Mouse(MouseButton::Left));
         let mut e = Engine::default();
         let c_down = OutEvent::Key(KeyCode::KEY_C, true);
+        let stick_y = |v: f32| OutEvent::PadAxis(Axis::RightY, v);
 
         // Up is a toggle: flicking up and back turns it on, the next flick turns it off.
-        assert_eq!(axis(&mut e, &p, Axis::RightY, -0.9), vec![c_down.clone()]);
-        assert!(axis(&mut e, &p, Axis::RightY, -0.47).is_empty(), "inside the release margin");
-        assert!(axis(&mut e, &p, Axis::RightY, 0.0).is_empty());
-        assert_eq!(axis(&mut e, &p, Axis::RightY, -0.9), vec![OutEvent::Key(KeyCode::KEY_C, false)]);
+        assert_eq!(axis(&mut e, &p, Axis::RightY, -0.9), vec![OutEvent::PadAxis(Axis::RightX, 0.0), stick_y(-0.9), c_down]);
+        assert!(!axis(&mut e, &p, Axis::RightY, -0.47).iter().any(|ev| matches!(ev, OutEvent::Key(..))), "inside the release margin");
+        axis(&mut e, &p, Axis::RightY, 0.0);
+        assert!(axis(&mut e, &p, Axis::RightY, -0.9).contains(&OutEvent::Key(KeyCode::KEY_C, false)));
         axis(&mut e, &p, Axis::RightY, 0.0);
 
         // A diagonal presses both directions; returning to center releases both.
         axis(&mut e, &p, Axis::RightX, -0.7);
-        let out = axis(&mut e, &p, Axis::RightY, 0.7);
-        assert_eq!(out, vec![OutEvent::Key(KeyCode::KEY_S, true)]);
+        assert!(axis(&mut e, &p, Axis::RightY, 0.7).contains(&OutEvent::Key(KeyCode::KEY_S, true)));
         let mut out = axis(&mut e, &p, Axis::RightX, 0.0);
         out.extend(axis(&mut e, &p, Axis::RightY, 0.0));
-        assert_eq!(out, vec![OutEvent::MouseButton(MouseButton::Left, false), OutEvent::Key(KeyCode::KEY_S, false)]);
+        assert!(out.contains(&OutEvent::MouseButton(MouseButton::Left, false)), "{out:?}");
+        assert!(out.contains(&OutEvent::Key(KeyCode::KEY_S, false)), "{out:?}");
+    }
+
+    #[test]
+    fn bumper_plus_stick_direction_combo() {
+        let mut p = Profile::passthrough("p");
+        p.right_stick.deadzone = 0.0;
+        p.combos.push(Combo {
+            buttons: vec![Button::LeftBumper, Button::RightStickRight],
+            action: key("KEY_F"),
+        });
+        let mut e = Engine::default();
+        let t0 = Instant::now();
+        // Holding right on the stick (its own action is Disabled, so it waits as a modifier)...
+        assert!(!axis(&mut e, &p, Axis::RightX, 1.0).iter().any(|ev| matches!(ev, OutEvent::Key(..))));
+        // ...then pressing LB well afterwards fires the combo instead of LB's own action.
+        assert_eq!(press(&mut e, &p, Button::LeftBumper, true, ms(t0, 2000)), vec![OutEvent::Key(KeyCode::KEY_F, true)]);
+        assert_eq!(press(&mut e, &p, Button::LeftBumper, false, ms(t0, 2100)), vec![OutEvent::Key(KeyCode::KEY_F, false)]);
+        // LB alone still works as a bumper.
+        axis(&mut e, &p, Axis::RightX, 0.0);
+        press(&mut e, &p, Button::LeftBumper, true, ms(t0, 3000));
+        assert_eq!(fire_timers(&mut e, &p, ms(t0, 3100)), vec![OutEvent::PadButton(Button::LeftBumper, true)]);
+    }
+
+    #[test]
+    fn buttons_can_push_a_stick_direction() {
+        let mut p = Profile::passthrough("p");
+        p.left_stick.deadzone = 0.0;
+        p.set_button(Button::DpadRight, ButtonAction::Gamepad(Button::LeftStickRight));
+        p.set_button(Button::DpadUp, ButtonAction::Gamepad(Button::LeftStickUp));
+        let mut e = Engine::default();
+        let last_stick = |out: &[OutEvent]| -> (f32, f32) {
+            let x = out.iter().rev().find_map(|ev| match ev { OutEvent::PadAxis(Axis::LeftX, v) => Some(*v), _ => None });
+            let y = out.iter().rev().find_map(|ev| match ev { OutEvent::PadAxis(Axis::LeftY, v) => Some(*v), _ => None });
+            (x.unwrap(), y.unwrap())
+        };
+        assert_eq!(last_stick(&run(&mut e, &p, InputEvent::Button(Button::DpadRight, true))), (1.0, 0.0));
+        // Two directions make a diagonal on the stick's circle, not a square corner.
+        let (x, y) = last_stick(&run(&mut e, &p, InputEvent::Button(Button::DpadUp, true)));
+        let d = std::f32::consts::FRAC_1_SQRT_2;
+        assert!((x - d).abs() < 1e-4 && (y + d).abs() < 1e-4, "{x} {y}");
+        assert_eq!(last_stick(&run(&mut e, &p, InputEvent::Button(Button::DpadRight, false))), (0.0, -1.0));
+        assert_eq!(last_stick(&run(&mut e, &p, InputEvent::Button(Button::DpadUp, false))), (0.0, 0.0));
+        // Pushing against the physical stick adds, limited to full deflection.
+        axis(&mut e, &p, Axis::LeftX, 0.5);
+        assert_eq!(last_stick(&run(&mut e, &p, InputEvent::Button(Button::DpadRight, true))), (1.0, 0.0));
     }
 
     #[test]

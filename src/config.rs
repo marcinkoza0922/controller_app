@@ -21,6 +21,17 @@ pub enum Button {
     DpadDown,
     DpadLeft,
     DpadRight,
+    /// Virtual buttons: a stick pushed past its press threshold in one direction. They
+    /// work like any button (actions, gestures, combos), and as gamepad outputs they push
+    /// the virtual stick that way.
+    LeftStickUp,
+    LeftStickDown,
+    LeftStickLeft,
+    LeftStickRight,
+    RightStickUp,
+    RightStickDown,
+    RightStickLeft,
+    RightStickRight,
 }
 
 impl Button {
@@ -41,6 +52,56 @@ impl Button {
         Button::DpadLeft,
         Button::DpadRight,
     ];
+
+    /// The physical buttons plus the stick-direction virtual buttons.
+    pub const EVERY: [Button; 23] = [
+        Button::South,
+        Button::East,
+        Button::North,
+        Button::West,
+        Button::LeftBumper,
+        Button::RightBumper,
+        Button::Select,
+        Button::Start,
+        Button::Guide,
+        Button::LeftStick,
+        Button::RightStick,
+        Button::DpadUp,
+        Button::DpadDown,
+        Button::DpadLeft,
+        Button::DpadRight,
+        Button::LeftStickUp,
+        Button::LeftStickDown,
+        Button::LeftStickLeft,
+        Button::LeftStickRight,
+        Button::RightStickUp,
+        Button::RightStickDown,
+        Button::RightStickLeft,
+        Button::RightStickRight,
+    ];
+
+    /// A stick's direction buttons: up, down, left, right.
+    pub fn stick_directions(s: Stick) -> [Button; 4] {
+        match s {
+            Stick::Left => [Button::LeftStickUp, Button::LeftStickDown, Button::LeftStickLeft, Button::LeftStickRight],
+            Stick::Right => [Button::RightStickUp, Button::RightStickDown, Button::RightStickLeft, Button::RightStickRight],
+        }
+    }
+
+    /// For a stick-direction button: its stick and unit direction (y positive is down).
+    pub fn stick_direction(self) -> Option<(Stick, (f32, f32))> {
+        Some(match self {
+            Button::LeftStickUp => (Stick::Left, (0.0, -1.0)),
+            Button::LeftStickDown => (Stick::Left, (0.0, 1.0)),
+            Button::LeftStickLeft => (Stick::Left, (-1.0, 0.0)),
+            Button::LeftStickRight => (Stick::Left, (1.0, 0.0)),
+            Button::RightStickUp => (Stick::Right, (0.0, -1.0)),
+            Button::RightStickDown => (Stick::Right, (0.0, 1.0)),
+            Button::RightStickLeft => (Stick::Right, (-1.0, 0.0)),
+            Button::RightStickRight => (Stick::Right, (1.0, 0.0)),
+            _ => return None,
+        })
+    }
 }
 
 impl fmt::Display for Button {
@@ -61,6 +122,14 @@ impl fmt::Display for Button {
             Button::DpadDown => "D-pad Down",
             Button::DpadLeft => "D-pad Left",
             Button::DpadRight => "D-pad Right",
+            Button::LeftStickUp => "Left Stick Up",
+            Button::LeftStickDown => "Left Stick Down",
+            Button::LeftStickLeft => "Left Stick Left",
+            Button::LeftStickRight => "Left Stick Right",
+            Button::RightStickUp => "Right Stick Up",
+            Button::RightStickDown => "Right Stick Down",
+            Button::RightStickLeft => "Right Stick Left",
+            Button::RightStickRight => "Right Stick Right",
         };
         f.write_str(s)
     }
@@ -378,60 +447,8 @@ pub enum StickAction {
         left: String,
         right: String,
     },
-    /// Any action per direction, pressed past the stick's `key_threshold`.
-    Directions {
-        up: ButtonAction,
-        down: ButtonAction,
-        left: ButtonAction,
-        right: ButtonAction,
-    },
 }
 
-/// Stick directions, in the order `StickAction::Directions` lists them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Direction {
-    Up,
-    Down,
-    Left,
-    Right,
-}
-
-impl Direction {
-    pub const ALL: [Direction; 4] = [Direction::Up, Direction::Down, Direction::Left, Direction::Right];
-}
-
-impl fmt::Display for Direction {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{self:?}")
-    }
-}
-
-impl StickAction {
-    /// The action for one direction in `Directions` mode.
-    pub fn direction(&self, d: Direction) -> Option<&ButtonAction> {
-        match self {
-            StickAction::Directions { up, down, left, right } => Some(match d {
-                Direction::Up => up,
-                Direction::Down => down,
-                Direction::Left => left,
-                Direction::Right => right,
-            }),
-            _ => None,
-        }
-    }
-
-    pub fn direction_mut(&mut self, d: Direction) -> Option<&mut ButtonAction> {
-        match self {
-            StickAction::Directions { up, down, left, right } => Some(match d {
-                Direction::Up => up,
-                Direction::Down => down,
-                Direction::Left => left,
-                Direction::Right => right,
-            }),
-            _ => None,
-        }
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StickConfig {
@@ -441,7 +458,8 @@ pub struct StickConfig {
     /// Response curve exponent for mouse/scroll (1.0 = linear).
     #[serde(default = "default_curve")]
     pub curve: f32,
-    /// Deflection (after the deadzone) at which direction keys press.
+    /// Deflection (after the deadzone) at which direction keys and the stick's direction
+    /// buttons (e.g. `Button::LeftStickUp`) press.
     #[serde(default = "default_key_threshold")]
     pub key_threshold: f32,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -695,9 +713,6 @@ impl Profile {
             all.extend(t.zones.iter().map(|z| &z.action));
         }
         all.extend(self.left_stick.zones.iter().chain(&self.right_stick.zones).map(|z| &z.action));
-        for stick in [&self.left_stick, &self.right_stick] {
-            all.extend(Direction::ALL.into_iter().filter_map(|d| stick.action.direction(d)));
-        }
         all
     }
 
@@ -715,9 +730,6 @@ impl Profile {
         }
         for stick in [&mut self.left_stick, &mut self.right_stick] {
             all.extend(stick.zones.iter_mut().map(|z| &mut z.action));
-            if let StickAction::Directions { up, down, left, right } = &mut stick.action {
-                all.extend([up, down, left, right]);
-            }
         }
         all
     }
@@ -1288,23 +1300,32 @@ mod tests {
     }
 
     #[test]
-    fn stick_directions_and_macro_stick_steps_roundtrip() {
+    fn stick_direction_buttons_and_macro_stick_steps_roundtrip() {
         let mut config = Config::default();
-        config.profiles[0].right_stick.action = StickAction::Directions {
-            up: ButtonAction::Macro { name: "Jump".into(), repeat: false },
-            down: ButtonAction::Keys(vec!["KEY_C".into()]),
-            left: ButtonAction::Disabled,
-            right: ButtonAction::Mouse(MouseButton::Right),
-        };
+        config.profiles[0].set_button(Button::RightStickUp, ButtonAction::Macro { name: "Jump".into(), repeat: false });
+        config.profiles[0].set_button(Button::DpadRight, ButtonAction::Gamepad(Button::LeftStickRight));
+        config.profiles[0].combos.push(Combo {
+            buttons: vec![Button::LeftBumper, Button::RightStickRight],
+            action: ButtonAction::Keys(vec!["KEY_F".into()]),
+        });
         config.macros.push(Macro {
             name: "Jump".into(),
             steps: vec![MacroStep::Stick { stick: Stick::Left, x: 0.0, y: -1.0 }, MacroStep::Wait(17)],
         });
         let back: Config = toml::from_str(&toml::to_string_pretty(&config).unwrap()).unwrap();
         assert_eq!(config, back);
-        // Direction actions are visited, so macro renames and validation reach them.
         let found = config.profiles[0].actions().into_iter().any(|a| matches!(a, ButtonAction::Macro { .. }));
-        assert!(found);
+        assert!(found, "stick-direction mappings are visited like any button");
+    }
+
+    #[test]
+    fn stick_direction_buttons_cover_every_direction_once() {
+        assert_eq!(Button::EVERY.len(), Button::ALL.len() + 8);
+        for s in [Stick::Left, Stick::Right] {
+            let dirs = Button::stick_directions(s);
+            assert!(dirs.iter().all(|b| b.stick_direction().is_some_and(|(stick, _)| stick == s)));
+        }
+        assert!(Button::ALL.iter().all(|b| b.stick_direction().is_none()), "ALL stays physical buttons only");
     }
 
     #[test]

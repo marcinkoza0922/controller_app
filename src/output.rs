@@ -118,6 +118,15 @@ impl VirtualPad {
             Button::DpadUp | Button::DpadDown | Button::DpadLeft | Button::DpadRight => {
                 return self.dpad(b, pressed);
             }
+            // The engine turns stick directions into stick deflection; nothing to press.
+            Button::LeftStickUp
+            | Button::LeftStickDown
+            | Button::LeftStickLeft
+            | Button::LeftStickRight
+            | Button::RightStickUp
+            | Button::RightStickDown
+            | Button::RightStickLeft
+            | Button::RightStickRight => return Ok(()),
         };
         self.emit(&[key_event(code, pressed)])
     }
