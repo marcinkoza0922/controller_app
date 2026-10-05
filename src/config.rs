@@ -210,6 +210,9 @@ pub enum ButtonAction {
     Turbo { action: Box<ButtonAction>, rate: f32 },
     /// Plays the macro named `name`: once per press, or looping while held if `repeat`.
     Macro { name: String, #[serde(default)] repeat: bool },
+    /// Opens or closes the on-screen overlay (keyboard). While it is open the controller
+    /// drives the overlay; holding East closes it.
+    ToggleOverlay,
 }
 
 /// A named sequence of inputs, shared by all profiles.
@@ -964,7 +967,11 @@ impl Profile {
                 action: Keys(vec!["KEY_LEFTALT".into(), "KEY_TAB".into()]),
             }],
             combo_window_ms: default_combo_window_ms(),
-            gestures: BTreeMap::new(),
+            // Hold Guide for the on-screen keyboard.
+            gestures: BTreeMap::from([(
+                Button::Guide,
+                Gestures { long_press: Some(ToggleOverlay), ..Gestures::default() },
+            )]),
             tap_window_ms: default_tap_window_ms(),
             long_press_ms: default_long_press_ms(),
             gyro: GyroConfig::default(),

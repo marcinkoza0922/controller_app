@@ -331,6 +331,7 @@ enum Message {
     SetRuleValue(usize, String),
     SetRuleProfile(usize, String),
     TestRumble(String),
+    ToggleOverlay,
     CalibrateGyro(String),
     CopyMotionRuleCommand,
     SetGyro(GyroConfig),
@@ -524,6 +525,7 @@ impl App {
             }
             Message::SetEnabled(on) => return call_ok(Request::SetEnabled(on)),
             Message::TestRumble(path) => return call_ok(Request::TestRumble(path)),
+            Message::ToggleOverlay => return call_ok(Request::ToggleOverlay),
             Message::CalibrateGyro(path) => {
                 self.message = Some(("Calibrating gyro: keep the controller still for 2 seconds.".into(), false));
                 return call_ok(Request::CalibrateGyro(path));
@@ -1305,6 +1307,23 @@ impl App {
             Some(_) => list = list.push(text("No controllers detected.").color(MUTED_COLOR)),
             None => list = list.push(text("Unavailable while the daemon is not running.").color(MUTED_COLOR)),
         }
+        if let Some(status) = &self.status {
+            let label = if status.overlay_visible { "Close on-screen keyboard" } else { "On-screen keyboard" };
+            list = list.push(
+                row![
+                    button(text(label).size(13)).style(button::secondary).on_press(Message::ToggleOverlay),
+                    help(
+                        "An on-screen keyboard over everything, typed with the controller: D-pad or \
+                         stick to move, A to press, X backspace, Y space, Start enter, hold B to close. \
+                         Map \"On-screen keyboard\" to a button or gesture to open it from the \
+                         controller."
+                            .into(),
+                    ),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            );
+        }
         if let Some(status) = &self.status
             && !status.motion_access_denied.is_empty()
         {
@@ -1991,6 +2010,7 @@ fn summarize(action: &ButtonAction) -> String {
         ButtonAction::Mouse(m) => format!("{m} click"),
         ButtonAction::Wheel(d) => d.to_string(),
         ButtonAction::NextProfile => "Next profile".into(),
+        ButtonAction::ToggleOverlay => "On-screen keyboard".into(),
         ButtonAction::Multi(list) if list.is_empty() => "(nothing)".into(),
         ButtonAction::Multi(list) => list.iter().map(summarize).collect::<Vec<_>>().join(" & "),
         ButtonAction::Toggle(inner) => format!("Toggle {}", summarize(inner)),
@@ -2477,6 +2497,7 @@ enum ActionKind {
     Mouse,
     Wheel,
     NextProfile,
+    Overlay,
     Toggle,
     Turbo,
     Macro,
@@ -2492,6 +2513,7 @@ impl fmt::Display for ActionKind {
             ActionKind::Mouse => "Mouse button",
             ActionKind::Wheel => "Scroll wheel",
             ActionKind::NextProfile => "Next profile",
+            ActionKind::Overlay => "On-screen keyboard",
             ActionKind::Toggle => "Toggle (press on / off)…",
             ActionKind::Macro => "Macro…",
             ActionKind::Turbo => "Turbo (repeat while held)…",
@@ -2501,13 +2523,14 @@ impl fmt::Display for ActionKind {
 }
 
 /// Every kind, for a top-level action.
-const ACTION_KINDS: [ActionKind; 10] = [
+const ACTION_KINDS: [ActionKind; 11] = [
     ActionKind::Disabled,
     ActionKind::Gamepad,
     ActionKind::Keys,
     ActionKind::Mouse,
     ActionKind::Wheel,
     ActionKind::NextProfile,
+    ActionKind::Overlay,
     ActionKind::Toggle,
     ActionKind::Turbo,
     ActionKind::Macro,
@@ -2571,6 +2594,7 @@ fn action_editor<'a>(
         ButtonAction::Mouse(_) => ActionKind::Mouse,
         ButtonAction::Wheel(_) => ActionKind::Wheel,
         ButtonAction::NextProfile => ActionKind::NextProfile,
+        ButtonAction::ToggleOverlay => ActionKind::Overlay,
         ButtonAction::Multi(_) => ActionKind::Multiple,
         ButtonAction::Toggle(_) => ActionKind::Toggle,
         ButtonAction::Turbo { .. } => ActionKind::Turbo,
@@ -2594,6 +2618,7 @@ fn action_editor<'a>(
                 ActionKind::Mouse => ButtonAction::Mouse(MouseButton::Left),
                 ActionKind::Wheel => ButtonAction::Wheel(WheelDirection::Up),
                 ActionKind::NextProfile => ButtonAction::NextProfile,
+                ActionKind::Overlay => ButtonAction::ToggleOverlay,
                 // Keep what was there as the first entry.
                 ActionKind::Multiple => ButtonAction::Multi(wrappable.iter().cloned().collect()),
                 ActionKind::Toggle => ButtonAction::Toggle(Box::new(
@@ -2689,6 +2714,9 @@ fn action_editor<'a>(
             line.into()
         }
         ButtonAction::Disabled | ButtonAction::NextProfile => space().into(),
+        ButtonAction::ToggleOverlay => {
+            text("Hold B on the controller to close it.").size(12).color(MUTED_COLOR).into()
+        }
     };
     row![kind_picker, value].spacing(8).align_y(Alignment::Start).into()
 }

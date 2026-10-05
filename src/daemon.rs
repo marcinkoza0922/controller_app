@@ -31,6 +31,7 @@ use crate::{
     ipc::{self, DeviceInfo, FocusBackend, InputSnapshot, Request, Response, Status, WindowInfo},
     monitor::{self, InputView, OutputView, log},
     output::{FfCaps, OutEvent, VIRTUAL_PREFIX, VirtualKbm, VirtualPad},
+    overlay::{OverlayAction, OverlayController, OverlayView},
     rumble,
 };
 
@@ -54,6 +55,7 @@ enum Msg {
     Focus(FocusEvent),
     Motion { id: u64, sample: MotionSample },
     MotionGone { id: u64 },
+    WatchOverlay(Sender<Option<OverlayView>>),
 }
 
 struct Managed {
@@ -146,6 +148,12 @@ struct Daemon {
     recent_windows: Vec<WindowInfo>,
     /// Last profile chosen by process scanning, so manual switches stick until it changes.
     scan_target: Option<String>,
+    /// The on-screen overlay, while open: it gets all controller input.
+    overlay: Option<OverlayController>,
+    /// Where the overlay keyboard's cursor was, for the next time it opens.
+    overlay_cursor: crate::keyboard::Cursor,
+    overlay_watchers: Vec<Sender<Option<OverlayView>>>,
+    overlay_process: Option<std::process::Child>,
     tx: Sender<Msg>,
 }
 
@@ -177,6 +185,10 @@ pub fn run() -> Result<()> {
         focused: None,
         recent_windows: Vec::new(),
         scan_target: None,
+        overlay: None,
+        overlay_cursor: crate::keyboard::find("KEY_Q").unwrap_or_default(),
+        overlay_watchers: Vec::new(),
+        overlay_process: None,
         tx,
     };
     log!("controller_app daemon started, socket at {}", ipc::socket_path().display());
@@ -247,14 +259,25 @@ impl Daemon {
     }
 
     fn next_deadline(&self) -> Option<Instant> {
-        self.devices.values().filter_map(|d| d.engine.next_deadline()).min()
+        let overlay = self.overlay.as_ref().and_then(OverlayController::next_deadline);
+        self.devices.values().filter_map(|d| d.engine.next_deadline()).chain(overlay).min()
     }
 
     /// Fires combo members whose combo window has expired.
     fn run_timers(&mut self) {
-        let Some(profile) = self.config.active() else { return };
         let now = Instant::now();
+        if let Some(ov) = &mut self.overlay
+            && ov.next_deadline().is_some_and(|d| d <= now)
+        {
+            let (actions, changed) = ov.tick(now);
+            self.apply_overlay(actions);
+            if changed {
+                self.broadcast_overlay();
+            }
+        }
+        let Some(profile) = self.config.active() else { return };
         let mut switch = false;
+        let mut toggle_overlay = false;
         for dev in self.devices.values_mut() {
             if dev.engine.next_deadline().is_none_or(|d| d > now) {
                 continue;
@@ -262,10 +285,89 @@ impl Daemon {
             let mut out = Vec::new();
             switch |= dev.engine.timers(profile, now, &mut out);
             dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
+            toggle_overlay |= dev.engine.take_overlay_toggle();
             dev.draw_status();
         }
         if switch && let Some(next) = self.config.next_profile_name() {
             self.switch_profile(next);
+        }
+        if toggle_overlay {
+            self.toggle_overlay();
+        }
+    }
+
+    /// Opens the overlay (launching its window) or closes it.
+    fn toggle_overlay(&mut self) {
+        if self.overlay.is_some() {
+            self.hide_overlay();
+            return;
+        }
+        if let Some(child) = &mut self.overlay_process
+            && child.try_wait().ok().flatten().is_some()
+        {
+            self.overlay_process = None;
+        }
+        if self.overlay_process.is_none() {
+            let spawned = std::env::current_exe().and_then(|exe| std::process::Command::new(exe).arg("overlay").spawn());
+            match spawned {
+                Ok(child) => self.overlay_process = Some(child),
+                Err(e) => {
+                    log!("cannot open the overlay: {e}");
+                    return;
+                }
+            }
+        }
+        // Let go of everything the mappings hold; the controller now drives the overlay.
+        for dev in self.devices.values_mut() {
+            let mut out = Vec::new();
+            dev.engine.release_all(&mut out);
+            dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
+        }
+        log!("overlay open");
+        self.overlay = Some(OverlayController::new(self.overlay_cursor));
+        self.broadcast_overlay();
+    }
+
+    fn hide_overlay(&mut self) {
+        let Some(mut ov) = self.overlay.take() else { return };
+        self.overlay_cursor = ov.cursor();
+        let actions = ov.release_all();
+        self.apply_overlay(actions);
+        // The overlay process exits when it sees the overlay hidden.
+        self.broadcast_overlay();
+        self.overlay_watchers.clear();
+        log!("overlay closed");
+        self.resync_all();
+    }
+
+    fn apply_overlay(&mut self, actions: Vec<OverlayAction>) {
+        for action in actions {
+            match action {
+                OverlayAction::Key(k, pressed) => {
+                    if let Err(e) = self.kbm.key(k, pressed) {
+                        log!("output error: {e:#}");
+                    }
+                }
+                OverlayAction::Close => self.hide_overlay(),
+            }
+        }
+    }
+
+    fn broadcast_overlay(&mut self) {
+        let view = self.overlay.as_ref().map(|ov| ov.view(Instant::now()));
+        self.overlay_watchers.retain(|w| w.send(view.clone()).is_ok());
+    }
+
+    /// If the overlay window died (crashed or was closed), leave overlay mode so the
+    /// controller isn't stuck driving an invisible keyboard.
+    fn check_overlay_process(&mut self) {
+        let exited = self.overlay_process.as_mut().is_some_and(|c| c.try_wait().ok().flatten().is_some());
+        if exited {
+            self.overlay_process = None;
+            if self.overlay.is_some() {
+                log!("overlay window went away");
+                self.hide_overlay();
+            }
         }
     }
 
@@ -313,6 +415,12 @@ impl Daemon {
             }
             Msg::Focus(FocusEvent::Focused(window)) => self.window_focused(window),
             Msg::Motion { id, sample } => self.motion(id, sample),
+            Msg::WatchOverlay(watcher) => {
+                let view = self.overlay.as_ref().map(|ov| ov.view(Instant::now()));
+                if watcher.send(view).is_ok() {
+                    self.overlay_watchers.push(watcher);
+                }
+            }
             Msg::MotionGone { id } => {
                 if let Some(dev) = self.devices.get_mut(&id) {
                     dev.motion = None;
@@ -354,7 +462,7 @@ impl Daemon {
         }
         let sample = dev.motion_frame.to_standard(sample);
         dev.view.set_gyro(sample.gyro);
-        let Some(profile) = self.config.active() else { return };
+        let Some(profile) = self.config.active().filter(|_| self.overlay.is_none()) else { return };
         let mut out = Vec::new();
         dev.engine.motion(profile, sample, &mut out);
         dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
@@ -453,6 +561,9 @@ impl Daemon {
     }
 
     fn input(&mut self, id: u64, events: Vec<InputEvent>) {
+        if self.overlay.is_some() {
+            return self.overlay_input(id, events);
+        }
         let Some(profile) = self.config.active() else { return };
         let Some(dev) = self.devices.get_mut(&id) else { return };
         let mut out = Vec::new();
@@ -473,9 +584,30 @@ impl Daemon {
             let snapshot = dev.view.snapshot(&dev.name);
             self.watchers.retain(|w| w.send(Some(snapshot.clone())).is_ok());
         }
+        let toggle_overlay = dev.engine.take_overlay_toggle();
         if switch && let Some(next) = self.config.next_profile_name() {
             self.switch_profile(next);
         }
+        if toggle_overlay {
+            self.toggle_overlay();
+        }
+    }
+
+    /// While the overlay is open, controller input drives it instead of the mappings.
+    fn overlay_input(&mut self, id: u64, events: Vec<InputEvent>) {
+        let now = Instant::now();
+        if let Some(dev) = self.devices.get_mut(&id) {
+            for ev in &events {
+                dev.view.apply(ev);
+            }
+            dev.draw_status();
+        }
+        for ev in events {
+            let Some(ov) = &mut self.overlay else { return };
+            let actions = ov.handle(ev, now);
+            self.apply_overlay(actions);
+        }
+        self.broadcast_overlay();
     }
 
     fn request(&mut self, req: Request) -> Response {
@@ -515,6 +647,11 @@ impl Daemon {
             }
             // Handled by the connection thread, which registers through `Msg::Watch`.
             Request::WatchInput => Response::Error("WatchInput must be the only request".into()),
+            Request::ToggleOverlay => {
+                self.toggle_overlay();
+                Response::Ok
+            }
+            Request::WatchOverlay => Response::Error("WatchOverlay must be the only request".into()),
             Request::CalibrateGyro(path) => {
                 let dev = self.devices.values_mut().find(|d| d.path.as_os_str() == path.as_str());
                 match dev {
@@ -638,6 +775,7 @@ impl Daemon {
             focused: self.focused.clone(),
             recent_windows: self.recent_windows.clone(),
             motion_access_denied: self.motion_denied.values().cloned().collect(),
+            overlay_visible: self.overlay.is_some(),
         }
     }
 
@@ -696,6 +834,7 @@ impl Daemon {
         self.skipped.retain(|k| present.contains(k));
         self.motion_nodes.retain(|k, _| present.contains(k));
         self.motion_denied.retain(|k, _| present.contains(k));
+        self.check_overlay_process();
         self.attach_motion();
         self.scan_processes();
         self.gamepads.retain(|k, _| present.contains(k));
@@ -885,6 +1024,7 @@ fn serve_client(conn: UnixStream, tx: &Sender<Msg>) -> Result<()> {
     BufReader::new(&conn).read_line(&mut line)?;
     let response = match serde_json::from_str::<Request>(&line) {
         Ok(Request::WatchInput) => return watch_input(conn, tx),
+        Ok(Request::WatchOverlay) => return watch_overlay(conn, tx),
         Ok(req) => {
             let (reply_tx, reply_rx) = mpsc::channel();
             tx.send(Msg::Ipc { req, reply: reply_tx })?;
@@ -895,6 +1035,24 @@ fn serve_client(conn: UnixStream, tx: &Sender<Msg>) -> Result<()> {
     let mut out = serde_json::to_string(&response)?;
     out.push('\n');
     (&conn).write_all(out.as_bytes())?;
+    Ok(())
+}
+
+/// Streams overlay state to the overlay window until it is hidden or the window goes away.
+fn watch_overlay(conn: UnixStream, tx: &Sender<Msg>) -> Result<()> {
+    let (view_tx, view_rx) = mpsc::channel::<Option<OverlayView>>();
+    tx.send(Msg::WatchOverlay(view_tx))?;
+    while let Ok(mut view) = view_rx.recv() {
+        while let Ok(newer) = view_rx.try_recv() {
+            view = newer;
+        }
+        let hidden = view.is_none();
+        let mut line = serde_json::to_string(&view)?;
+        line.push('\n');
+        if (&conn).write_all(line.as_bytes()).is_err() || hidden {
+            return Ok(());
+        }
+    }
     Ok(())
 }
 

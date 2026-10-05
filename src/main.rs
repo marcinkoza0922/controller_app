@@ -8,6 +8,7 @@ mod ipc;
 mod keyboard;
 mod monitor;
 mod output;
+mod overlay;
 mod pad_svg;
 mod rumble;
 mod style;
@@ -26,7 +27,8 @@ commands:
   enable|disable   turn remapping on or off
   profile <name>   switch the active profile
   next-profile     switch to the next profile
-  reload           re-read the config file";
+  reload           re-read the config file
+  overlay-toggle   open or close the on-screen keyboard overlay";
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -40,6 +42,8 @@ fn main() -> Result<()> {
         ["profile", name] => send(Request::SetProfile(name.to_string())),
         ["next-profile"] => send(Request::NextProfile),
         ["reload"] => send(Request::Reload),
+        ["overlay"] => overlay::run(),
+        ["overlay-toggle"] => send(Request::ToggleOverlay),
         ["-h" | "--help" | "help"] => {
             println!("{USAGE}");
             Ok(())

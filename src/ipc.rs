@@ -30,6 +30,11 @@ pub enum Request {
     TestRumble(String),
     /// Average the gyro of the controller at this path for a moment, as its drift bias.
     CalibrateGyro(String),
+    /// Open or close the on-screen overlay.
+    ToggleOverlay,
+    /// Keep the connection open; the daemon streams one `Option<OverlayView>` JSON line per
+    /// change. `null` means the overlay is hidden (the overlay process exits on it).
+    WatchOverlay,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,6 +61,8 @@ pub struct Status {
     /// Controller motion sensors the daemon may not open (needs the udev rule in dist/).
     #[serde(default)]
     pub motion_access_denied: Vec<String>,
+    #[serde(default)]
+    pub overlay_visible: bool,
 }
 
 /// How the daemon learns which game is active.

@@ -57,6 +57,20 @@ The Macros tab holds named input sequences shared by all profiles. Each step is 
 
 Each pass of a macro ends by releasing anything it still holds. Wrap a repeating macro in a Toggle to loop it hands-off. Renaming a macro updates its mappings, and profile switches stop running macros.
 
+## On-screen overlay
+
+The "On-screen keyboard" action (also a button on the Overview tab, and `controller_app overlay-toggle`) opens a keyboard over everything, including fullscreen games. It is a Wayland layer-shell surface that never takes keyboard focus, so keys go to the window underneath. While it's open the controller drives it:
+
+| Control | Action |
+|---|---|
+| D-pad / left stick | move between keys (repeats while held) |
+| A | press the selected key (holding A holds the key) |
+| Shift / Ctrl / Alt / Super | latch for the next key |
+| X / Y / Start | Backspace / Space / Enter |
+| hold B | close |
+
+New Desktop profiles open it with a long press of Guide. It needs a compositor with layer-shell (KDE Plasma, Sway, Hyprland, …).
+
 ## Gyro
 
 Controllers with motion sensors (DualShock 4, DualSense, Switch Pro, Joy-Cons) can use their gyro in each profile:
@@ -89,7 +103,7 @@ Problems that would block saving (unknown keys, missing macros, incomplete combo
 
 ## CLI
 
-`controller_app status | enable | disable | profile <name> | next-profile | reload | daemon`
+`controller_app status | enable | disable | profile <name> | next-profile | reload | overlay-toggle | daemon`
 
 When `controller_app daemon` runs in a terminal, it keeps a live status line showing each controller's input and what is being output.
 

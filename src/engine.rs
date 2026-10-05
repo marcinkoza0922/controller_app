@@ -98,6 +98,8 @@ pub struct Engine {
     /// Stick-direction gamepad outputs held by actions (reference counted), pushing the
     /// virtual stick that way.
     pushed_directions: HashMap<Button, u32>,
+    /// Set when a ToggleOverlay action fires; the daemon takes it.
+    overlay_toggled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -166,6 +168,11 @@ struct TurboState {
 }
 
 impl Engine {
+    /// Whether a ToggleOverlay action fired since the last call.
+    pub fn take_overlay_toggle(&mut self) -> bool {
+        std::mem::take(&mut self.overlay_toggled)
+    }
+
     /// Replaces the macro definitions `ButtonAction::Macro` refers to (from the config).
     pub fn set_macros(&mut self, macros: &[Macro]) {
         self.macro_defs = macros.iter().map(|m| (m.name.clone(), Arc::new(compile_macro(m)))).collect();
@@ -566,6 +573,11 @@ impl Engine {
                 }
             }
             ButtonAction::NextProfile => return pressed,
+        ButtonAction::ToggleOverlay => {
+            if pressed {
+                self.overlay_toggled = true;
+            }
+        }
             ButtonAction::Multi(actions) => {
                 // Child slots depend only on position, so reverse-order release matches.
                 let mut slots = Vec::with_capacity(actions.len());

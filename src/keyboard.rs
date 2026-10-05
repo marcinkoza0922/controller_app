@@ -29,7 +29,7 @@ const fn gap(width: f32) -> Key {
 }
 
 /// Every block has six rows so the blocks line up side by side.
-const MAIN: [&[Key]; 6] = [
+pub const MAIN: [&[Key]; 6] = [
     &[
         k("Esc", "KEY_ESC"), gap(1.0),
         k("F1", "KEY_F1"), k("F2", "KEY_F2"), k("F3", "KEY_F3"), k("F4", "KEY_F4"), gap(0.5),
@@ -155,6 +155,65 @@ pub fn label(code: &str) -> String {
     }
 }
 
+/// A key position in the main block for controller navigation (gaps skipped).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub struct Cursor {
+    pub row: usize,
+    pub col: usize,
+}
+
+/// The main block without spacers: each key with its horizontal center in key units.
+pub fn grid() -> Vec<Vec<(&'static Key, f32)>> {
+    MAIN.iter()
+        .map(|row| {
+            let mut x = 0.0;
+            let mut keys = Vec::new();
+            for key in row.iter() {
+                if !key.code.is_empty() {
+                    keys.push((key, x + key.width / 2.0));
+                }
+                x += key.width;
+            }
+            keys
+        })
+        .collect()
+}
+
+/// The key under the cursor (clamped into the grid).
+pub fn key_at(cursor: Cursor) -> &'static Key {
+    let grid = grid();
+    let row = &grid[cursor.row.min(grid.len() - 1)];
+    row[cursor.col.min(row.len() - 1)].0
+}
+
+/// Moves the cursor one step: left/right along the row (wrapping), up/down to the key in
+/// the next row whose center lines up best (also wrapping).
+pub fn step(cursor: Cursor, dx: i32, dy: i32) -> Cursor {
+    let grid = grid();
+    let row = cursor.row.min(grid.len() - 1);
+    let col = cursor.col.min(grid[row].len() - 1);
+    if dy == 0 {
+        let len = grid[row].len() as i32;
+        return Cursor { row, col: (col as i32 + dx).rem_euclid(len) as usize };
+    }
+    let x = grid[row][col].1;
+    let new_row = (row as i32 + dy).rem_euclid(grid.len() as i32) as usize;
+    let new_col = grid[new_row]
+        .iter()
+        .enumerate()
+        .min_by(|a, b| (a.1.1 - x).abs().total_cmp(&(b.1.1 - x).abs()))
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    Cursor { row: new_row, col: new_col }
+}
+
+/// Where a key code sits in the grid.
+pub fn find(code: &str) -> Option<Cursor> {
+    grid().iter().enumerate().find_map(|(row, keys)| {
+        keys.iter().position(|(k, _)| k.code == code).map(|col| Cursor { row, col })
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
@@ -182,6 +241,24 @@ mod tests {
             let widths: Vec<f32> = block.iter().map(|r| r.iter().map(|k| k.width).sum()).collect();
             assert!(widths.iter().all(|w| (w - widths[0]).abs() < 1e-3), "{widths:?}");
         }
+    }
+
+    #[test]
+    fn controller_navigation_follows_the_layout() {
+        let at = |c: Cursor| key_at(c).code;
+        let q = find("KEY_Q").unwrap();
+        assert_eq!(at(step(q, 1, 0)), "KEY_W");
+        assert_eq!(at(step(q, -1, 0)), "KEY_TAB");
+        // Up from Q lands on the key above it (1 or 2 on a real keyboard), down on A.
+        assert!(matches!(at(step(q, 0, -1)), "KEY_1" | "KEY_2"), "{}", at(step(q, 0, -1)));
+        assert_eq!(at(step(q, 0, 1)), "KEY_A");
+        // Down from H reaches the space bar region of the bottom row eventually.
+        let b = find("KEY_B").unwrap();
+        assert_eq!(at(step(b, 0, 1)), "KEY_SPACE");
+        // Rows wrap around.
+        let esc = find("KEY_ESC").unwrap();
+        assert_eq!(at(step(esc, -1, 0)), "KEY_F12");
+        assert_eq!(step(step(esc, 0, -1), 0, 1).row, esc.row);
     }
 
     #[test]
