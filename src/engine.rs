@@ -968,4 +968,26 @@ mod tests {
         assert!(!axis(&mut e, &p, Axis::LeftX, 0.1).contains(&OutEvent::Key(KeyCode::KEY_Q, true)));
         assert!(axis(&mut e, &p, Axis::LeftX, 0.5).contains(&OutEvent::Key(KeyCode::KEY_Q, true)));
     }
+
+    #[test]
+    fn pc_action_template_drives_keyboard_and_mouse() {
+        let p = Profile::pc_action("a");
+        let mut e = Engine::default();
+        let has = |out: &[OutEvent], ev: OutEvent| out.contains(&ev);
+
+        assert!(has(&axis(&mut e, &p, Axis::RightTrigger, 1.0), OutEvent::MouseButton(MouseButton::Left, true)));
+        assert!(has(&axis(&mut e, &p, Axis::LeftTrigger, 1.0), OutEvent::MouseButton(MouseButton::Right, true)));
+        assert_eq!(run(&mut e, &p, InputEvent::Button(Button::South, true)), vec![OutEvent::Key(KeyCode::KEY_E, true)]);
+
+        // Partial push walks forward; full push adds sprint.
+        assert_eq!(axis(&mut e, &p, Axis::LeftY, -0.5), vec![OutEvent::Key(KeyCode::KEY_W, true)]);
+        assert_eq!(axis(&mut e, &p, Axis::LeftY, -1.0), vec![OutEvent::Key(KeyCode::KEY_LEFTSHIFT, true)]);
+
+        // Right stick is mouse look.
+        axis(&mut e, &p, Axis::RightX, 1.0);
+        assert!(e.needs_tick(&p));
+        let mut out = Vec::new();
+        e.tick(&p, 0.1, &mut out);
+        assert!(matches!(out.as_slice(), [OutEvent::MouseMove(dx, 0)] if *dx > 0), "{out:?}");
+    }
 }

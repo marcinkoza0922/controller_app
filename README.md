@@ -34,6 +34,12 @@ On top of that:
 
 The defaults are **Gamepad** (1:1 passthrough) and **Desktop** (left stick moves the mouse, right stick scrolls, A/B click, LB+RB = Alt+Tab). Guide cycles between profiles in both.
 
+More templates are available under "New from template…" in the GUI:
+
+- **PC action**: WASD on the left stick (Shift at full push to sprint), mouse look on the right stick, Mouse 1/2 on RT/LT, A = E (use), B = Space, X = R, Y = F, LB/RB = Q/G, L3/R3 = Ctrl/V, D-pad = 1–4, Start/Select = Esc/Tab.
+- **Strategy**: mouse pointer on the left stick, arrow-key camera on the right, A/B/X = left/right/middle click, RT = left click for drag-select, LB/RB = held Ctrl/Shift, D-pad = control groups 1–4.
+- **Retro / platformer**: arrows on the D-pad and left stick, A/B/X/Y = Z/X/C/V, for keyboard-only indie games and emulators.
+
 ## Per-game profiles
 
 Rules switch the profile when a game's window gets focus, and an optional default profile is used for everything else. A rule matches on:

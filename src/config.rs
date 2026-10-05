@@ -300,6 +300,19 @@ pub enum Analog {
     Trigger(Trigger),
 }
 
+fn wasd() -> StickAction {
+    StickAction::Keys { up: "KEY_W".into(), down: "KEY_S".into(), left: "KEY_A".into(), right: "KEY_D".into() }
+}
+
+fn arrows() -> StickAction {
+    StickAction::Keys {
+        up: "KEY_UP".into(),
+        down: "KEY_DOWN".into(),
+        left: "KEY_LEFT".into(),
+        right: "KEY_RIGHT".into(),
+    }
+}
+
 impl StickConfig {
     pub fn new(action: StickAction, deadzone: f32, curve: f32) -> Self {
         StickConfig { action, deadzone, curve, key_threshold: default_key_threshold(), zones: Vec::new() }
@@ -461,6 +474,106 @@ impl Profile {
             gestures: BTreeMap::new(),
             tap_window_ms: default_tap_window_ms(),
             long_press_ms: default_long_press_ms(),
+        }
+    }
+
+    /// Keyboard-and-mouse action games (shooters, third-person action): WASD movement with
+    /// sprint at full push, mouse look, Mouse 1/2 on the triggers.
+    pub fn pc_action(name: &str) -> Self {
+        use ButtonAction::*;
+        let key = |k: &str| Keys(vec![k.into()]);
+        let mut left_stick = StickConfig::new(wasd(), 0.12, 1.0);
+        left_stick.key_threshold = 0.25;
+        left_stick.zones.push(Zone { min: 0.9, max: 1.0, action: key("KEY_LEFTSHIFT") });
+        Profile {
+            buttons: BTreeMap::from([
+                (Button::South, key("KEY_E")),
+                (Button::East, key("KEY_SPACE")),
+                (Button::West, key("KEY_R")),
+                (Button::North, key("KEY_F")),
+                (Button::LeftBumper, key("KEY_Q")),
+                (Button::RightBumper, key("KEY_G")),
+                (Button::LeftStick, key("KEY_LEFTCTRL")),
+                (Button::RightStick, key("KEY_V")),
+                (Button::DpadUp, key("KEY_1")),
+                (Button::DpadRight, key("KEY_2")),
+                (Button::DpadDown, key("KEY_3")),
+                (Button::DpadLeft, key("KEY_4")),
+                (Button::Start, key("KEY_ESC")),
+                (Button::Select, key("KEY_TAB")),
+                (Button::Guide, NextProfile),
+            ]),
+            left_stick,
+            right_stick: StickConfig::new(StickAction::Mouse { speed: 1600.0 }, 0.1, 2.0),
+            left_trigger: TriggerAction::Button { action: Mouse(MouseButton::Right), threshold: 0.3 }.into(),
+            right_trigger: TriggerAction::Button { action: Mouse(MouseButton::Left), threshold: 0.3 }.into(),
+            ..Profile::passthrough(name)
+        }
+    }
+
+    /// Mouse-driven strategy games: pointer on the left stick, arrow-key camera pan on the
+    /// right, held Ctrl/Shift modifiers on the bumpers and control groups on the D-pad.
+    pub fn strategy(name: &str) -> Self {
+        use ButtonAction::*;
+        let key = |k: &str| Keys(vec![k.into()]);
+        let mut right_stick = StickConfig::new(arrows(), 0.15, 1.0);
+        right_stick.key_threshold = 0.35;
+        Profile {
+            buttons: BTreeMap::from([
+                (Button::South, Mouse(MouseButton::Left)),
+                (Button::East, Mouse(MouseButton::Right)),
+                (Button::West, Mouse(MouseButton::Middle)),
+                (Button::North, key("KEY_SPACE")),
+                (Button::LeftBumper, key("KEY_LEFTCTRL")),
+                (Button::RightBumper, key("KEY_LEFTSHIFT")),
+                (Button::LeftStick, Disabled),
+                (Button::RightStick, Disabled),
+                (Button::DpadUp, key("KEY_1")),
+                (Button::DpadRight, key("KEY_2")),
+                (Button::DpadDown, key("KEY_3")),
+                (Button::DpadLeft, key("KEY_4")),
+                (Button::Start, key("KEY_ESC")),
+                (Button::Select, key("KEY_TAB")),
+                (Button::Guide, NextProfile),
+            ]),
+            left_stick: StickConfig::new(StickAction::Mouse { speed: 1400.0 }, 0.12, 2.2),
+            right_stick,
+            left_trigger: TriggerAction::Button { action: key("KEY_LEFTALT"), threshold: 0.4 }.into(),
+            // Hold and move the pointer to drag a selection box.
+            right_trigger: TriggerAction::Button { action: Mouse(MouseButton::Left), threshold: 0.4 }.into(),
+            ..Profile::passthrough(name)
+        }
+    }
+
+    /// Keyboard-only retro games, indie platformers and emulators: arrows plus Z/X/C/V.
+    pub fn platformer(name: &str) -> Self {
+        use ButtonAction::*;
+        let key = |k: &str| Keys(vec![k.into()]);
+        let mut left_stick = StickConfig::new(arrows(), 0.15, 1.0);
+        left_stick.key_threshold = 0.4;
+        Profile {
+            buttons: BTreeMap::from([
+                (Button::South, key("KEY_Z")),
+                (Button::East, key("KEY_X")),
+                (Button::West, key("KEY_C")),
+                (Button::North, key("KEY_V")),
+                (Button::LeftBumper, key("KEY_A")),
+                (Button::RightBumper, key("KEY_S")),
+                (Button::LeftStick, Disabled),
+                (Button::RightStick, Disabled),
+                (Button::DpadUp, key("KEY_UP")),
+                (Button::DpadDown, key("KEY_DOWN")),
+                (Button::DpadLeft, key("KEY_LEFT")),
+                (Button::DpadRight, key("KEY_RIGHT")),
+                (Button::Start, key("KEY_ENTER")),
+                (Button::Select, key("KEY_ESC")),
+                (Button::Guide, NextProfile),
+            ]),
+            left_stick,
+            right_stick: StickConfig::new(StickAction::Disabled, 0.15, 1.0),
+            left_trigger: TriggerAction::Button { action: key("KEY_LEFTSHIFT"), threshold: 0.5 }.into(),
+            right_trigger: TriggerAction::Button { action: key("KEY_SPACE"), threshold: 0.5 }.into(),
+            ..Profile::passthrough(name)
         }
     }
 
@@ -723,6 +836,49 @@ mod tests {
         value.as_table_mut().unwrap().remove("auto_switch");
         let old: Config = toml::from_str(&toml::to_string(&value).unwrap()).unwrap();
         assert_eq!(old.auto_switch, AutoSwitch::default());
+    }
+
+    fn templates() -> Vec<Profile> {
+        vec![
+            Profile::passthrough("a"),
+            Profile::desktop("b"),
+            Profile::pc_action("c"),
+            Profile::strategy("d"),
+            Profile::platformer("e"),
+        ]
+    }
+
+    #[test]
+    fn templates_map_every_button_with_valid_keys() {
+        use std::str::FromStr;
+        for p in templates() {
+            assert_eq!(p.buttons.len(), Button::ALL.len(), "{}: unmapped buttons", p.name);
+            let mut keys: Vec<&String> = p.buttons.values().flat_map(|a| a.key_names()).collect();
+            for t in [Trigger::Left, Trigger::Right] {
+                if let TriggerAction::Button { action, .. } = p.trigger(t) {
+                    keys.extend(action.key_names());
+                }
+            }
+            for s in [Stick::Left, Stick::Right] {
+                let cfg = p.stick(s);
+                if let StickAction::Keys { up, down, left, right } = &cfg.action {
+                    keys.extend([up, down, left, right]);
+                }
+                keys.extend(cfg.zones.iter().flat_map(|z| z.action.key_names()));
+            }
+            for k in keys {
+                assert!(evdev::KeyCode::from_str(k).is_ok(), "{}: bad key {k}", p.name);
+            }
+            // Guide always cycles profiles, so no template can trap you in it.
+            assert_eq!(p.button(Button::Guide), &ButtonAction::NextProfile, "{}", p.name);
+        }
+    }
+
+    #[test]
+    fn templates_roundtrip_through_toml() {
+        let config = Config { profiles: templates(), ..Config::default() };
+        let back: Config = toml::from_str(&toml::to_string_pretty(&config).unwrap()).unwrap();
+        assert_eq!(config, back);
     }
 
     #[test]

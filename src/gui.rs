@@ -147,7 +147,45 @@ enum ZonePreset {
 enum Template {
     Gamepad,
     Desktop,
+    Action,
+    Strategy,
+    Platformer,
     Duplicate,
+}
+
+impl Template {
+    /// Offered in the "New from template" list (Duplicate has its own button).
+    const NEW: [Template; 5] = [
+        Template::Gamepad,
+        Template::Action,
+        Template::Strategy,
+        Template::Platformer,
+        Template::Desktop,
+    ];
+
+    fn base_name(self) -> &'static str {
+        match self {
+            Template::Gamepad => "Gamepad",
+            Template::Desktop => "Desktop",
+            Template::Action => "PC Action",
+            Template::Strategy => "Strategy",
+            Template::Platformer => "Platformer",
+            Template::Duplicate => "Copy",
+        }
+    }
+}
+
+impl fmt::Display for Template {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Template::Gamepad => "Gamepad passthrough",
+            Template::Desktop => "Desktop navigation",
+            Template::Action => "PC action (WASD + mouse look)",
+            Template::Strategy => "Strategy (mouse pointer + hotkeys)",
+            Template::Platformer => "Retro / platformer (arrows + Z/X/C)",
+            Template::Duplicate => "Copy of this profile",
+        })
+    }
 }
 
 async fn call(req: Request) -> Result<Response, String> {
@@ -309,14 +347,13 @@ impl App {
                 }
             }
             Message::AddProfile(template) => {
-                let name = self.unique_name(match template {
-                    Template::Gamepad => "Gamepad",
-                    Template::Desktop => "Desktop",
-                    Template::Duplicate => "Copy",
-                });
+                let name = self.unique_name(template.base_name());
                 let profile = match template {
                     Template::Gamepad => Profile::passthrough(&name),
                     Template::Desktop => Profile::desktop(&name),
+                    Template::Action => Profile::pc_action(&name),
+                    Template::Strategy => Profile::strategy(&name),
+                    Template::Platformer => Profile::platformer(&name),
                     Template::Duplicate => {
                         let mut p = self.profile().cloned().unwrap_or_else(|| Profile::passthrough(""));
                         p.name = name;
@@ -864,8 +901,9 @@ impl App {
                     .on_input(Message::RenameProfile)
                     .width(200),
                 space::horizontal(),
-                button(text("+ Gamepad")).style(button::secondary).on_press(Message::AddProfile(Template::Gamepad)),
-                button(text("+ Desktop")).style(button::secondary).on_press(Message::AddProfile(Template::Desktop)),
+                pick_list(Template::NEW, None::<Template>, Message::AddProfile)
+                    .placeholder("+ New from template…")
+                    .width(240),
                 button(text("Duplicate")).style(button::secondary).on_press(Message::AddProfile(Template::Duplicate)),
                 button(text("Delete"))
                     .style(button::danger)
@@ -1770,6 +1808,17 @@ mod tests {
         let mut app = app();
         app.config.auto_switch.rules.push(Rule { kind: RuleKind::Executable, value: "x".into(), profile: "Gone".into() });
         assert!(app.validate().unwrap().contains("missing profile"));
+    }
+
+    #[test]
+    fn new_profile_from_template_gets_unique_name_and_is_edited() {
+        let mut app = app();
+        let _ = app.update(Message::AddProfile(Template::Action));
+        let _ = app.update(Message::AddProfile(Template::Action));
+        let names: Vec<&str> = app.config.profiles.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["Gamepad", "Desktop", "PC Action", "PC Action 2"]);
+        assert_eq!(app.profile().unwrap().name, "PC Action 2");
+        assert_eq!(app.validate(), None);
     }
 
     #[test]
