@@ -342,12 +342,15 @@ impl Daemon {
         if self.active.is_some() {
             return;
         }
-        let Some(session) = MenuSession::open(&self.config.menus, &name, opener) else {
+        let Some(mut session) = MenuSession::open(&self.config.menus, &name, opener) else {
             log!("no menu named {name:?}, or it has no items");
             return;
         };
         if !self.ensure_overlay_process() {
             return;
+        }
+        if let Some(dev) = self.devices.get(&device) {
+            session.prime(&self.config.menus, dev.view.buttons(), dev.view.axes());
         }
         self.release_mappings();
         self.active = Some(Active::Menu { session, device });
@@ -398,6 +401,10 @@ impl Daemon {
         }
         // The overlay window goes back to idle (it stays running for next time).
         self.broadcast_overlay();
+        for dev in self.devices.values_mut() {
+            let down = dev.view.buttons().collect();
+            dev.engine.forget_released(&down);
+        }
         self.resync_all();
     }
 
@@ -422,6 +429,11 @@ impl Daemon {
         dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
         let toggle_overlay = dev.engine.take_overlay_toggle();
         let menu_request = dev.engine.take_menu_request();
+        // Switching profiles or opening the keyboard closes a menu that is still up.
+        let menu_up = matches!(self.active, Some(Active::Menu { .. }));
+        if menu_up && (switch || toggle_overlay) {
+            self.close_overlay();
+        }
         if switch && let Some(next) = self.config.next_profile_name() {
             self.switch_profile(next);
         }
@@ -706,10 +718,17 @@ impl Daemon {
                 Some(Active::Menu { session, device }) => {
                     let device = *device;
                     match session.handle(&self.config.menus, ev, now) {
-                        Some(MenuOutcome::Choose { menu, item, action }) => {
-                            self.close_overlay();
+                        Some(MenuOutcome::Choose { menu, item, action, close }) => {
+                            if close {
+                                self.close_overlay();
+                                self.run_menu_item(device, &menu, item, &action);
+                                return;
+                            }
+                            // The menu stays up for more picks.
                             self.run_menu_item(device, &menu, item, &action);
-                            return;
+                            if !matches!(self.active, Some(Active::Menu { .. })) {
+                                return;
+                            }
                         }
                         Some(MenuOutcome::Close) => return self.close_overlay(),
                         None => {}

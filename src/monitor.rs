@@ -120,6 +120,14 @@ impl InputView {
         }
     }
 
+    pub fn buttons(&self) -> impl Iterator<Item = Button> + '_ {
+        self.buttons.iter().copied()
+    }
+
+    pub fn axes(&self) -> impl Iterator<Item = (Axis, f32)> + '_ {
+        self.axes.iter().map(|(a, v)| (*a, *v))
+    }
+
     pub fn set_gyro(&mut self, gyro: [f32; 3]) {
         self.gyro = Some(gyro);
     }

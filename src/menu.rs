@@ -50,20 +50,40 @@ pub struct ItemView {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum MenuOutcome {
-    /// Run this item's action (the menu has closed).
-    Choose { menu: String, item: usize, action: ButtonAction },
+    /// Run this item's action; `close` says whether the menu goes away too.
+    Choose { menu: String, item: usize, action: ButtonAction, close: bool },
     Close,
 }
+
+/// What keeps a menu on screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// Up while the opener is held; letting go closes it (a radial menu chooses first).
+    Held,
+    /// Opened by a Toggle: up until the opener is pressed again.
+    Toggled,
+    /// Opened by something that can't be watched (the command line, a tap that was already
+    /// let go): up until an item is chosen or the menu's back button closes it.
+    Unwatched,
+}
+
+/// A stick-direction opener counts as let go once the stick is back within this.
+const DIRECTION_RELEASE: f32 = 0.25;
 
 struct Frame {
     menu: usize,
     cursor: Option<usize>,
 }
 
-/// One open menu (and any submenus opened from it).
+/// One open menu (and any submenus opened from it, which close with it).
 pub struct MenuSession {
     stack: Vec<Frame>,
     opener: Opener,
+    mode: Mode,
+    /// Whether the opener was down after the last event.
+    opener_down: bool,
+    /// A toggled menu closes on the opener's next press, once it has been let go.
+    armed: bool,
     axes: HashMap<Axis, f32>,
     held: HashSet<Button>,
     /// Direction stepping through a list or carousel, and when it repeats.
@@ -96,7 +116,14 @@ pub fn button_badge(b: Button) -> &'static str {
         Button::DpadDown => "↓",
         Button::DpadLeft => "←",
         Button::DpadRight => "→",
-        _ => "",
+        Button::LeftStickUp => "LS↑",
+        Button::LeftStickDown => "LS↓",
+        Button::LeftStickLeft => "LS←",
+        Button::LeftStickRight => "LS→",
+        Button::RightStickUp => "RS↑",
+        Button::RightStickDown => "RS↓",
+        Button::RightStickLeft => "RS←",
+        Button::RightStickRight => "RS→",
     }
 }
 
@@ -107,17 +134,87 @@ impl MenuSession {
         if menus[menu].items.is_empty() {
             return None;
         }
+        let watchable = !opener.buttons.is_empty() || opener.trigger.is_some();
+        let mode = match (opener.toggled, watchable) {
+            (_, false) => Mode::Unwatched,
+            (true, true) => Mode::Toggled,
+            (false, true) => Mode::Held,
+        };
         let mut session = MenuSession {
             stack: Vec::new(),
             opener,
+            mode,
+            // Assumed held, as it just opened the menu; `prime` checks.
+            opener_down: true,
+            armed: false,
             axes: HashMap::new(),
             held: HashSet::new(),
             stepping: None,
             stick_step: None,
             trigger_step: None,
         };
+        // Until `prime` says otherwise, the opener is taken to be held (it just fired).
+        for b in session.opener.buttons.clone() {
+            match b.stick_direction() {
+                Some((stick, (dx, dy))) => {
+                    let (ax, ay) = stick_axes(stick);
+                    session.axes.insert(ax, dx);
+                    session.axes.insert(ay, dy);
+                }
+                None => {
+                    session.held.insert(b);
+                }
+            }
+        }
+        if let Some(t) = session.opener.trigger {
+            session.axes.insert(trigger_axis(t), 1.0);
+        }
         session.push(menus, menu);
         Some(session)
+    }
+
+    /// Tells the session what the controller is holding as the menu opens. An opener that
+    /// is already let go (a quick tap) can't hold the menu up, so it stays until used.
+    pub fn prime(&mut self, menus: &[Menu], buttons: impl IntoIterator<Item = Button>, axes: impl IntoIterator<Item = (Axis, f32)>) {
+        self.held = buttons.into_iter().collect();
+        self.axes = axes.into_iter().collect();
+        self.opener_down = self.opener_is_down();
+        match self.mode {
+            Mode::Held if !self.opener_down => self.mode = Mode::Unwatched,
+            Mode::Toggled if !self.opener_down => self.armed = true,
+            _ => {}
+        }
+        if let Some(menu) = self.top(menus).cloned()
+            && let MenuKind::Radial { stick } = menu.kind
+        {
+            self.aim(&menu, stick);
+        }
+    }
+
+    fn opener_is_down(&self) -> bool {
+        let buttons = self.opener.buttons.iter().all(|b| match b.stick_direction() {
+            Some((stick, (dx, dy))) => {
+                let (ax, ay) = stick_axes(stick);
+                let (x, y) = (self.axis(ax), self.axis(ay));
+                x * dx + y * dy >= DIRECTION_RELEASE
+            }
+            None => self.held.contains(b),
+        });
+        let trigger = self.opener.trigger.is_none_or(|t| self.axis(trigger_axis(t)) >= TRIGGER_RELEASE);
+        buttons && trigger
+    }
+
+    fn axis(&self, axis: Axis) -> f32 {
+        self.axes.get(&axis).copied().unwrap_or(0.0)
+    }
+
+    /// The input that opened the menu, for hints.
+    fn opener_label(&self) -> String {
+        let mut parts: Vec<&str> = self.opener.buttons.iter().map(|b| button_badge(*b)).collect();
+        if let Some(t) = self.opener.trigger {
+            parts.push(if t == Trigger::Left { "LT" } else { "RT" });
+        }
+        parts.join("+")
     }
 
     fn push(&mut self, menus: &[Menu], menu: usize) {
@@ -154,17 +251,28 @@ impl MenuSession {
                 submenu: matches!(item.action, ButtonAction::OpenMenu(_)),
             })
             .collect();
-        let cancel = button_badge(menu.cancel_button());
-        let back = if self.stack.len() > 1 { "back" } else { "close" };
+        let radial = matches!(menu.kind, MenuKind::Radial { .. });
+        // How the menu goes away (and, for a radial menu, chooses).
+        let close = match (self.mode, radial) {
+            (Mode::Held, true) => "let go to choose".to_string(),
+            (Mode::Held, false) => "let go to close".to_string(),
+            (Mode::Toggled, true) => format!("{} again to choose", self.opener_label()),
+            (Mode::Toggled, false) => format!("{} again to close", self.opener_label()),
+            (Mode::Unwatched, true) => format!("A choose · {} close", button_badge(menu.cancel_button())),
+            (Mode::Unwatched, false) => {
+                let back = if self.stack.len() > 1 { "back" } else { "close" };
+                format!("{} {back}", button_badge(menu.cancel_button()))
+            }
+        };
         let hint = match menu.kind {
             MenuKind::Radial { stick } => {
                 let stick = if stick == Stick::Left { "left stick" } else { "right stick" };
-                format!("Aim the {stick}, release to choose · {cancel} {back}")
+                format!("Aim the {stick} · {close}")
             }
-            MenuKind::Directional { cluster } => format!("Press a {} direction · {cancel} {back}", cluster.to_string().to_lowercase()),
-            MenuKind::List => format!("↑↓ move · A choose · {cancel} {back}"),
-            MenuKind::Buttons => format!("Press an item's button, or ↑↓ and A · {cancel} {back}"),
-            MenuKind::Carousel { controls } => format!("{controls} to cycle · A choose · {cancel} {back}"),
+            MenuKind::Directional { cluster } => format!("Press a {} direction · {close}", cluster.to_string().to_lowercase()),
+            MenuKind::List => format!("↑↓ move · A choose · {close}"),
+            MenuKind::Buttons => format!("Press an item's button, or ↑↓ and A · {close}"),
+            MenuKind::Carousel { controls } => format!("{controls} to cycle · A choose · {close}"),
         };
         Some(MenuView {
             title: menu.name.clone(),
@@ -180,32 +288,56 @@ impl MenuSession {
     /// Handles controller input; returns what to do, if anything.
     pub fn handle(&mut self, menus: &[Menu], ev: InputEvent, now: Instant) -> Option<MenuOutcome> {
         let menu = self.top(menus)?.clone();
+        let mut fresh_press = false;
         match ev {
-            InputEvent::Button(b, true) => {
-                if !self.held.insert(b) {
-                    return None;
-                }
-                self.button_pressed(menus, &menu, b, now)
-            }
+            InputEvent::Button(b, true) => fresh_press = self.held.insert(b),
             InputEvent::Button(b, false) => {
                 self.held.remove(&b);
                 if self.stepping.is_some() && matches!(b, Button::DpadUp | Button::DpadDown | Button::DpadLeft | Button::DpadRight) {
                     self.stepping = None;
                 }
-                if self.opener.buttons.contains(&b) {
-                    return self.opener_released(menus, &menu);
-                }
-                None
             }
             InputEvent::Axis(axis, value) => {
-                let before = self.axes.insert(axis, value).unwrap_or(0.0);
-                self.axis_moved(menus, &menu, axis, before, value, now)
+                self.axes.insert(axis, value);
             }
+        }
+
+        let down = self.opener_is_down();
+        let was_down = std::mem::replace(&mut self.opener_down, down);
+        match self.mode {
+            Mode::Held if was_down && !down => return Some(self.finish(&menu)),
+            Mode::Toggled if !down => self.armed = true,
+            Mode::Toggled if self.armed && !was_down => return Some(self.finish(&menu)),
+            _ => {}
+        }
+
+        match ev {
+            // The opener's own buttons only hold the menu up.
+            InputEvent::Button(b, true) if fresh_press && !self.opener.buttons.contains(&b) => {
+                self.button_pressed(menus, &menu, b, now)
+            }
+            InputEvent::Button(..) => None,
+            InputEvent::Axis(axis, value) => self.axis_moved(&menu, axis, value, now),
         }
     }
 
+    /// The opener was let go (or pressed again, for a toggled menu): a radial menu chooses
+    /// what it's aimed at, and the menu closes with all its submenus.
+    fn finish(&mut self, menu: &Menu) -> MenuOutcome {
+        let aimed = self.stack.last().and_then(|f| f.cursor);
+        if let MenuKind::Radial { .. } = menu.kind
+            && let Some(i) = aimed
+            && let Some(item) = menu.items.get(i)
+            && !matches!(item.action, ButtonAction::Disabled | ButtonAction::OpenMenu(_))
+        {
+            return MenuOutcome::Choose { menu: menu.name.clone(), item: i, action: item.action.clone(), close: true };
+        }
+        MenuOutcome::Close
+    }
+
     fn button_pressed(&mut self, menus: &[Menu], menu: &Menu, b: Button, now: Instant) -> Option<MenuOutcome> {
-        if b == menu.cancel_button() {
+        // A menu that can't be let go of needs a button to back out with.
+        if self.mode == Mode::Unwatched && b == menu.cancel_button() {
             return self.back();
         }
         match menu.kind {
@@ -214,8 +346,8 @@ impl MenuSession {
                 self.choose(menus, slot)
             }
             MenuKind::Radial { .. } => {
-                // A works too, e.g. when the menu was opened by something we can't watch.
-                (b == Button::South).then(|| self.choose_cursor(menus)).flatten()
+                // With nothing to let go of, A chooses.
+                (self.mode == Mode::Unwatched && b == Button::South).then(|| self.choose_cursor(menus)).flatten()
             }
             MenuKind::Buttons => {
                 if let Some(i) = menu.items.iter().position(|item| item.button == Some(b)) {
@@ -249,14 +381,10 @@ impl MenuSession {
         None
     }
 
-    fn axis_moved(&mut self, menus: &[Menu], menu: &Menu, axis: Axis, before: f32, value: f32, now: Instant) -> Option<MenuOutcome> {
-        // A trigger opener being let go chooses (radial) like a released button.
-        if let Some(t) = self.opener.trigger
-            && axis == trigger_axis(t)
-            && before >= TRIGGER_RELEASE
-            && value < TRIGGER_RELEASE
-        {
-            return self.opener_released(menus, menu);
+    fn axis_moved(&mut self, menu: &Menu, axis: Axis, value: f32, now: Instant) -> Option<MenuOutcome> {
+        // A trigger opener only holds the menu up.
+        if self.opener.trigger.is_some_and(|t| axis == trigger_axis(t)) {
+            return None;
         }
         match menu.kind {
             MenuKind::Radial { stick } => {
@@ -343,31 +471,29 @@ impl MenuSession {
         }
     }
 
-    fn opener_released(&mut self, menus: &[Menu], menu: &Menu) -> Option<MenuOutcome> {
-        // Only a radial menu acts on release; the others stay open for navigation.
-        if !matches!(menu.kind, MenuKind::Radial { .. }) {
-            return None;
-        }
-        self.choose_cursor(menus).or(Some(MenuOutcome::Close))
-    }
-
     fn choose_cursor(&mut self, menus: &[Menu]) -> Option<MenuOutcome> {
         let i = self.stack.last()?.cursor?;
         self.choose(menus, i)
     }
 
-    /// Chooses item `i`: opens its submenu, or hands back its action to run.
+    /// Chooses item `i`: opens its submenu, or hands back its action to run. A held or
+    /// toggled menu stays up after an action, so several can be picked in one go.
     fn choose(&mut self, menus: &[Menu], i: usize) -> Option<MenuOutcome> {
         let menu = self.top(menus)?;
         let item = menu.items.get(i)?;
         match &item.action {
             ButtonAction::Disabled => None,
             ButtonAction::OpenMenu(name) => {
-                let sub = find(menus, name).filter(|m| !menus[*m].items.is_empty())?;
+                let sub = find(menus, name).filter(|m| can_open(menu, &menus[*m]))?;
                 self.push(menus, sub);
                 None
             }
-            action => Some(MenuOutcome::Choose { menu: menu.name.clone(), item: i, action: action.clone() }),
+            action => Some(MenuOutcome::Choose {
+                menu: menu.name.clone(),
+                item: i,
+                action: action.clone(),
+                close: self.mode == Mode::Unwatched,
+            }),
         }
     }
 
@@ -395,6 +521,12 @@ impl MenuSession {
     pub fn next_deadline(&self) -> Option<Instant> {
         self.stepping.map(|(_, t)| t)
     }
+}
+
+/// Whether `parent` may open `child` as a submenu: only menus of the same kind, and never
+/// from a radial menu (aiming a second wheel with the same release is awkward).
+pub fn can_open(parent: &Menu, child: &Menu) -> bool {
+    !matches!(parent.kind, MenuKind::Radial { .. }) && parent.kind.tag() == child.kind.tag() && !child.items.is_empty()
 }
 
 fn stick_axes(s: Stick) -> (Axis, Axis) {
@@ -447,7 +579,7 @@ mod tests {
     }
 
     fn held_by(b: Button) -> Opener {
-        Opener { buttons: vec![b], trigger: None }
+        Opener { buttons: vec![b], ..Opener::default() }
     }
 
     #[test]
@@ -474,7 +606,7 @@ mod tests {
         let mut s = MenuSession::open(&menus, "W", held_by(Button::LeftBumper)).unwrap();
         assert_eq!(s.handle(&menus, InputEvent::Button(Button::LeftBumper, false), Instant::now()), Some(MenuOutcome::Close));
 
-        let opener = Opener { buttons: vec![], trigger: Some(Trigger::Left) };
+        let opener = Opener { trigger: Some(Trigger::Left), ..Opener::default() };
         let mut s = MenuSession::open(&menus, "W", opener).unwrap();
         let now = Instant::now();
         s.handle(&menus, InputEvent::Axis(Axis::LeftTrigger, 1.0), now);
@@ -516,9 +648,7 @@ mod tests {
     #[test]
     fn list_moves_with_dpad_and_stick_and_wraps() {
         let menus = [menu("Pause", MenuKind::List, numbers(3))];
-        let mut s = MenuSession::open(&menus, "Pause", held_by(Button::Select)).unwrap();
-        // Letting go of the button that opened a list leaves it open.
-        assert_eq!(s.handle(&menus, InputEvent::Button(Button::Select, false), Instant::now()), None);
+        let mut s = MenuSession::open(&menus, "Pause", Opener::default()).unwrap();
         press(&mut s, &menus, Button::DpadUp);
         assert_eq!(s.view(&menus).unwrap().selected, Some(2), "wraps to the bottom");
         let now = Instant::now();
@@ -562,6 +692,78 @@ mod tests {
             assert_eq!(s.view(&menus).unwrap().selected, Some(1), "{controls:?}");
             assert_eq!(chose(press(&mut s, &menus, Button::South)).as_deref(), Some("KEY_2"), "{controls:?}");
         }
+    }
+
+    #[test]
+    fn held_menu_stays_up_for_picks_and_closes_with_its_submenu_on_release() {
+        let menus = [
+            menu(
+                "Root",
+                MenuKind::Directional { cluster: Cluster::DPad },
+                vec![item("Up", key("KEY_U")), item("More", ButtonAction::OpenMenu("Sub".into()))],
+            ),
+            menu("Sub", MenuKind::Directional { cluster: Cluster::DPad }, vec![item("Deep", key("KEY_D"))]),
+        ];
+        let mut s = MenuSession::open(&menus, "Root", held_by(Button::LeftBumper)).unwrap();
+        let picked = press(&mut s, &menus, Button::DpadUp);
+        assert!(matches!(picked, Some(MenuOutcome::Choose { close: false, .. })), "{picked:?}");
+        assert_eq!(press(&mut s, &menus, Button::East), None, "B doesn't close a held menu");
+        press(&mut s, &menus, Button::DpadRight);
+        assert_eq!(s.view(&menus).unwrap().title, "Sub");
+        assert_eq!(chose(press(&mut s, &menus, Button::DpadUp)).as_deref(), Some("KEY_D"));
+        assert_eq!(s.view(&menus).unwrap().title, "Sub", "still up after a pick");
+        // Letting go closes the submenu and its parent together.
+        assert_eq!(s.handle(&menus, InputEvent::Button(Button::LeftBumper, false), Instant::now()), Some(MenuOutcome::Close));
+    }
+
+    #[test]
+    fn submenus_must_match_and_radial_menus_open_none() {
+        let menus = [
+            menu("List", MenuKind::List, vec![item("Wheel", ButtonAction::OpenMenu("Wheel".into()))]),
+            menu("Wheel", MenuKind::Radial { stick: Stick::Right }, vec![item("Back", ButtonAction::OpenMenu("List".into()))]),
+        ];
+        let mut s = MenuSession::open(&menus, "List", held_by(Button::LeftBumper)).unwrap();
+        assert_eq!(press(&mut s, &menus, Button::South), None);
+        assert_eq!(s.view(&menus).unwrap().title, "List", "a list doesn't open a radial menu");
+        let mut s = MenuSession::open(&menus, "Wheel", held_by(Button::LeftBumper)).unwrap();
+        s.handle(&menus, InputEvent::Axis(Axis::RightY, -0.9), Instant::now());
+        assert_eq!(s.handle(&menus, InputEvent::Button(Button::LeftBumper, false), Instant::now()), Some(MenuOutcome::Close));
+        assert!(!can_open(&menus[1], &menus[0]) && !can_open(&menus[0], &menus[1]));
+        assert!(can_open(&menus[0], &menus[0]));
+    }
+
+    #[test]
+    fn toggled_menu_closes_on_the_next_press() {
+        let menus = [menu("W", MenuKind::Radial { stick: Stick::Right }, numbers(4))];
+        let opener = Opener { buttons: vec![Button::LeftBumper], toggled: true, ..Opener::default() };
+        let mut s = MenuSession::open(&menus, "W", opener).unwrap();
+        let now = Instant::now();
+        assert_eq!(s.handle(&menus, InputEvent::Button(Button::LeftBumper, false), now), None, "stays up when let go");
+        s.handle(&menus, InputEvent::Axis(Axis::RightX, 0.9), now);
+        assert!(s.view(&menus).unwrap().hint.contains("LB again"));
+        assert_eq!(chose(s.handle(&menus, InputEvent::Button(Button::LeftBumper, true), now)).as_deref(), Some("KEY_2"));
+    }
+
+    #[test]
+    fn openers_already_let_go_fall_back_to_a_close_button() {
+        let menus = [menu("L", MenuKind::List, numbers(2))];
+        let mut s = MenuSession::open(&menus, "L", held_by(Button::LeftBumper)).unwrap();
+        s.prime(&menus, [], []);
+        assert!(s.view(&menus).unwrap().hint.contains("B close"));
+        assert!(matches!(press(&mut s, &menus, Button::South), Some(MenuOutcome::Choose { close: true, .. })));
+        let mut s = MenuSession::open(&menus, "L", held_by(Button::LeftBumper)).unwrap();
+        s.prime(&menus, [], []);
+        assert_eq!(press(&mut s, &menus, Button::East), Some(MenuOutcome::Close));
+    }
+
+    #[test]
+    fn stick_direction_openers_hold_the_menu() {
+        let menus = [menu("L", MenuKind::List, numbers(2))];
+        let mut s = MenuSession::open(&menus, "L", held_by(Button::LeftStickUp)).unwrap();
+        s.prime(&menus, [], [(Axis::LeftY, -0.9)]);
+        let now = Instant::now();
+        assert_eq!(s.handle(&menus, InputEvent::Axis(Axis::LeftY, -0.5), now), None);
+        assert_eq!(s.handle(&menus, InputEvent::Axis(Axis::LeftY, -0.1), now), Some(MenuOutcome::Close));
     }
 
     #[test]

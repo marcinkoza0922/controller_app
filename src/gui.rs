@@ -95,19 +95,6 @@ enum ProfileTab {
     Gyro,
 }
 
-/// A menu's cancel button in a picker; `None` means the kind's default.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct CancelChoice(Option<Button>);
-
-impl fmt::Display for CancelChoice {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.0 {
-            Some(b) => write!(f, "{b}"),
-            None => f.write_str("Default"),
-        }
-    }
-}
-
 /// A menu item's quick-select button in a picker; `None` means none.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct QuickChoice(Option<Button>);
@@ -298,11 +285,33 @@ fn fit_items(menu: &mut Menu) {
     }
 }
 
+/// What's wrong with a menu item's action: the usual checks, plus which menus it may open
+/// (see [`crate::menu::can_open`]).
+fn item_problem(menu: &Menu, action: &ButtonAction, menus: &[Menu], names: &Names) -> Option<String> {
+    action_problem(action, names).or_else(|| {
+        let mut problem = None;
+        action.walk(&mut |a| {
+            if let ButtonAction::OpenMenu(name) = a
+                && problem.is_none()
+            {
+                if matches!(menu.kind, MenuKind::Radial { .. }) {
+                    problem = Some("radial menus can't open other menus".to_string());
+                } else if let Some(child) = menus.iter().find(|m| &m.name == name)
+                    && child.kind.tag() != menu.kind.tag()
+                {
+                    problem = Some(format!("{name:?} isn't a {} menu", menu.kind.tag().short().to_lowercase()));
+                }
+            }
+        });
+        problem
+    })
+}
+
 fn menus_have_problem(menus: &[Menu], names: &Names) -> bool {
     menus.iter().enumerate().any(|(i, m)| {
         m.name.trim().is_empty()
             || menus[..i].iter().any(|o| o.name == m.name)
-            || m.items.iter().any(|item| action_problem(&item.action, names).is_some())
+            || m.items.iter().any(|item| item_problem(m, &item.action, menus, names).is_some())
     })
 }
 
@@ -607,7 +616,6 @@ enum Message {
     DeleteMenu(usize),
     RenameMenu(usize, String),
     SetMenuKind(usize, MenuKind),
-    SetMenuCancel(usize, CancelChoice),
     SetMenuStyle(usize, OverlayStyle),
     SetKeyboardStyle(OverlayStyle),
     AddMenuItem(usize),
@@ -1132,11 +1140,6 @@ impl App {
                     fit_items(m);
                 }
             }
-            Message::SetMenuCancel(i, choice) => {
-                if let Some(m) = self.config.menus.get_mut(i) {
-                    m.cancel = choice.0;
-                }
-            }
             Message::SetMenuStyle(i, style) => {
                 if let Some(m) = self.config.menus.get_mut(i) {
                     m.style = style;
@@ -1429,7 +1432,7 @@ impl App {
             if self.config.menus[..i].iter().any(|o| o.name == m.name) {
                 return Some(format!("Two menus are named {:?}.", m.name));
             }
-            if let Some(problem) = m.items.iter().find_map(|item| action_problem(&item.action, &names)) {
+            if let Some(problem) = m.items.iter().find_map(|item| item_problem(m, &item.action, &self.config.menus, &names)) {
                 return Some(format!("Menu {:?}: {problem}", m.name));
             }
         }
@@ -2085,7 +2088,7 @@ impl App {
     /// A menu as its own collapsible card: a summary line, or the full editor when open.
     fn view_menu_card<'a>(&'a self, mi: usize, menu: &'a Menu, names: &Names) -> Element<'a, Message> {
         let open = self.open_menus.contains(&mi);
-        let problem = menu.items.iter().find_map(|item| action_problem(&item.action, names));
+        let problem = menu.items.iter().find_map(|item| item_problem(menu, &item.action, &self.config.menus, names));
         let chevron = if open { "▾" } else { "▸" };
         let title = text(format!("{chevron}  {}", if menu.name.is_empty() { "(unnamed)" } else { &menu.name })).size(18);
         let title = if problem.is_some() { title.color(ERROR_COLOR) } else { title };
@@ -2143,19 +2146,6 @@ impl App {
             MenuKind::List | MenuKind::Buttons => {}
         }
         rows.push(labeled("Kind", kind_row.into()));
-        let mut cancels = vec![CancelChoice(None)];
-        cancels.extend(Button::ALL.into_iter().map(|b| CancelChoice(Some(b))));
-        let default_cancel = Menu { cancel: None, ..menu.clone() }.cancel_button();
-        rows.push(labeled(
-            "Back / close",
-            row![
-                dropdown(cancels, Some(CancelChoice(menu.cancel)), move |c| Message::SetMenuCancel(mi, c)).width(200),
-                text(format!("(default: {})", crate::menu::button_badge(default_cancel))).size(12).color(MUTED_COLOR),
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center)
-            .into(),
-        ));
 
         // Appearance, with a live preview.
         let appearance_open = self.open_appearance.contains(&Some(mi));
@@ -2163,7 +2153,7 @@ impl App {
         if appearance_open {
             rows.push(style_editor(&menu.style, Rc::new(move |s| Message::SetMenuStyle(mi, s))));
         }
-        if let Some(view) = MenuSession::open(std::slice::from_ref(menu), &menu.name, Opener::default())
+        if let Some(view) = MenuSession::open(std::slice::from_ref(menu), &menu.name, Opener { buttons: vec![Button::LeftBumper], ..Opener::default() })
             .and_then(|s| s.view(std::slice::from_ref(menu)))
         {
             let view = crate::menu::MenuView { style: preview_style(&menu.style), ..view };
@@ -2176,6 +2166,19 @@ impl App {
             _ => None,
         };
         let quick = matches!(menu.kind, MenuKind::Buttons);
+        // Items open only other menus of the same kind; radial menus open none.
+        let radial = matches!(menu.kind, MenuKind::Radial { .. });
+        let item_kinds = if radial { RADIAL_ITEM_KINDS } else { MENU_ITEM_KINDS };
+        let item_names = Names {
+            macros: names.macros.clone(),
+            menus: self
+                .config
+                .menus
+                .iter()
+                .filter(|m| m.name != menu.name && m.kind.tag() == menu.kind.tag())
+                .map(|m| m.name.clone())
+                .collect(),
+        };
         let last = menu.items.len().saturating_sub(1);
         let mut items = column![text("Items").size(16)].spacing(8);
         for (i, item) in menu.items.iter().enumerate() {
@@ -2199,7 +2202,7 @@ impl App {
                     tooltip::Position::Top,
                 ));
             }
-            line = line.push(action_editor(&item.action, Button::South, MENU_ITEM_KINDS, set_action(target), KeyField::root(target), names));
+            line = line.push(action_editor(&item.action, Button::South, item_kinds, set_action(target), KeyField::root(target), &item_names));
             if direction_slots.is_none() {
                 let small = |label: &'static str, msg: Option<Message>| {
                     button(text(label).size(13)).style(button::secondary).on_press_maybe(msg)
@@ -2211,7 +2214,7 @@ impl App {
                     .push(small("✕", Some(Message::RemoveMenuItem(mi, i))));
             }
             let mut boxed = column![line].spacing(4);
-            if let Some(problem) = action_problem(&item.action, names) {
+            if let Some(problem) = item_problem(menu, &item.action, &self.config.menus, names) {
                 boxed = boxed.push(text(format!("⚠ {problem}")).size(12).color(ERROR_COLOR));
             }
             items = items.push(container(boxed).padding(8).style(style::inset));
@@ -2220,7 +2223,7 @@ impl App {
             items = items.push(button(text("+ Add item").size(13)).style(button::secondary).on_press(Message::AddMenuItem(mi)));
         } else {
             items = items.push(
-                text("Give a direction \"Open menu…\" to make it open another menu.").size(12).color(MUTED_COLOR),
+                text("Give a direction \"Open menu…\" to open another directional menu.").size(12).color(MUTED_COLOR),
             );
         }
         rows.push(items.into());
@@ -3167,6 +3170,19 @@ const ACTION_KINDS: [ActionKind; 12] = [
     ActionKind::Multiple,
 ];
 /// What a menu item can do: anything a button can, including opening a submenu.
+/// Radial menu items: everything but opening another menu.
+const RADIAL_ITEM_KINDS: &[ActionKind] = &[
+    ActionKind::Disabled,
+    ActionKind::Gamepad,
+    ActionKind::Keys,
+    ActionKind::Mouse,
+    ActionKind::Wheel,
+    ActionKind::NextProfile,
+    ActionKind::Overlay,
+    ActionKind::Toggle,
+    ActionKind::Macro,
+    ActionKind::Multiple,
+];
 const MENU_ITEM_KINDS: &[ActionKind] = &[
     ActionKind::Disabled,
     ActionKind::Gamepad,
@@ -3182,10 +3198,12 @@ const MENU_ITEM_KINDS: &[ActionKind] = &[
 ];
 
 const MENUS_HELP: &str = "On-screen menus you open with the \"Open menu…\" action from any button, \
-    gesture or combo. Radial: hold the opening button, aim a stick, release to choose. Directional: four \
-    slots on the D-pad or face buttons; give a slot \"Open menu…\" to open another menu. List: move with the D-pad or \
-    left stick, A chooses. Button menu: a list where items also have their own button. Carousel: cycle \
-    with the chosen controls, A chooses. Choosing an item taps its action like a button press.";
+    gesture, combo or trigger. A menu is up while that input is held and closes when you let go; wrap the \
+    action in \"Toggle\" to keep it up until pressed again. Radial: aim a stick, let go to choose. \
+    Directional: four slots on the D-pad or face buttons. List: move with the D-pad or left stick, A \
+    chooses. Button menu: a list where items also have their own button. Carousel: cycle with the chosen \
+    controls, A chooses. Items tap their action like a button press; an item can open another menu of the \
+    same kind (not from radial menus), which closes along with it.";
 
 /// What a macro step can press: plain outputs only.
 const MACRO_STEP_KINDS: &[ActionKind] =
@@ -3386,7 +3404,7 @@ fn action_value<'a>(
             text("Hold B on the controller to close it.").size(12).color(MUTED_COLOR).into()
         }
         ButtonAction::OpenMenu(_) if names.menus.is_empty() => {
-            text("No menus yet: create one in the Overlays tab.").size(12).color(MUTED_COLOR).into()
+            text("No menus to open: create one in the Overlays tab.").size(12).color(MUTED_COLOR).into()
         }
         ButtonAction::OpenMenu(name) => {
             let mut line = row![dropdown(names.menus.clone(), Some(name.clone()), move |n| on_change(ButtonAction::OpenMenu(n))).width(200)]
@@ -4162,7 +4180,7 @@ mod tests {
         assert_eq!(app.config.menus[0].items[0].action, ButtonAction::Keys(vec!["KEY_M".into()]));
 
         // A second menu goes on top; opened from the first and from a profile, it follows a rename.
-        let _ = app.update(Message::NewMenu(MenuKindTag::Radial));
+        let _ = app.update(Message::NewMenu(MenuKindTag::Directional));
         assert_eq!(app.open_menus, HashSet::from([0, 1]), "the older card moved down, still open");
         let _ = app.update(Message::RenameMenu(0, "Weapons".into()));
         app.config.menus[1].items[1].action = ButtonAction::OpenMenu("Weapons".into());
@@ -4170,6 +4188,12 @@ mod tests {
         let _ = app.update(Message::RenameMenu(0, "Wheel".into()));
         assert_eq!(app.config.menus[1].items[1].action, ButtonAction::OpenMenu("Wheel".into()));
         assert_eq!(app.config.profiles[0].button(Button::Select), &ButtonAction::OpenMenu("Wheel".into()));
+        assert_eq!(app.validate(), None);
+        // Submenus must be the same kind as the menu opening them.
+        let _ = app.update(Message::SetMenuKind(0, MenuKind::List));
+        let err = app.validate().unwrap();
+        assert!(err.contains("isn't a directional menu"), "{err}");
+        let _ = app.update(Message::SetMenuKind(0, MenuKind::Directional { cluster: Cluster::DPad }));
         assert_eq!(app.validate(), None);
 
         // Deleting the first menu shifts the open cards along with the menus.

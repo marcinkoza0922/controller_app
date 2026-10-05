@@ -613,10 +613,10 @@ pub mod draw {
     }
 
     fn radial<'a, M: 'a>(m: &MenuView, c: Colors, s: f32) -> Element<'a, M> {
-        let size = 420.0 * s;
-        let radius = 150.0 * s;
         let (cell_w, cell_h) = (120.0 * s, 44.0 * s);
         let n = m.items.len().max(1) as f32;
+        let radius = radial_radius(m.items.len(), 120.0, 44.0) * s;
+        let size = 2.0 * radius + 120.0 * s;
         let mut layers: Vec<Element<'a, M>> = vec![space().width(size).height(size).into()];
         for i in 0..m.items.len() {
             // First item at the top, then clockwise.
@@ -626,10 +626,41 @@ pub mod draw {
             let content = container(label).center_x(cell_w).center_y(cell_h).style(cell_style(c, selected));
             layers.push(pin(content).x(x - cell_w / 2.0).y(y - cell_h / 2.0).into());
         }
-        let dot = 30.0 * s;
-        let center = container(text("●").size(18.0 * s).color(c.muted)).center_x(dot).center_y(dot);
-        layers.push(pin(center).x(size / 2.0 - dot / 2.0).y(size / 2.0 - dot / 2.0).into());
+        // The middle names the stick that aims the menu.
+        let stick = match m.kind {
+            MenuKind::Radial { stick: crate::config::Stick::Left } => "LS",
+            _ => "RS",
+        };
+        let hub = 48.0 * s;
+        let center = container(text(stick).size(16.0 * s).color(c.item_text))
+            .center_x(hub)
+            .center_y(hub)
+            .style(move |_: &iced::Theme| container::Style {
+                background: Some(c.item.into()),
+                border: Border { width: 1.0, radius: (hub / 2.0).into(), color: Color { a: 0.25, ..c.item_text } },
+                ..container::Style::default()
+            });
+        layers.push(pin(center).x(size / 2.0 - hub / 2.0).y(size / 2.0 - hub / 2.0).into());
         stack(layers).width(size).height(size).into()
+    }
+
+    /// The smallest ring (at least 150) on which neighbouring `w`×`h` cells don't touch.
+    fn radial_radius(n: usize, w: f32, h: f32) -> f32 {
+        let gap = 8.0;
+        let step = TAU / n.max(1) as f32;
+        let overlaps = |r: f32| {
+            (0..n).any(|i| {
+                let (a, b) = (i as f32 * step, (i + 1) as f32 * step);
+                let dx = (r * a.sin() - r * b.sin()).abs();
+                let dy = (r * a.cos() - r * b.cos()).abs();
+                n > 1 && dx < w + gap && dy < h + gap
+            })
+        };
+        let mut r = 150.0;
+        while overlaps(r) && r < 600.0 {
+            r += 5.0;
+        }
+        r
     }
 
     fn directional<'a, M: 'a>(m: &MenuView, c: Colors, s: f32) -> Element<'a, M> {

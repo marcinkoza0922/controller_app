@@ -73,17 +73,17 @@ New Desktop profiles open it with a long press of Guide. It needs a compositor w
 
 ## Menus
 
-The Overlays tab also holds on-screen **action menus**, shared by all profiles. Open one from any button, gesture or combo with the "Open menu…" action (or `controller_app menu <name>`). Choosing an item taps its action like a button press, so items can be keys, macros, toggles, the keyboard, or another menu.
+The Overlays tab also holds on-screen **action menus**, shared by all profiles. Open one from any button, gesture, combo, trigger or stick direction with the "Open menu…" action (or `controller_app menu <name>`). A menu is on screen only while that input is held, and letting go closes it. To keep a menu up without holding, wrap the action in "Toggle…": the menu then stays until the input is pressed again. Choosing an item taps its action like a button press, so items can be keys, macros, toggles or the keyboard, and the menu stays up for more picks.
 
-- **Radial**: hold the opening button, aim a stick at an item, release to choose it.
-- **Directional**: four slots on the D-pad or face buttons. Give a slot the "Open menu…" action to chain menus into a cascade.
+- **Radial**: aim a stick at an item; whatever is aimed at when you let go is chosen.
+- **Directional**: four slots on the D-pad or face buttons.
 - **List**: move with the D-pad or left stick; A chooses.
 - **Button menu**: a list whose items can also be chosen directly with their own button.
 - **Carousel**: cycle with the bumpers, triggers, D-pad or a stick; A chooses.
 
-B (or the menu's chosen back button) backs out of a submenu or closes the menu. Face-button directional menus default to Select, since B is one of their slots. While a menu is open the controller drives it, and anything the mappings were holding is released. The overlay window stays running invisibly between uses, so menus appear instantly.
+An item can open another menu of the same kind (radial menus can't open menus). The new menu is a child of the first: letting go closes both. While a menu is open the controller drives it, and anything the mappings were holding is released. If a menu is opened by something that can't be held (the command line, or a button whose single press only fires after its tap window), it stays until an item is chosen or B is pressed (Select for face-button menus). The overlay window stays running invisibly between uses, so menus appear instantly.
 
-Each menu is a collapsible card on the Overlays tab, with a live preview; "Add a menu" at the bottom adds another. Under **Appearance**, each menu (and the keyboard) has its own screen position (a 3×3 grid of corners, edges and center, so it fits any monitor size or aspect ratio), size (50–200%), and color and opacity for the background, items and selected item. Text switches between light and dark to stay readable. Older configs with `cascade` menus still load.
+Each menu is a collapsible card on the Overlays tab, with a live preview; "Add a menu" adds another at the top. Under **Appearance**, each menu (and the keyboard) has its own screen position (a 3×3 grid of corners, edges and center, so it fits any monitor size or aspect ratio), size (50–200%), and color and opacity for the background, items and selected item. Text switches between light and dark to stay readable. Older configs with `cascade` menus still load.
 
 ## Gyro
 

@@ -46,26 +46,23 @@ enum Source {
     MenuItem(String, usize),
 }
 
-/// The physical input that opened a menu, so a radial menu can tell when it is let go.
+/// The physical input that opened a menu, which holds the menu up until it is let go.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Opener {
-    /// Released when any of these is.
+    /// Released when any of these is (stick directions included).
     pub buttons: Vec<Button>,
-    /// Released when this trigger drops below halfway.
+    /// Released when this trigger drops below the menu's release point.
     pub trigger: Option<Trigger>,
+    /// Opened through a Toggle: the menu stays until the opener is pressed again.
+    pub toggled: bool,
 }
 
 impl Source {
     fn opener(&self) -> Opener {
         match self {
-            // Stick-direction buttons are made up by the engine; a menu can't watch for them.
-            Source::Button(b) | Source::Gesture(b) if b.stick_direction().is_none() => {
-                Opener { buttons: vec![*b], trigger: None }
-            }
-            Source::Combo(members) => {
-                Opener { buttons: members.iter().copied().filter(|b| b.stick_direction().is_none()).collect(), trigger: None }
-            }
-            Source::Trigger(t) => Opener { buttons: Vec::new(), trigger: Some(*t) },
+            Source::Button(b) | Source::Gesture(b) => Opener { buttons: vec![*b], ..Opener::default() },
+            Source::Combo(members) => Opener { buttons: members.clone(), ..Opener::default() },
+            Source::Trigger(t) => Opener { trigger: Some(*t), ..Opener::default() },
             _ => Opener::default(),
         }
     }
@@ -129,6 +126,8 @@ pub struct Engine {
     overlay_toggled: bool,
     /// Set when an OpenMenu action fires; the daemon takes it.
     menu_request: Option<(String, Opener)>,
+    /// Set while a Toggle turns its inner action on.
+    toggling: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -197,6 +196,11 @@ struct TurboState {
 }
 
 impl Engine {
+    /// Forgets buttons let go while something else (an on-screen menu) had the controller.
+    pub fn forget_released(&mut self, down: &HashSet<Button>) {
+        self.raw_buttons.retain(|b| down.contains(b));
+    }
+
     /// A menu an OpenMenu action asked for since the last call, and what opened it.
     pub fn take_menu_request(&mut self) -> Option<(String, Opener)> {
         self.menu_request.take()
@@ -623,7 +627,7 @@ impl Engine {
         }
         ButtonAction::OpenMenu(name) => {
             if pressed {
-                self.menu_request = Some((name.clone(), src.opener()));
+                self.menu_request = Some((name.clone(), Opener { toggled: self.toggling, ..src.opener() }));
             }
         }
             ButtonAction::Multi(actions) => {
@@ -657,7 +661,11 @@ impl Engine {
                     return false;
                 }
                 self.toggled.insert(id, (**inner).clone());
-                return self.emit(src, inner, true, slot + 1, out);
+                // A menu opened from here stays up until toggled off.
+                let was = std::mem::replace(&mut self.toggling, true);
+                let switch = self.emit(src, inner, true, slot + 1, out);
+                self.toggling = was;
+                return switch;
             }
             ButtonAction::Turbo { action: inner, rate } => {
                 let id = (src.clone(), slot);
@@ -2194,10 +2202,14 @@ mod tests {
         p.left_trigger = TriggerAction::Button { action: ButtonAction::OpenMenu("Wheel".into()), threshold: 0.5 }.into();
         let mut e = Engine::default();
         run(&mut e, &p, InputEvent::Button(Button::Select, true));
-        assert_eq!(e.take_menu_request(), Some(("Pause".into(), Opener { buttons: vec![Button::Select], trigger: None })));
+        assert_eq!(e.take_menu_request(), Some(("Pause".into(), Opener { buttons: vec![Button::Select], ..Opener::default() })));
         assert_eq!(e.take_menu_request(), None);
         axis(&mut e, &p, Axis::LeftTrigger, 1.0);
         assert_eq!(e.take_menu_request().map(|(n, o)| (n, o.trigger)), Some(("Wheel".into(), Some(Trigger::Left))));
+        // Through a Toggle, the menu is marked to stay up until pressed again.
+        p.set_button(Button::North, toggle(ButtonAction::OpenMenu("Pause".into())));
+        run(&mut e, &p, InputEvent::Button(Button::North, true));
+        assert_eq!(e.take_menu_request().map(|(_, o)| o.toggled), Some(true));
 
         let mut out = Vec::new();
         let toggle_c = toggle(key("KEY_C"));
