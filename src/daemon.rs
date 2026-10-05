@@ -27,7 +27,7 @@ use crate::{
     config::Config,
     engine::Engine,
     focus::{self, FocusEvent},
-    input::{self, InputEvent, Normalizer},
+    input::{self, InputEvent, MotionFrame, MotionNormalizer, MotionSample, Normalizer},
     ipc::{self, DeviceInfo, FocusBackend, InputSnapshot, Request, Response, Status, WindowInfo},
     monitor::{self, InputView, OutputView, log},
     output::{FfCaps, OutEvent, VIRTUAL_PREFIX, VirtualKbm, VirtualPad},
@@ -41,6 +41,8 @@ const POLL_TIMEOUT_MS: i32 = 200;
 const WATCH_INTERVAL: Duration = Duration::from_millis(16);
 /// Status line redraw rate while only continuous output (mouse/scroll) is changing.
 const STATUS_REDRAW: Duration = Duration::from_millis(50);
+/// How long "Calibrate gyro" samples a still controller.
+const GYRO_CALIBRATION: Duration = Duration::from_secs(2);
 /// How many recently focused windows the GUI can offer for new rules.
 const RECENT_WINDOWS: usize = 8;
 
@@ -50,6 +52,8 @@ enum Msg {
     Ipc { req: Request, reply: Sender<Response> },
     Watch(Sender<Option<InputSnapshot>>),
     Focus(FocusEvent),
+    Motion { id: u64, sample: MotionSample },
+    MotionGone { id: u64 },
 }
 
 struct Managed {
@@ -60,6 +64,46 @@ struct Managed {
     stop: Arc<AtomicBool>,
     view: InputView,
     out_view: OutputView,
+    /// For pairing with the controller's motion-sensor device.
+    parent: Option<PathBuf>,
+    uniq: Option<String>,
+    /// Motion-sensor device feeding this controller's gyro, once found.
+    motion: Option<PathBuf>,
+    motion_frame: MotionFrame,
+    /// Drift per raw sensor axis (the controller's own frame), subtracted before remapping.
+    gyro_bias: [f32; 3],
+    calibrating: Option<Calibration>,
+}
+
+struct Calibration {
+    started: Instant,
+    sum: [f64; 3],
+    samples: u32,
+}
+
+/// A controller's motion-sensor input device, waiting to be paired with its gamepad.
+struct MotionNode {
+    path: PathBuf,
+    name: String,
+    parent: Option<PathBuf>,
+    uniq: Option<String>,
+}
+
+impl MotionNode {
+    /// Same physical controller: same parent HID device or same unique ID (e.g. Bluetooth
+    /// MAC). Only when the parent can't be compared does the driver's naming ("<pad> Motion
+    /// Sensors", "<pad> IMU") count, since two identical controllers share a name.
+    fn belongs_to(&self, pad: &Managed) -> bool {
+        self.matches(&pad.name, &pad.parent, &pad.uniq)
+    }
+
+    fn matches(&self, name: &str, parent: &Option<PathBuf>, uniq: &Option<String>) -> bool {
+        let same_parent = self.parent.is_some() && &self.parent == parent;
+        let same_uniq = self.uniq.as_deref().is_some_and(|u| !u.is_empty()) && &self.uniq == uniq;
+        let comparable = self.parent.is_some() && parent.is_some();
+        let named_after = !comparable && self.name.len() > name.len() && self.name.starts_with(name);
+        same_parent || same_uniq || named_after
+    }
 }
 
 impl Managed {
@@ -89,6 +133,9 @@ struct Daemon {
     skipped: HashSet<NodeKey>,
     /// Gamepads we have seen, managed or not, for status reporting.
     gamepads: HashMap<NodeKey, SeenGamepad>,
+    motion_nodes: HashMap<NodeKey, MotionNode>,
+    /// Controller motion sensors we lack permission to open (names), for the GUI to explain.
+    motion_denied: HashMap<NodeKey, String>,
     /// Clients streaming live input (the GUI's controller view).
     watchers: Vec<Sender<Option<InputSnapshot>>>,
     /// Device whose input watchers are shown.
@@ -121,6 +168,8 @@ pub fn run() -> Result<()> {
         next_id: 0,
         skipped: HashSet::new(),
         gamepads: HashMap::new(),
+        motion_nodes: HashMap::new(),
+        motion_denied: HashMap::new(),
         watchers: Vec::new(),
         last_active: None,
         last_draw: Instant::now(),
@@ -263,12 +312,83 @@ impl Daemon {
                 self.scan_target = None;
             }
             Msg::Focus(FocusEvent::Focused(window)) => self.window_focused(window),
+            Msg::Motion { id, sample } => self.motion(id, sample),
+            Msg::MotionGone { id } => {
+                if let Some(dev) = self.devices.get_mut(&id) {
+                    dev.motion = None;
+                }
+            }
             Msg::Watch(watcher) => {
                 let current = self.last_active.and_then(|id| self.devices.get(&id));
                 if watcher.send(current.map(|d| d.view.snapshot(&d.name))).is_ok() {
                     self.watchers.push(watcher);
                 }
             }
+        }
+    }
+
+    fn motion(&mut self, id: u64, mut sample: MotionSample) {
+        let Some(dev) = self.devices.get_mut(&id) else { return };
+        if let Some(cal) = &mut dev.calibrating {
+            for (sum, v) in cal.sum.iter_mut().zip(sample.gyro) {
+                *sum += v as f64;
+            }
+            cal.samples += 1;
+            if cal.started.elapsed() < GYRO_CALIBRATION {
+                return;
+            }
+            let n = cal.samples.max(1) as f64;
+            let bias = cal.sum.map(|s| (s / n) as f32);
+            dev.gyro_bias = bias;
+            dev.calibrating = None;
+            let name = dev.name.clone();
+            log!("gyro calibrated for {name}: bias {bias:.2?} deg/s");
+            self.config.gyro_calibration.insert(name, bias);
+            if let Err(e) = self.config.save() {
+                log!("saving config: {e:#}");
+            }
+            return;
+        }
+        for (v, bias) in sample.gyro.iter_mut().zip(dev.gyro_bias) {
+            *v -= bias;
+        }
+        let sample = dev.motion_frame.to_standard(sample);
+        dev.view.set_gyro(sample.gyro);
+        let Some(profile) = self.config.active() else { return };
+        let mut out = Vec::new();
+        dev.engine.motion(profile, sample, &mut out);
+        dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
+        if self.last_draw.elapsed() >= STATUS_REDRAW {
+            dev.draw_status();
+            self.last_draw = Instant::now();
+        }
+        if self.last_active == Some(id) && !self.watchers.is_empty() {
+            let snapshot = dev.view.snapshot(&dev.name);
+            self.watchers.retain(|w| w.send(Some(snapshot.clone())).is_ok());
+        }
+    }
+
+    /// Pairs managed controllers with their motion-sensor devices and starts reading them.
+    fn attach_motion(&mut self) {
+        let pairs: Vec<(u64, PathBuf, String)> = self
+            .devices
+            .iter()
+            .filter(|(_, d)| d.motion.is_none())
+            .filter_map(|(id, d)| {
+                let taken = |n: &MotionNode| self.devices.values().any(|o| o.motion.as_ref() == Some(&n.path));
+                let node = self.motion_nodes.values().find(|n| !taken(n) && n.belongs_to(d))?;
+                Some((*id, node.path.clone(), node.name.clone()))
+            })
+            .collect();
+        for (id, path, motion_name) in pairs {
+            let Ok(motion_dev) = Device::open(&path) else { continue };
+            let Some(dev) = self.devices.get_mut(&id) else { continue };
+            log!("gyro: using {motion_name} for {}", dev.name);
+            dev.motion_frame = MotionFrame::of(&path);
+            dev.motion = Some(path);
+            dev.gyro_bias = self.config.gyro_calibration.get(&dev.name).copied().unwrap_or_default();
+            let (stop, tx) = (dev.stop.clone(), self.tx.clone());
+            thread::spawn(move || read_motion(id, motion_dev, stop, tx));
         }
     }
 
@@ -395,6 +515,18 @@ impl Daemon {
             }
             // Handled by the connection thread, which registers through `Msg::Watch`.
             Request::WatchInput => Response::Error("WatchInput must be the only request".into()),
+            Request::CalibrateGyro(path) => {
+                let dev = self.devices.values_mut().find(|d| d.path.as_os_str() == path.as_str());
+                match dev {
+                    Some(dev) if dev.motion.is_some() => {
+                        log!("calibrating gyro for {}: keep it still", dev.name);
+                        dev.calibrating = Some(Calibration { started: Instant::now(), sum: [0.0; 3], samples: 0 });
+                        Response::Ok
+                    }
+                    Some(_) => Response::Error(format!("{path} has no gyro")),
+                    None => Response::Error(format!("{path} is not being managed")),
+                }
+            }
             Request::TestRumble(path) => {
                 let known = self
                     .gamepads
@@ -489,6 +621,7 @@ impl Daemon {
                 path: path.display().to_string(),
                 managed: self.devices.values().any(|d| &d.path == path),
                 ignored: self.config.ignored_devices.contains(&pad.name),
+                gyro: self.devices.values().any(|d| &d.path == path && d.motion.is_some()),
                 analog_triggers: pad.analog_triggers,
                 rumble: pad.rumble,
             })
@@ -501,6 +634,7 @@ impl Daemon {
             focus_backend: self.focus_backend,
             focused: self.focused.clone(),
             recent_windows: self.recent_windows.clone(),
+            motion_access_denied: self.motion_denied.values().cloned().collect(),
         }
     }
 
@@ -517,7 +651,10 @@ impl Daemon {
             let key = (path.clone(), meta.ino());
             present.insert(key.clone());
 
-            if self.skipped.contains(&key) || self.devices.values().any(|d| d.path == path) {
+            if self.skipped.contains(&key)
+                || self.motion_nodes.contains_key(&key)
+                || self.devices.values().any(|d| d.path == path)
+            {
                 continue;
             }
             if let Some(pad) = self.gamepads.get(&key)
@@ -526,8 +663,22 @@ impl Daemon {
                 continue;
             }
             // Permission errors are not cached: udev may grant access a moment later.
-            let Ok(dev) = Device::open(&path) else { continue };
+            let Ok(dev) = Device::open(&path) else {
+                if !self.motion_denied.contains_key(&key)
+                    && let Some(name) = input::inaccessible_motion_sensor(&path)
+                {
+                    log!("gyro: no permission to read {name}; install dist/70-controller-app-motion.rules");
+                    self.motion_denied.insert(key, name);
+                }
+                continue;
+            };
+            self.motion_denied.remove(&key);
             let name = dev.name().unwrap_or("Unknown").to_string();
+            if !is_uinput(&path) && input::is_motion_sensor(&dev) {
+                let uniq = dev.unique_name().map(str::to_string);
+                self.motion_nodes.insert(key, MotionNode { path: path.clone(), name, parent: hid_parent(&path), uniq });
+                continue;
+            }
             if name.starts_with(VIRTUAL_PREFIX) || is_uinput(&path) || !input::is_gamepad(&dev) {
                 self.skipped.insert(key);
                 continue;
@@ -540,11 +691,16 @@ impl Daemon {
             }
         }
         self.skipped.retain(|k| present.contains(k));
+        self.motion_nodes.retain(|k, _| present.contains(k));
+        self.motion_denied.retain(|k, _| present.contains(k));
+        self.attach_motion();
         self.scan_processes();
         self.gamepads.retain(|k, _| present.contains(k));
     }
 
     fn manage(&mut self, path: PathBuf, name: String, mut dev: Device) {
+        let parent = hid_parent(&path);
+        let uniq = dev.unique_name().map(str::to_string);
         if let Err(e) = dev.grab() {
             log!("cannot grab {name} ({}): {e}", path.display());
             return;
@@ -575,7 +731,21 @@ impl Daemon {
         if has_rumble {
             rumble::spawn(pad.shared(), path.clone(), stop.clone());
         }
-        let mut managed = Managed { path, name, engine: Engine::default(), pad, stop, view: InputView::default(), out_view: OutputView::default() };
+        let mut managed = Managed {
+            path,
+            name,
+            engine: Engine::default(),
+            pad,
+            stop,
+            view: InputView::default(),
+            out_view: OutputView::default(),
+            parent,
+            uniq,
+            motion: None,
+            motion_frame: MotionFrame::default(),
+            gyro_bias: [0.0; 3],
+            calibrating: None,
+        };
         if let Some(profile) = self.config.active() {
             let mut out = Vec::new();
             managed.engine.resync(profile, &mut out);
@@ -593,6 +763,46 @@ fn is_uinput(dev_path: &Path) -> bool {
     std::fs::canonicalize(sys)
         .map(|p| p.to_string_lossy().contains("/devices/virtual/input/"))
         .unwrap_or(false)
+}
+
+/// The HID device an input node belongs to; a controller's gamepad and motion-sensor nodes
+/// share it.
+fn hid_parent(dev_path: &Path) -> Option<PathBuf> {
+    let node = dev_path.file_name()?;
+    std::fs::canonicalize(Path::new("/sys/class/input").join(node).join("device/device")).ok()
+}
+
+fn read_motion(id: u64, mut dev: Device, stop: Arc<AtomicBool>, tx: Sender<Msg>) {
+    let mut norm = MotionNormalizer::new(&dev);
+    if dev.set_nonblocking(true).is_err() {
+        let _ = tx.send(Msg::MotionGone { id });
+        return;
+    }
+    let mut pfd = libc::pollfd { fd: dev.as_raw_fd(), events: libc::POLLIN, revents: 0 };
+    while !stop.load(Ordering::Relaxed) {
+        // SAFETY: pfd points to a single valid pollfd for the duration of the call.
+        let n = unsafe { libc::poll(&mut pfd, 1, POLL_TIMEOUT_MS) };
+        if n < 0 && std::io::Error::last_os_error().kind() != ErrorKind::Interrupted {
+            break;
+        }
+        if n <= 0 {
+            continue;
+        }
+        if pfd.revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL) != 0 {
+            break;
+        }
+        let samples: Vec<MotionSample> = match dev.fetch_events() {
+            Ok(evs) => evs.filter_map(|ev| norm.translate(ev)).collect(),
+            Err(e) if e.kind() == ErrorKind::WouldBlock => continue,
+            Err(_) => break,
+        };
+        for sample in samples {
+            if tx.send(Msg::Motion { id, sample }).is_err() {
+                return;
+            }
+        }
+    }
+    let _ = tx.send(Msg::MotionGone { id });
 }
 
 fn read_device(id: u64, mut dev: Device, xbox_labels: bool, stop: Arc<AtomicBool>, tx: Sender<Msg>) {
@@ -708,5 +918,40 @@ fn describe(w: &WindowInfo) -> String {
         Some(id) => format!("{} (Steam {id})", w.exe),
         None if w.exe.is_empty() => w.class.clone(),
         None => w.exe.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn node(name: &str, parent: Option<&str>, uniq: Option<&str>) -> MotionNode {
+        MotionNode {
+            path: PathBuf::from("/dev/input/event99"),
+            name: name.into(),
+            parent: parent.map(PathBuf::from),
+            uniq: uniq.map(Into::into),
+        }
+    }
+
+    #[test]
+    fn motion_sensors_pair_with_their_own_controller() {
+        let hid = Some(PathBuf::from("/sys/devices/x/0005:054C:0CE6.0001"));
+        let mac = Some("a0:5a:5c:00:00:01".to_string());
+        let pad = "Sony Interactive Entertainment DualSense Wireless Controller";
+
+        // Same HID parent (USB or Bluetooth), or same MAC.
+        assert!(node("x", Some("/sys/devices/x/0005:054C:0CE6.0001"), None).matches(pad, &hid, &None));
+        assert!(node("x", None, Some("a0:5a:5c:00:00:01")).matches(pad, &None, &mac));
+        // Driver naming: "<pad> Motion Sensors" (hid-playstation), "<pad> IMU" (hid-nintendo).
+        assert!(node(&format!("{pad} Motion Sensors"), None, None).matches(pad, &None, &None));
+        assert!(node("Nintendo Switch Pro Controller IMU", None, None).matches("Nintendo Switch Pro Controller", &None, &None));
+
+        // A second identical controller's sensors don't match by parent or MAC, even though
+        // the name would.
+        let other = node(&format!("{pad} Motion Sensors"), Some("/sys/devices/x/0005:054C:0CE6.0002"), Some("a0:5a:5c:00:00:02"));
+        assert!(!other.matches(pad, &hid, &mac));
+        // Empty unique IDs (common over USB) never count as a match.
+        assert!(!node("x", None, Some("")).matches(pad, &None, &Some(String::new())));
     }
 }

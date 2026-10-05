@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, path::Path};
 
-use evdev::{AbsoluteAxisCode as Abs, Device, EventSummary, KeyCode};
+use evdev::{AbsoluteAxisCode as Abs, Device, EventSummary, KeyCode, MiscCode, PropType};
 
 use crate::config::Button;
 
@@ -158,6 +158,153 @@ impl Normalizer {
     }
 }
 
+/// True for a controller's motion-sensor device (hid-playstation's "... Motion Sensors",
+/// hid-nintendo's "... IMU"): accelerometer on ABS_X/Y/Z and gyro on ABS_RX/RY/RZ.
+pub fn is_motion_sensor(dev: &Device) -> bool {
+    dev.properties().contains(PropType::ACCELEROMETER)
+        && dev.supported_absolute_axes().is_some_and(|a| a.contains(Abs::ABS_RX) && a.contains(Abs::ABS_RY))
+}
+
+/// Name of a game controller motion sensor at `dev_path` that we are not allowed to open,
+/// read from sysfs (which needs no access to the device itself).
+pub fn inaccessible_motion_sensor(dev_path: &Path) -> Option<String> {
+    let node = dev_path.file_name()?;
+    let input = Path::new("/sys/class/input").join(node).join("device");
+    // INPUT_PROP_ACCELEROMETER is property bit 6.
+    let props = u64::from_str_radix(std::fs::read_to_string(input.join("properties")).ok()?.trim(), 16).ok()?;
+    let driver = std::fs::canonicalize(input.join("device/driver")).ok()?;
+    let controller = matches!(driver.file_name()?.to_str()?, "playstation" | "sony" | "nintendo");
+    if props & (1 << 6) == 0 || !controller || Device::open(dev_path).is_ok() {
+        return None;
+    }
+    Some(std::fs::read_to_string(input.join("name")).ok()?.trim().to_string())
+}
+
+/// One motion reading. Axes are the controller's own until [`MotionFrame::to_standard`]; in
+/// the standard frame (X right, Y up, Z toward the player) gyro is pitch, yaw, roll.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct MotionSample {
+    /// Angular velocity in degrees/second.
+    pub gyro: [f32; 3],
+    /// Acceleration in g, including gravity.
+    pub accel: [f32; 3],
+    /// Seconds since the previous sample.
+    pub dt: f32,
+}
+
+/// How a driver orients its motion axes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MotionFrame {
+    /// hid-playstation passes the controller's frame through: X right, Y up, Z toward the
+    /// player. This is the standard frame the engine works in.
+    #[default]
+    PlayStation,
+    /// hid-nintendo: X toward the triggers, Y left, Z up out of the face.
+    Nintendo,
+}
+
+impl MotionFrame {
+    /// Frame of the motion-sensor device at `dev_path`, from its driver.
+    pub fn of(dev_path: &Path) -> Self {
+        let driver = dev_path
+            .file_name()
+            .and_then(|node| std::fs::canonicalize(Path::new("/sys/class/input").join(node).join("device/device/driver")).ok());
+        match driver.as_deref().and_then(|d| d.file_name()).and_then(|n| n.to_str()) {
+            Some("nintendo") => MotionFrame::Nintendo,
+            _ => MotionFrame::PlayStation,
+        }
+    }
+
+    /// Re-expresses a sample in the standard frame.
+    pub fn to_standard(self, sample: MotionSample) -> MotionSample {
+        match self {
+            MotionFrame::PlayStation => sample,
+            MotionFrame::Nintendo => {
+                // right = -left, up = up, toward the player = -toward the triggers
+                let remap = |[x, y, z]: [f32; 3]| [-y, z, -x];
+                MotionSample { gyro: remap(sample.gyro), accel: remap(sample.accel), dt: sample.dt }
+            }
+        }
+    }
+}
+
+/// Turns raw motion-sensor events into [`MotionSample`]s, one per SYN_REPORT.
+pub struct MotionNormalizer {
+    /// Units per g (accel) and per degree/second (gyro), from the axes' resolution.
+    scale: HashMap<Abs, f32>,
+    current: MotionSample,
+    last_timestamp: Option<u32>,
+    timestamp: Option<u32>,
+    last_report: Option<std::time::Instant>,
+}
+
+/// Longest gap treated as continuous motion (anything longer is a pause, not rotation).
+const MAX_MOTION_DT: f32 = 0.05;
+
+impl MotionNormalizer {
+    pub fn new(dev: &Device) -> Self {
+        let scale = dev
+            .get_absinfo()
+            .map(|it| {
+                it.filter(|(code, _)| {
+                    matches!(*code, Abs::ABS_X | Abs::ABS_Y | Abs::ABS_Z | Abs::ABS_RX | Abs::ABS_RY | Abs::ABS_RZ)
+                })
+                .map(|(code, info)| (code, info.resolution().max(1) as f32))
+                .collect()
+            })
+            .unwrap_or_default();
+        Self::with_scale(scale)
+    }
+
+    /// `scale` is the resolution per axis: units per g (accel) or per degree/second (gyro).
+    fn with_scale(scale: HashMap<Abs, f32>) -> Self {
+        MotionNormalizer {
+            scale,
+            current: MotionSample::default(),
+            last_timestamp: None,
+            timestamp: None,
+            last_report: None,
+        }
+    }
+
+    /// Feeds one raw event; returns a sample when a report completes.
+    pub fn translate(&mut self, ev: evdev::InputEvent) -> Option<MotionSample> {
+        match ev.destructure() {
+            EventSummary::AbsoluteAxis(_, code, value) => {
+                let v = value as f32 / self.scale.get(&code).copied().unwrap_or(1.0);
+                match code {
+                    Abs::ABS_X => self.current.accel[0] = v,
+                    Abs::ABS_Y => self.current.accel[1] = v,
+                    Abs::ABS_Z => self.current.accel[2] = v,
+                    Abs::ABS_RX => self.current.gyro[0] = v,
+                    Abs::ABS_RY => self.current.gyro[1] = v,
+                    Abs::ABS_RZ => self.current.gyro[2] = v,
+                    _ => {}
+                }
+                None
+            }
+            EventSummary::Misc(_, MiscCode::MSC_TIMESTAMP, value) => {
+                self.timestamp = Some(value as u32);
+                None
+            }
+            EventSummary::Synchronization(..) => Some(self.finish_report()),
+            _ => None,
+        }
+    }
+
+    fn finish_report(&mut self) -> MotionSample {
+        let now = std::time::Instant::now();
+        // Prefer the sensor's own microsecond clock (it wraps around at u32::MAX).
+        let dt = match (self.last_timestamp, self.timestamp) {
+            (Some(prev), Some(ts)) => ts.wrapping_sub(prev) as f32 / 1_000_000.0,
+            _ => self.last_report.map(|t| now.duration_since(t).as_secs_f32()).unwrap_or(0.0),
+        };
+        self.last_timestamp = self.timestamp.or(self.last_timestamp);
+        self.last_report = Some(now);
+        MotionSample { dt: if dt > MAX_MOTION_DT { 0.0 } else { dt }, ..self.current }
+    }
+}
+
 fn hat_change(old: i32, new: i32, neg: Button, pos: Button, out: &mut Vec<InputEvent>) {
     if old == new {
         return;
@@ -220,6 +367,62 @@ mod tests {
         assert_eq!(key_to_button(KeyCode::BTN_WEST, true), Some(Button::North));
         assert_eq!(key_to_button(KeyCode::BTN_NORTH, false), Some(Button::North));
         assert_eq!(key_to_button(KeyCode::BTN_SOUTH, true), Some(Button::South));
+    }
+
+    fn ev(type_: evdev::EventType, code: u16, value: i32) -> evdev::InputEvent {
+        evdev::InputEvent::new(type_.0, code, value)
+    }
+
+    #[test]
+    fn motion_reports_scale_to_degrees_and_g_with_sensor_timestamps() {
+        use evdev::EventType;
+        // DualSense resolutions: 1024 units per degree/second, 8192 per g.
+        let scale = HashMap::from([
+            (Abs::ABS_X, 8192.0),
+            (Abs::ABS_Y, 8192.0),
+            (Abs::ABS_Z, 8192.0),
+            (Abs::ABS_RX, 1024.0),
+            (Abs::ABS_RY, 1024.0),
+            (Abs::ABS_RZ, 1024.0),
+        ]);
+        let mut norm = MotionNormalizer::with_scale(scale);
+        let report = |norm: &mut MotionNormalizer, yaw: i32, timestamp: u32| {
+            let events = [
+                ev(EventType::ABSOLUTE, Abs::ABS_Y.0, 8192),
+                ev(EventType::ABSOLUTE, Abs::ABS_RY.0, yaw),
+                ev(EventType::MISC, MiscCode::MSC_TIMESTAMP.0, timestamp as i32),
+                ev(EventType::SYNCHRONIZATION, 0, 0),
+            ];
+            events.into_iter().filter_map(|e| norm.translate(e)).last().unwrap()
+        };
+        let first = report(&mut norm, 90 * 1024, 1_000);
+        assert_eq!(first.gyro, [0.0, 90.0, 0.0]);
+        assert_eq!(first.accel, [0.0, 1.0, 0.0]);
+        let second = report(&mut norm, -45 * 1024, 5_000);
+        assert_eq!(second.gyro[1], -45.0);
+        assert!((second.dt - 0.004).abs() < 1e-6, "{}", second.dt);
+        // The microsecond clock wraps around.
+        let mut wrap = MotionNormalizer::with_scale(HashMap::new());
+        report(&mut wrap, 0, u32::MAX - 999);
+        assert!((report(&mut wrap, 0, 3_000).dt - 0.004).abs() < 1e-6);
+        // A long gap (e.g. a stall) is not treated as one huge rotation step.
+        assert_eq!(report(&mut wrap, 0, 3_000 + 500_000).dt, 0.0);
+    }
+
+    #[test]
+    fn nintendo_motion_is_remapped_to_the_standard_frame() {
+        let n = |gyro: [f32; 3], accel: [f32; 3]| MotionFrame::Nintendo.to_standard(MotionSample { gyro, accel, dt: 0.0 });
+        // Lying flat: gravity is up (+Z for Nintendo), which is +Y in the standard frame.
+        assert_eq!(n([0.0; 3], [0.0, 0.0, 1.0]).accel, [0.0, 1.0, 0.0]);
+        // Turning left (counter-clockwise from above, +Z for Nintendo) is positive yaw.
+        assert_eq!(n([0.0, 0.0, 30.0], [0.0; 3]).gyro, [0.0, 30.0, 0.0]);
+        // Lifting the trigger edge rotates about -Y (left) for Nintendo: positive pitch.
+        assert_eq!(n([0.0, -30.0, 0.0], [0.0; 3]).gyro, [30.0, 0.0, 0.0]);
+        // Rotating about the trigger axis (+X) is about the away-from-player axis: negative roll.
+        assert_eq!(n([30.0, 0.0, 0.0], [0.0; 3]).gyro, [0.0, 0.0, -30.0]);
+        // PlayStation passes through unchanged.
+        let s = MotionSample { gyro: [1.0, 2.0, 3.0], accel: [4.0, 5.0, 6.0], dt: 0.1 };
+        assert_eq!(MotionFrame::PlayStation.to_standard(s), s);
     }
 
     #[test]

@@ -14,8 +14,8 @@ use iced::{
 
 use crate::{
     config::{
-        Analog, Button, ButtonAction, Combo, Config, GestureKind, MouseButton, Rule, RuleKind,
-        WheelDirection, Zone, Profile, Stick, StickAction, StickConfig,
+        Analog, Button, ButtonAction, Combo, Config, GestureKind, GyroActivation, GyroConfig,
+        GyroHorizontal, GyroInput, GyroMode, MouseButton, Rule, RuleKind, WheelDirection, Zone, Profile, Stick, StickAction, StickConfig,
         Trigger, TriggerAction,
     },
     ipc::{self, FocusBackend, InputSnapshot, Request, Response, Status, WindowInfo},
@@ -116,6 +116,9 @@ enum Message {
     SetRuleValue(usize, String),
     SetRuleProfile(usize, String),
     TestRumble(String),
+    CalibrateGyro(String),
+    CopyMotionRuleCommand,
+    SetGyro(GyroConfig),
     AddCombo,
     RemoveCombo(usize),
     AddComboButton(usize, Button),
@@ -283,6 +286,19 @@ impl App {
             }
             Message::SetEnabled(on) => return call_ok(Request::SetEnabled(on)),
             Message::TestRumble(path) => return call_ok(Request::TestRumble(path)),
+            Message::CalibrateGyro(path) => {
+                self.message = Some(("Calibrating gyro: keep the controller still for 2 seconds.".into(), false));
+                return call_ok(Request::CalibrateGyro(path));
+            }
+            Message::CopyMotionRuleCommand => {
+                self.message = Some(("Copied. Paste it into a terminal and enter your password.".into(), false));
+                return iced::clipboard::write(motion_rule_command());
+            }
+            Message::SetGyro(gyro) => {
+                if let Some(p) = self.profile_mut() {
+                    p.gyro = gyro;
+                }
+            }
             Message::ActivateProfile(name) => {
                 if self.saved.profiles.iter().any(|p| p.name == name) {
                     return Task::batch([call_ok(Request::SetProfile(name)), Task::done(Message::Poll)]);
@@ -611,6 +627,11 @@ impl App {
         in_use.peek().is_none() || in_use.any(|d| d.analog_triggers)
     }
 
+    /// Whether any managed controller has a gyro (only affects hints, not what can be set).
+    fn any_gyro(&self) -> bool {
+        self.status.as_ref().is_some_and(|s| s.devices.iter().any(|d| d.gyro))
+    }
+
     fn unique_name(&self, base: &str) -> String {
         (1..)
             .map(|i| if i == 1 { base.to_string() } else { format!("{base} {i}") })
@@ -694,7 +715,7 @@ impl App {
         .padding(20);
 
         let content = match self.profile() {
-            Some(p) => content.push(view_profile(p, self.analog_triggers())),
+            Some(p) => content.push(view_profile(p, self.analog_triggers(), self.any_gyro())),
             None => content,
         };
 
@@ -747,7 +768,13 @@ impl App {
 
     fn view_live(&self) -> Element<'_, Message> {
         let caption = match (&self.live, &self.status) {
-            (Some(live), _) => live.device.clone(),
+            (Some(live), _) => match live.gyro {
+                Some([pitch, yaw, roll]) => {
+                    let [pitch, yaw, roll] = [pitch, yaw, roll].map(|v| crate::monitor::signed(v, 0));
+                    format!("{} · gyro pitch {pitch} yaw {yaw} roll {roll} °/s", live.device)
+                }
+                None => live.device.clone(),
+            },
             (None, Some(_)) => "Press a button on a managed controller".into(),
             (None, None) => "Live input needs the daemon".into(),
         };
@@ -776,6 +803,15 @@ impl App {
                     };
                     let state = if d.analog_triggers { state.to_string() } else { format!("{state} · digital triggers") };
                     let state = if d.rumble { state } else { format!("{state} · no rumble") };
+                    let state = if d.gyro { format!("{state} · gyro") } else { state };
+                    let calibrate: Element<'_, Message> = if d.gyro {
+                        button(text("Calibrate gyro").size(13))
+                            .style(button::secondary)
+                            .on_press(Message::CalibrateGyro(d.path.clone()))
+                            .into()
+                    } else {
+                        space().into()
+                    };
                     let name = d.name.clone();
                     let rumble: Element<'_, Message> = if d.rumble {
                         button(text("Test rumble").size(13))
@@ -789,6 +825,7 @@ impl App {
                         row![
                             column![text(&d.name), text(format!("{} · {state}", d.path)).size(12).color(MUTED_COLOR)]
                                 .width(Length::Fill),
+                            calibrate,
                             rumble,
                             checkbox(!d.ignored)
                                 .label("Manage")
@@ -801,6 +838,30 @@ impl App {
             }
             Some(_) => list = list.push(text("No controllers detected.").color(MUTED_COLOR)),
             None => list = list.push(text("Unavailable while the daemon is not running.").color(MUTED_COLOR)),
+        }
+        if let Some(status) = &self.status
+            && !status.motion_access_denied.is_empty()
+        {
+            let names = status.motion_access_denied.join(", ");
+            list = list.push(
+                column![
+                    text(format!(
+                        "Gyro unavailable for {names}: no permission to read its motion sensors. \
+                         Installing a udev rule (needs your password once) fixes this:"
+                    ))
+                    .size(12)
+                    .color(ERROR_COLOR),
+                    row![
+                        text(motion_rule_command()).size(11).font(iced::Font::MONOSPACE).width(Length::Fill),
+                        button(text("Copy command").size(13))
+                            .style(button::secondary)
+                            .on_press(Message::CopyMotionRuleCommand),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                ]
+                .spacing(6),
+            );
         }
         list.into()
     }
@@ -999,6 +1060,23 @@ fn view_picker(picker: &KeyPicker) -> Element<'_, Message> {
     opaque(mouse_area(backdrop).on_press(Message::PickerClose { apply: false }))
 }
 
+/// The motion-sensor udev rule shipped in dist/, built in so the command works from anywhere.
+const MOTION_RULE_FILE: &str = include_str!("../dist/70-controller-app-motion.rules");
+
+/// Shell command (bash or fish) that installs the motion-sensor udev rule and applies it.
+fn motion_rule_command() -> String {
+    let rules: Vec<&str> = MOTION_RULE_FILE
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect();
+    format!(
+        "echo '{}' | sudo tee /etc/udev/rules.d/70-controller-app-motion.rules >/dev/null \
+         && sudo udevadm control --reload && sudo udevadm trigger",
+        rules.join("\n")
+    )
+}
+
 /// Shown in the "Otherwise use" list for "don't change the profile".
 const KEEP_CURRENT: &str = "(keep current profile)";
 
@@ -1061,7 +1139,7 @@ fn labeled<'a>(label: impl text::IntoFragment<'a>, editor: Element<'a, Message>)
         .into()
 }
 
-fn view_profile(p: &Profile, analog_triggers: bool) -> Element<'_, Message> {
+fn view_profile(p: &Profile, analog_triggers: bool, any_gyro: bool) -> Element<'_, Message> {
     let buttons = button_rows(p);
     let sticks = [Stick::Left, Stick::Right]
         .into_iter()
@@ -1076,9 +1154,204 @@ fn view_profile(p: &Profile, analog_triggers: bool) -> Element<'_, Message> {
         section("Combos", combo_rows(p)),
         section("Sticks", sticks),
         section("Triggers", triggers),
+        section("Gyro", gyro_rows(&p.gyro, any_gyro)),
     ]
     .spacing(16)
     .into()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GyroModeKind {
+    Off,
+    Mouse,
+    Stick,
+    Steering,
+}
+
+impl fmt::Display for GyroModeKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            GyroModeKind::Off => "Off",
+            GyroModeKind::Mouse => "Mouse (gyro aiming)",
+            GyroModeKind::Stick => "Gamepad stick (gyro aiming)",
+            GyroModeKind::Steering => "Steering (tilt to steer)",
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ActivationKind {
+    Always,
+    WhileHeld,
+    UnlessHeld,
+    Toggle,
+}
+
+impl fmt::Display for ActivationKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            ActivationKind::Always => "Always on",
+            ActivationKind::WhileHeld => "Only while holding",
+            ActivationKind::UnlessHeld => "Off while holding (clutch)",
+            ActivationKind::Toggle => "Toggle with",
+        })
+    }
+}
+
+/// A recenter choice for a pick list, where `None` means no recenter input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RecenterChoice(Option<GyroInput>);
+
+impl fmt::Display for RecenterChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(input) => write!(f, "{input}"),
+            None => f.write_str("(none)"),
+        }
+    }
+}
+
+fn gyro_rows(cfg: &GyroConfig, any_gyro: bool) -> Vec<Element<'_, Message>> {
+    let with = move |f: &dyn Fn(&mut GyroConfig)| {
+        let mut c = cfg.clone();
+        f(&mut c);
+        Message::SetGyro(c)
+    };
+    let hint = if any_gyro {
+        "Uses the controller's motion sensors. Calibrate it from the controller list if the aim drifts."
+    } else {
+        "None of your managed controllers report a gyro (PlayStation and Switch controllers do). \
+         These settings apply once one is connected."
+    };
+    let mut rows: Vec<Element<'_, Message>> = vec![text(hint).size(13).color(MUTED_COLOR).into()];
+
+    let kind = match cfg.mode {
+        GyroMode::Off => GyroModeKind::Off,
+        GyroMode::Mouse { .. } => GyroModeKind::Mouse,
+        GyroMode::Stick { .. } => GyroModeKind::Stick,
+        GyroMode::Steering { .. } => GyroModeKind::Steering,
+    };
+    let kinds = [GyroModeKind::Off, GyroModeKind::Mouse, GyroModeKind::Stick, GyroModeKind::Steering];
+    rows.push(labeled(
+        "Gyro",
+        pick_list(kinds, Some(kind), move |k| {
+            let mode = match k {
+                GyroModeKind::Off => GyroMode::Off,
+                GyroModeKind::Mouse => GyroMode::Mouse { sensitivity: 15.0 },
+                GyroModeKind::Stick => GyroMode::Stick { stick: Stick::Right, full_rate: 360.0, anti_deadzone: 0.15 },
+                GyroModeKind::Steering => GyroMode::Steering { stick: Stick::Left, max_angle: 45.0 },
+            };
+            with(&|c| c.mode = mode.clone())
+        })
+        .width(260)
+        .into(),
+    ));
+
+    match cfg.mode {
+        GyroMode::Off => return rows,
+        GyroMode::Mouse { sensitivity } => {
+            rows.push(value_slider("    Sensitivity", 2.0..=60.0, sensitivity, 1.0, "px per degree", move |v| {
+                with(&|c| c.mode = GyroMode::Mouse { sensitivity: v })
+            }));
+        }
+        GyroMode::Stick { stick, full_rate, anti_deadzone } => {
+            rows.push(labeled(
+                "    Output stick",
+                pick_list([Stick::Left, Stick::Right], Some(stick), move |s| {
+                    with(&|c| c.mode = GyroMode::Stick { stick: s, full_rate, anti_deadzone })
+                })
+                .width(170)
+                .into(),
+            ));
+            rows.push(value_slider("    Full tilt at", 60.0..=720.0, full_rate, 10.0, "°/s turning", move |v| {
+                with(&|c| c.mode = GyroMode::Stick { stick, full_rate: v, anti_deadzone })
+            }));
+            rows.push(value_slider("    Anti-deadzone", 0.0..=0.4, anti_deadzone, 0.01, "(beats the game's stick deadzone)", move |v| {
+                with(&|c| c.mode = GyroMode::Stick { stick, full_rate, anti_deadzone: v })
+            }));
+        }
+        GyroMode::Steering { stick, max_angle } => {
+            rows.push(labeled(
+                "    Output stick",
+                pick_list([Stick::Left, Stick::Right], Some(stick), move |s| {
+                    with(&|c| c.mode = GyroMode::Steering { stick: s, max_angle })
+                })
+                .width(170)
+                .into(),
+            ));
+            rows.push(value_slider("    Full lock at", 15.0..=90.0, max_angle, 1.0, "° tilt", move |v| {
+                with(&|c| c.mode = GyroMode::Steering { stick, max_angle: v })
+            }));
+        }
+    }
+
+    let steering = matches!(cfg.mode, GyroMode::Steering { .. });
+    if !steering {
+        rows.push(labeled(
+            "    Horizontal from",
+            pick_list(GyroHorizontal::ALL, Some(cfg.horizontal), move |h| with(&|c| c.horizontal = h))
+                .width(170)
+                .into(),
+        ));
+    }
+    let mut inverts = row![checkbox(cfg.invert_x).label("Invert horizontal").on_toggle(move |v| with(&|c| c.invert_x = v))]
+        .spacing(16);
+    if !steering {
+        inverts = inverts.push(checkbox(cfg.invert_y).label("Invert vertical").on_toggle(move |v| with(&|c| c.invert_y = v)));
+    }
+    rows.push(labeled("", inverts.into()));
+
+    let (activation_kind, activation_input) = match cfg.activation {
+        GyroActivation::Always => (ActivationKind::Always, None),
+        GyroActivation::WhileHeld(i) => (ActivationKind::WhileHeld, Some(i)),
+        GyroActivation::UnlessHeld(i) => (ActivationKind::UnlessHeld, Some(i)),
+        GyroActivation::Toggle(i) => (ActivationKind::Toggle, Some(i)),
+    };
+    let activation = move |kind: ActivationKind, input: GyroInput| match kind {
+        ActivationKind::Always => GyroActivation::Always,
+        ActivationKind::WhileHeld => GyroActivation::WhileHeld(input),
+        ActivationKind::UnlessHeld => GyroActivation::UnlessHeld(input),
+        ActivationKind::Toggle => GyroActivation::Toggle(input),
+    };
+    let current_input = activation_input.unwrap_or(GyroInput::LeftTrigger);
+    let activation_kinds = [ActivationKind::Always, ActivationKind::WhileHeld, ActivationKind::UnlessHeld, ActivationKind::Toggle];
+    let mut active_row = row![pick_list(activation_kinds, Some(activation_kind), move |k| {
+        with(&|c| c.activation = activation(k, current_input))
+    })
+    .width(220)]
+    .spacing(8)
+    .align_y(Alignment::Center);
+    if activation_input.is_some() {
+        active_row = active_row.push(
+            pick_list(GyroInput::all(), activation_input, move |i| with(&|c| c.activation = activation(activation_kind, i)))
+                .width(200),
+        );
+    }
+    rows.push(labeled("    Active", active_row.into()));
+
+    let mut recenter_choices = vec![RecenterChoice(None)];
+    recenter_choices.extend(GyroInput::all().into_iter().map(|i| RecenterChoice(Some(i))));
+    rows.push(labeled(
+        "    Recenter with",
+        row![
+            pick_list(recenter_choices, Some(RecenterChoice(cfg.recenter)), move |r: RecenterChoice| {
+                with(&|c| c.recenter = r.0)
+            })
+            .width(200),
+            text(if steering { "sets the current tilt as straight" } else { "clears leftover motion" })
+                .size(12)
+                .color(MUTED_COLOR),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center)
+        .into(),
+    ));
+    if !steering {
+        rows.push(value_slider("    Ignore jitter below", 0.0..=5.0, cfg.noise_threshold, 0.1, "°/s", move |v| {
+            with(&|c| c.noise_threshold = v)
+        }));
+    }
+    rows
 }
 
 fn button_rows(p: &Profile) -> Vec<Element<'_, Message>> {
@@ -1841,7 +2114,7 @@ mod tests {
     }
 
     fn device(name: &str, analog_triggers: bool, ignored: bool) -> ipc::DeviceInfo {
-        ipc::DeviceInfo { name: name.into(), path: String::new(), managed: !ignored, ignored, analog_triggers, rumble: true }
+        ipc::DeviceInfo { name: name.into(), path: String::new(), managed: !ignored, ignored, analog_triggers, rumble: true, gyro: false }
     }
 
     #[test]
@@ -1928,6 +2201,17 @@ mod tests {
             app.config.profiles[0].button(Button::RightStick),
             &ButtonAction::Toggle(Box::new(ButtonAction::Keys(vec!["KEY_LEFTCTRL".into()])))
         );
+    }
+
+    #[test]
+    fn motion_rule_command_installs_the_shipped_rule() {
+        let cmd = motion_rule_command();
+        assert!(cmd.contains("ENV{ID_INPUT_ACCELEROMETER}==\"1\""), "{cmd}");
+        assert!(cmd.contains("TAG+=\"uaccess\""), "{cmd}");
+        // Single-quoted for the shell, so the rule itself must not contain a quote.
+        let quoted = cmd.split('\'').nth(1).unwrap();
+        assert!(!quoted.is_empty() && !quoted.contains('#'), "comments are left out: {quoted}");
+        assert_eq!(cmd.matches('\'').count(), 2, "{cmd}");
     }
 
     #[test]

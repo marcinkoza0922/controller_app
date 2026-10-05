@@ -28,6 +28,8 @@ pub enum Request {
     WatchInput,
     /// Play a short test pattern on the controller at this device path.
     TestRumble(String),
+    /// Average the gyro of the controller at this path for a moment, as its drift bias.
+    CalibrateGyro(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,6 +53,9 @@ pub struct Status {
     /// Recently focused windows, newest first, for building rules.
     #[serde(default)]
     pub recent_windows: Vec<WindowInfo>,
+    /// Controller motion sensors the daemon may not open (needs the udev rule in dist/).
+    #[serde(default)]
+    pub motion_access_denied: Vec<String>,
 }
 
 /// How the daemon learns which game is active.
@@ -87,6 +92,9 @@ pub struct DeviceInfo {
     /// Supports rumble (FF_RUMBLE), so it can be tested and receives game rumble.
     #[serde(default)]
     pub rumble: bool,
+    /// A motion-sensor device is paired with it.
+    #[serde(default)]
+    pub gyro: bool,
 }
 
 fn yes() -> bool {
@@ -104,6 +112,9 @@ pub struct InputSnapshot {
     /// 0.0..1.0
     pub left_trigger: f32,
     pub right_trigger: f32,
+    /// Degrees/second pitch, yaw, roll, for controllers with a gyro.
+    #[serde(default)]
+    pub gyro: Option<[f32; 3]>,
 }
 
 pub fn socket_path() -> PathBuf {

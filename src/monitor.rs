@@ -71,6 +71,20 @@ pub fn enabled() -> bool {
     is_terminal()
 }
 
+/// Formats a signed reading for live display. Values that round to zero print as an
+/// unsigned zero, so sensor noise around rest (-0.3, +0.2) doesn't flicker between "-0" and
+/// "+0"; the fixed width keeps the line from jumping as digits come and go.
+pub fn signed(v: f32, decimals: usize) -> String {
+    let scale = 10f32.powi(decimals as i32);
+    let rounded = (v * scale).round() / scale;
+    let width = if decimals == 0 { 4 } else { decimals + 3 };
+    if rounded == 0.0 {
+        format!("{:>width$.decimals$}", 0.0)
+    } else {
+        format!("{rounded:>+width$.decimals$}")
+    }
+}
+
 /// A wrapped line breaks the `\r` overwrite, so cut it to the terminal width.
 fn truncate(s: &str, width: usize) -> String {
     s.chars().take(width.saturating_sub(1)).collect()
@@ -88,6 +102,7 @@ fn terminal_width() -> usize {
 pub struct InputView {
     buttons: BTreeSet<Button>,
     axes: HashMap<Axis, f32>,
+    gyro: Option<[f32; 3]>,
 }
 
 impl InputView {
@@ -105,6 +120,10 @@ impl InputView {
         }
     }
 
+    pub fn set_gyro(&mut self, gyro: [f32; 3]) {
+        self.gyro = Some(gyro);
+    }
+
     pub fn snapshot(&self, device: &str) -> InputSnapshot {
         let a = |axis| self.axes.get(&axis).copied().unwrap_or(0.0);
         InputSnapshot {
@@ -114,22 +133,26 @@ impl InputView {
             right_stick: (a(Axis::RightX), a(Axis::RightY)),
             left_trigger: a(Axis::LeftTrigger),
             right_trigger: a(Axis::RightTrigger),
+            gyro: self.gyro,
         }
     }
 
     pub fn render(&self, device: &str) -> String {
         let a = |axis| self.axes.get(&axis).copied().unwrap_or(0.0);
         let mut s = format!(
-            "{device} │ LS {:+.2} {:+.2}  RS {:+.2} {:+.2}  LT {:.2}  RT {:.2} │",
-            a(Axis::LeftX),
-            a(Axis::LeftY),
-            a(Axis::RightX),
-            a(Axis::RightY),
+            "{device} │ LS {} {}  RS {} {}  LT {:.2}  RT {:.2} │",
+            signed(a(Axis::LeftX), 2),
+            signed(a(Axis::LeftY), 2),
+            signed(a(Axis::RightX), 2),
+            signed(a(Axis::RightY), 2),
             a(Axis::LeftTrigger),
             a(Axis::RightTrigger),
         );
         for b in &self.buttons {
             let _ = write!(s, " {b:?}");
+        }
+        if let Some([pitch, yaw, roll]) = self.gyro {
+            let _ = write!(s, " │ gyro p{} y{} r{}", signed(pitch, 0), signed(yaw, 0), signed(roll, 0));
         }
         s
     }
@@ -202,7 +225,7 @@ impl OutputView {
             ("RS", a(Axis::RightX), a(Axis::RightY)),
         ] {
             if x != 0.0 || y != 0.0 {
-                pad.push(format!("{name} {x:+.2} {y:+.2}"));
+                pad.push(format!("{name} {} {}", signed(x, 2), signed(y, 2)));
             }
         }
         for (name, v) in [("LT", a(Axis::LeftTrigger)), ("RT", a(Axis::RightTrigger))] {
@@ -231,10 +254,10 @@ impl OutputView {
         }
         // Hide speeds that round to nothing so the line settles once the stick is still.
         if self.motion.0.abs() >= 1.0 || self.motion.1.abs() >= 1.0 {
-            parts.push(format!("move {:+.0} {:+.0} px/s", self.motion.0, self.motion.1));
+            parts.push(format!("move {} {} px/s", signed(self.motion.0, 0), signed(self.motion.1, 0)));
         }
         if self.scroll.0.abs() >= 0.05 || self.scroll.1.abs() >= 0.05 {
-            parts.push(format!("scroll {:+.1} {:+.1}/s", self.scroll.0, self.scroll.1));
+            parts.push(format!("scroll {} {}/s", signed(self.scroll.0, 1), signed(self.scroll.1, 1)));
         }
 
         if parts.is_empty() { "-".into() } else { parts.join(" · ") }
@@ -266,7 +289,7 @@ mod tests {
         v.apply(&InputEvent::Button(Button::South, false));
         assert_eq!(
             v.render("Pad"),
-            "Pad │ LS +0.00 -1.00  RS +0.00 +0.00  LT 0.00  RT 0.50 │ DpadUp"
+            "Pad │ LS  0.00 -1.00  RS  0.00  0.00  LT 0.00  RT 0.50 │ DpadUp"
         );
     }
 
@@ -279,7 +302,7 @@ mod tests {
         v.apply(&OutEvent::MouseButton(MouseButton::Left, true));
         v.apply(&OutEvent::PadButton(Button::South, true));
         v.apply(&OutEvent::PadAxis(Axis::LeftY, -1.0));
-        assert_eq!(v.render(), "pad South LS +0.00 -1.00 · keys LEFTCTRL+C · click Left");
+        assert_eq!(v.render(), "pad South LS  0.00 -1.00 · keys LEFTCTRL+C · click Left");
 
         v.apply(&OutEvent::Key(KeyCode::KEY_C, false));
         v.apply(&OutEvent::MouseButton(MouseButton::Left, false));
@@ -295,9 +318,24 @@ mod tests {
             v.apply(&OutEvent::MouseMove(4, 0));
             v.end_tick(0.004);
         }
-        assert_eq!(v.render(), "move +1000 +0 px/s");
+        assert_eq!(v.render(), "move +1000    0 px/s");
         v.stop_motion();
         assert_eq!(v.render(), "-");
+    }
+
+    #[test]
+    fn noise_around_zero_shows_an_unsigned_zero() {
+        // A still gyro reads small noise of either sign; it must not flicker "-0"/"+0".
+        for noise in [-0.4, -0.01, 0.0, -0.0, 0.2, 0.49] {
+            assert_eq!(signed(noise, 0), "   0", "{noise}");
+        }
+        assert_eq!(signed(-0.004, 2), " 0.00");
+        assert_eq!(signed(0.004, 2), " 0.00");
+        // Real readings keep their sign, at a steady width.
+        assert_eq!(signed(12.4, 0), " +12");
+        assert_eq!(signed(-0.6, 0), "  -1");
+        assert_eq!(signed(-1.0, 2), "-1.00");
+        assert_eq!(signed(0.25, 2), "+0.25");
     }
 
     #[test]

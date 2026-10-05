@@ -18,6 +18,13 @@ controller_app            # open the GUI
 
 On most desktops (systemd-logind with `uaccess`), your user can already open `/dev/uinput` and the gamepad nodes, so no root is needed. If it can't, add a udev rule that grants access, or add yourself to the `input` group.
 
+For **gyro** on PlayStation and Switch controllers, also install the motion-sensor rule. Their motion sensors are a separate device that `uaccess` doesn't cover:
+
+```sh
+sudo cp dist/70-controller-app-motion.rules /etc/udev/rules.d/
+sudo udevadm control --reload && sudo udevadm trigger
+```
+
 ## Profiles
 
 Each profile maps:
@@ -40,6 +47,16 @@ More templates are available under "New from template…" in the GUI:
 - **PC action**: WASD on the left stick (Shift at full push to sprint), mouse look on the right stick, Mouse 1/2 on RT/LT, A = E (use), B = Space, X = R, Y = F, LB/RB = Q/G, L3/R3 = Ctrl/V, D-pad = 1–4, Start/Select = Esc/Tab.
 - **Strategy**: mouse pointer on the left stick, arrow-key camera on the right, A/B/X = left/right/middle click, RT = left click for drag-select, L3/R3 = zoom (wheel up/down), LB/RB = held Ctrl/Shift, D-pad = control groups 1–4.
 - **Retro / platformer**: arrows on the D-pad and left stick, A/B/X/Y = Z/X/C/V, for keyboard-only indie games and emulators.
+
+## Gyro
+
+Controllers with motion sensors (DualShock 4, DualSense, Switch Pro, Joy-Cons) can use their gyro in each profile:
+
+- **Mouse**: gyro aiming, in pixels per degree turned.
+- **Gamepad stick**: rotation speed deflects a virtual-pad stick, added to the physical stick. An anti-deadzone gets past the game's own stick deadzone.
+- **Steering**: tilt the controller like a wheel to move a stick.
+
+Horizontal aim can come from yaw (turning), roll (tilting) or both, and either axis can be inverted. Gyro can be **always on**, **on only while holding** an input (e.g. LT to aim down sights), **off while holding** (a clutch for repositioning the controller), or **toggled**. A **recenter** input sets the current tilt as straight for steering. Slow movement below a jitter threshold is scaled down to hide drift, and "Calibrate gyro" in the controller list measures the drift while the controller sits still. The PC action template turns on gyro mouse aiming while LT is held.
 
 ## Per-game profiles
 
@@ -67,6 +84,7 @@ When `controller_app daemon` runs in a terminal, it keeps a live status line sho
 
 ## Notes
 
+- PlayStation and Switch controllers are also readable through hidraw, which SDL (and Steam) use directly. Games may then see the real controller as well as ours. Turn off Steam Input for the pad, or set `SDL_JOYSTICK_HIDAPI=0` for the game.
 - Virtual uinput devices, such as Steam Input's pad and our own, are skipped. For a pad this app manages, turn off Steam Input or games may see two controllers.
 - Pads on the `xpad` driver report X/Y by label rather than position; this is corrected automatically.
 - Rumble from games is forwarded to the physical controller when it supports force feedback. The end-to-end check needs `/dev/uinput`, so it is opt-in: `cargo test -- --ignored rumble`.

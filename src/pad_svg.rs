@@ -139,6 +139,7 @@ mod tests {
             right_stick: (0.0, 0.0),
             left_trigger: 0.0,
             right_trigger: 1.0,
+            gyro: None,
         };
         let live = render(Some(&input));
         assert_ne!(rest, live);

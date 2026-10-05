@@ -1,7 +1,7 @@
 //! Per-device mapping state: turns normalized input into output events for the active profile.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     str::FromStr,
     time::{Duration, Instant},
 };
@@ -9,8 +9,11 @@ use std::{
 use evdev::KeyCode;
 
 use crate::{
-    config::{Analog, Button, ButtonAction, Profile, Stick, StickAction, Trigger, TriggerAction},
-    input::{Axis, InputEvent},
+    config::{
+        Analog, Button, ButtonAction, GyroActivation, GyroConfig, GyroHorizontal, GyroInput, GyroMode,
+        Profile, Stick, StickAction, Trigger, TriggerAction,
+    },
+    input::{Axis, InputEvent, MotionSample},
     output::OutEvent,
 };
 
@@ -23,6 +26,8 @@ const WHEEL_UNITS_PER_NOTCH: f32 = 120.0;
 const WHEEL_REPEAT_DELAY: f32 = 0.35;
 /// ...at this many notches per second.
 const WHEEL_REPEAT_RATE: f32 = 10.0;
+/// Time constant (seconds) for smoothing the accelerometer tilt used by gyro steering.
+const TILT_SMOOTHING: f32 = 0.05;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum Source {
@@ -75,6 +80,23 @@ pub struct Engine {
     /// Toggles that are on, keyed by input and position in the action tree.
     toggled: HashMap<StateId, ButtonAction>,
     turbo: HashMap<StateId, TurboState>,
+    /// Physically held buttons, for gyro activation.
+    raw_buttons: HashSet<Button>,
+    gyro: GyroState,
+    /// What physical sticks currently send to each virtual-pad stick, so gyro can add to it.
+    pad_sticks: HashMap<Stick, (f32, f32)>,
+}
+
+#[derive(Default)]
+struct GyroState {
+    /// For `GyroActivation::Toggle`.
+    toggled_on: bool,
+    /// Virtual-pad stick the gyro is deflecting, and by how much.
+    stick: Option<(Stick, (f32, f32))>,
+    mouse_acc: (f32, f32),
+    /// Low-passed tilt from the accelerometer (degrees), and the tilt counted as straight.
+    roll: Option<f32>,
+    roll_center: f32,
 }
 
 /// Identifies a Toggle/Turbo node: the input it belongs to and its pre-order position among
@@ -92,6 +114,36 @@ struct TurboState {
 impl Engine {
     /// Processes one input. Returns true if the input requested switching to the next profile.
     pub fn handle(
+        &mut self,
+        profile: &Profile,
+        ev: InputEvent,
+        now: Instant,
+        out: &mut Vec<OutEvent>,
+    ) -> bool {
+        let gyro = &profile.gyro;
+        let before = self.gyro_controls_held(gyro);
+        if let InputEvent::Button(b, pressed) = ev {
+            if pressed {
+                self.raw_buttons.insert(b);
+            } else {
+                self.raw_buttons.remove(&b);
+            }
+        }
+        let switch = self.handle_mapped(profile, ev, now, out);
+        let after = self.gyro_controls_held(gyro);
+        if matches!(gyro.activation, GyroActivation::Toggle(_)) && after.0 && !before.0 {
+            self.gyro.toggled_on = !self.gyro.toggled_on;
+        }
+        if after.1 && !before.1 {
+            self.recenter_gyro();
+        }
+        if !self.gyro_active(gyro) {
+            self.set_gyro_stick(None, out);
+        }
+        switch
+    }
+
+    fn handle_mapped(
         &mut self,
         profile: &Profile,
         ev: InputEvent,
@@ -473,9 +525,8 @@ impl Engine {
         let (x, y) = self.stick_pos(s, cfg.deadzone);
         match &cfg.action {
             StickAction::Gamepad { stick, invert_y } => {
-                let (ox, oy) = stick_axes(*stick);
-                out.push(OutEvent::PadAxis(ox, x));
-                out.push(OutEvent::PadAxis(oy, if *invert_y { -y } else { y }));
+                self.pad_sticks.insert(*stick, (x, if *invert_y { -y } else { y }));
+                self.emit_pad_stick(*stick, out);
             }
             StickAction::Keys { up, down, left, right } => {
                 let mut want = Vec::new();
@@ -498,6 +549,132 @@ impl Engine {
             StickAction::Mouse { .. } | StickAction::Scroll { .. } | StickAction::Disabled => {}
         }
         self.zones(profile, Analog::Stick(s), x.hypot(y).min(1.0), out)
+    }
+
+    /// Sends a virtual-pad stick: the physical stick mapped to it plus any gyro deflection.
+    fn emit_pad_stick(&self, target: Stick, out: &mut Vec<OutEvent>) {
+        let (px, py) = self.pad_sticks.get(&target).copied().unwrap_or_default();
+        let (gx, gy) = match self.gyro.stick {
+            Some((s, v)) if s == target => v,
+            _ => (0.0, 0.0),
+        };
+        let (ax, ay) = stick_axes(target);
+        out.push(OutEvent::PadAxis(ax, (px + gx).clamp(-1.0, 1.0)));
+        out.push(OutEvent::PadAxis(ay, (py + gy).clamp(-1.0, 1.0)));
+    }
+
+    /// Changes the gyro's stick deflection, re-sending affected sticks.
+    fn set_gyro_stick(&mut self, value: Option<(Stick, (f32, f32))>, out: &mut Vec<OutEvent>) {
+        let old = std::mem::replace(&mut self.gyro.stick, value);
+        if old == value {
+            return;
+        }
+        if let Some((s, _)) = old
+            && value.is_none_or(|(n, _)| n != s)
+        {
+            self.emit_pad_stick(s, out);
+        }
+        if let Some((s, _)) = value {
+            self.emit_pad_stick(s, out);
+        }
+    }
+
+    fn gyro_input_held(&self, input: GyroInput) -> bool {
+        let trigger = |axis| self.axes.get(&axis).copied().unwrap_or(0.0) > 0.5;
+        match input {
+            GyroInput::Button(b) => self.raw_buttons.contains(&b),
+            GyroInput::LeftTrigger => trigger(Axis::LeftTrigger),
+            GyroInput::RightTrigger => trigger(Axis::RightTrigger),
+        }
+    }
+
+    /// (toggle input held, recenter input held), for edge detection around each event.
+    fn gyro_controls_held(&self, cfg: &GyroConfig) -> (bool, bool) {
+        let toggle = match cfg.activation {
+            GyroActivation::Toggle(i) => self.gyro_input_held(i),
+            _ => false,
+        };
+        (toggle, cfg.recenter.is_some_and(|i| self.gyro_input_held(i)))
+    }
+
+    fn gyro_active(&self, cfg: &GyroConfig) -> bool {
+        match cfg.activation {
+            GyroActivation::Always => true,
+            GyroActivation::WhileHeld(i) => self.gyro_input_held(i),
+            GyroActivation::UnlessHeld(i) => !self.gyro_input_held(i),
+            GyroActivation::Toggle(_) => self.gyro.toggled_on,
+        }
+    }
+
+    fn recenter_gyro(&mut self) {
+        self.gyro.roll_center = self.gyro.roll.unwrap_or(0.0);
+        self.gyro.mouse_acc = (0.0, 0.0);
+    }
+
+    /// Applies one motion-sensor sample (with calibration bias already removed).
+    pub fn motion(&mut self, profile: &Profile, sample: MotionSample, out: &mut Vec<OutEvent>) {
+        let cfg = &profile.gyro;
+        // Track tilt from gravity all the time, so steering is centered when switched on.
+        let [ax, ay, _] = sample.accel;
+        if ax != 0.0 || ay != 0.0 {
+            let tilt = ax.atan2(ay).to_degrees();
+            let blend = 1.0 - (-sample.dt / TILT_SMOOTHING).exp();
+            self.gyro.roll = Some(match self.gyro.roll {
+                Some(r) => r + angle_diff(tilt, r) * blend,
+                None => tilt,
+            });
+        }
+        if matches!(cfg.mode, GyroMode::Off) || !self.gyro_active(cfg) {
+            self.set_gyro_stick(None, out);
+            return;
+        }
+
+        let [pitch, yaw, roll] = sample.gyro;
+        let h = match cfg.horizontal {
+            GyroHorizontal::Yaw => yaw,
+            GyroHorizontal::Roll => roll,
+            GyroHorizontal::YawAndRoll => yaw + roll,
+        };
+        // Below the threshold, scale down smoothly so jitter and drift don't move the aim.
+        let speed = h.hypot(pitch);
+        let tighten = if cfg.noise_threshold > 0.0 { (speed / cfg.noise_threshold).min(1.0) } else { 1.0 };
+        // Turning left or tilting the front up should aim left/up (negative x/y).
+        let mut x = -h * tighten;
+        let mut y = -pitch * tighten;
+        if cfg.invert_x {
+            x = -x;
+        }
+        if cfg.invert_y {
+            y = -y;
+        }
+
+        match cfg.mode {
+            GyroMode::Off => {}
+            GyroMode::Mouse { sensitivity } => {
+                let (dx, dy) = take_whole(&mut self.gyro.mouse_acc, x * sensitivity * sample.dt, y * sensitivity * sample.dt);
+                if dx != 0 || dy != 0 {
+                    out.push(OutEvent::MouseMove(dx, dy));
+                }
+            }
+            GyroMode::Stick { stick, full_rate, anti_deadzone } => {
+                let (mut sx, mut sy) = (x / full_rate.max(1.0), y / full_rate.max(1.0));
+                let mag = sx.hypot(sy);
+                if mag > 0.0 {
+                    let scaled = (anti_deadzone + (1.0 - anti_deadzone) * mag.min(1.0)) / mag;
+                    sx *= scaled;
+                    sy *= scaled;
+                }
+                self.set_gyro_stick(Some((stick, (sx, sy))), out);
+            }
+            GyroMode::Steering { stick, max_angle } => {
+                let angle = angle_diff(self.gyro.roll.unwrap_or(0.0), self.gyro.roll_center);
+                let mut sx = (angle / max_angle.max(1.0)).clamp(-1.0, 1.0);
+                if cfg.invert_x {
+                    sx = -sx;
+                }
+                self.set_gyro_stick(Some((stick, (sx, 0.0))), out);
+            }
+        }
     }
 
     /// Whether `tick` currently has anything to do: a mouse/scroll stick is deflected or a
@@ -604,6 +781,11 @@ impl Engine {
         self.scroll_acc = (0.0, 0.0);
         self.wheel_held.clear();
         self.wheel_acc = (0.0, 0.0);
+        // Pad axes were centered above; forget what fed them. Tilt tracking carries on.
+        self.pad_sticks.clear();
+        self.gyro.stick = None;
+        self.gyro.mouse_acc = (0.0, 0.0);
+        self.gyro.toggled_on = false;
     }
 
     /// Re-applies current analog state under a (new) profile, e.g. after switching.
@@ -615,6 +797,11 @@ impl Engine {
             self.trigger(profile, t, value, out);
         }
     }
+}
+
+/// Difference between two angles in degrees, wrapped to -180..180.
+fn angle_diff(a: f32, b: f32) -> f32 {
+    (a - b + 540.0).rem_euclid(360.0) - 180.0
 }
 
 /// Number of Toggle/Turbo nodes in an action, each of which owns a [`StateId`] slot.
@@ -1310,5 +1497,154 @@ mod tests {
         assert_eq!(out, vec![OutEvent::Key(KeyCode::KEY_C, true)]);
         // Releasing the double tap leaves the toggle on.
         assert!(press(&mut e, &p, Button::East, false, ms(t0, 200)).is_empty());
+    }
+
+    use crate::config::{GyroActivation, GyroConfig, GyroHorizontal, GyroInput, GyroMode};
+
+    fn gyro_profile(gyro: GyroConfig) -> Profile {
+        Profile { gyro, ..Profile::passthrough("p") }
+    }
+
+    /// `seconds` of turning at constant rates (degrees/second), held flat, at 250 Hz.
+    fn turn(e: &mut Engine, p: &Profile, pitch: f32, yaw: f32, roll: f32, seconds: f32) -> Vec<OutEvent> {
+        let mut out = Vec::new();
+        for _ in 0..(seconds * 250.0).round() as usize {
+            let sample = MotionSample { gyro: [pitch, yaw, roll], accel: [0.0, 1.0, 0.0], dt: 0.004 };
+            e.motion(p, sample, &mut out);
+        }
+        out
+    }
+
+    fn mouse_total(out: &[OutEvent]) -> (i32, i32) {
+        out.iter().fold((0, 0), |(x, y), ev| match ev {
+            OutEvent::MouseMove(dx, dy) => (x + dx, y + dy),
+            _ => (x, y),
+        })
+    }
+
+    fn mouse_gyro(activation: GyroActivation) -> GyroConfig {
+        GyroConfig { mode: GyroMode::Mouse { sensitivity: 10.0 }, activation, ..GyroConfig::default() }
+    }
+
+    #[test]
+    fn gyro_mouse_turns_degrees_into_pixels() {
+        let p = gyro_profile(mouse_gyro(GyroActivation::Always));
+        let mut e = Engine::default();
+        // Turning left (positive yaw) 30 degrees, then tilting the front up 10 degrees.
+        let (dx, dy) = mouse_total(&turn(&mut e, &p, 0.0, 60.0, 0.0, 0.5));
+        assert!((-301..=-299).contains(&dx) && dy == 0, "{dx} {dy}");
+        let (dx, dy) = mouse_total(&turn(&mut e, &p, 20.0, 0.0, 0.0, 0.5));
+        assert!(dx == 0 && (-101..=-99).contains(&dy), "{dx} {dy}");
+    }
+
+    #[test]
+    fn gyro_ignores_jitter_below_threshold() {
+        let p = gyro_profile(GyroConfig { noise_threshold: 2.0, ..mouse_gyro(GyroActivation::Always) });
+        let mut e = Engine::default();
+        // 0.2 deg/s of drift for 10 s would be 20 px untreated; tightening shrinks it 10x.
+        let (dx, _) = mouse_total(&turn(&mut e, &p, 0.0, 0.2, 0.0, 10.0));
+        assert!(dx.abs() <= 2, "{dx}");
+    }
+
+    #[test]
+    fn gyro_only_while_left_trigger_held() {
+        let p = gyro_profile(mouse_gyro(GyroActivation::WhileHeld(GyroInput::LeftTrigger)));
+        let mut e = Engine::default();
+        assert_eq!(mouse_total(&turn(&mut e, &p, 0.0, 60.0, 0.0, 0.5)), (0, 0));
+        axis(&mut e, &p, Axis::LeftTrigger, 0.8);
+        assert_ne!(mouse_total(&turn(&mut e, &p, 0.0, 60.0, 0.0, 0.5)), (0, 0));
+        axis(&mut e, &p, Axis::LeftTrigger, 0.1);
+        assert_eq!(mouse_total(&turn(&mut e, &p, 0.0, 60.0, 0.0, 0.5)), (0, 0));
+    }
+
+    #[test]
+    fn gyro_clutch_and_toggle() {
+        let clutch = gyro_profile(mouse_gyro(GyroActivation::UnlessHeld(GyroInput::Button(Button::RightStick))));
+        let mut e = Engine::default();
+        run(&mut e, &clutch, InputEvent::Button(Button::RightStick, true));
+        assert_eq!(mouse_total(&turn(&mut e, &clutch, 0.0, 60.0, 0.0, 0.5)), (0, 0));
+        run(&mut e, &clutch, InputEvent::Button(Button::RightStick, false));
+        assert_ne!(mouse_total(&turn(&mut e, &clutch, 0.0, 60.0, 0.0, 0.5)), (0, 0));
+
+        let toggle = gyro_profile(mouse_gyro(GyroActivation::Toggle(GyroInput::Button(Button::Select))));
+        let mut e = Engine::default();
+        let tap = |e: &mut Engine| {
+            run(e, &toggle, InputEvent::Button(Button::Select, true));
+            run(e, &toggle, InputEvent::Button(Button::Select, false));
+        };
+        assert_eq!(mouse_total(&turn(&mut e, &toggle, 0.0, 60.0, 0.0, 0.2)), (0, 0));
+        tap(&mut e);
+        assert_ne!(mouse_total(&turn(&mut e, &toggle, 0.0, 60.0, 0.0, 0.2)), (0, 0));
+        tap(&mut e);
+        assert_eq!(mouse_total(&turn(&mut e, &toggle, 0.0, 60.0, 0.0, 0.2)), (0, 0));
+    }
+
+    #[test]
+    fn gyro_stick_adds_to_physical_stick_and_clears_when_off() {
+        let mut p = gyro_profile(GyroConfig {
+            mode: GyroMode::Stick { stick: Stick::Right, full_rate: 100.0, anti_deadzone: 0.0 },
+            activation: GyroActivation::WhileHeld(GyroInput::LeftTrigger),
+            ..GyroConfig::default()
+        });
+        p.right_stick.deadzone = 0.0; // so the physical 0.3 passes through unchanged
+        let mut e = Engine::default();
+        axis(&mut e, &p, Axis::RightX, 0.3);
+        axis(&mut e, &p, Axis::LeftTrigger, 1.0);
+        // Turning right at 50 deg/s = half deflection, plus the physical 0.3.
+        let out = turn(&mut e, &p, 0.0, -50.0, 0.0, 0.02);
+        assert!(out.iter().any(|ev| matches!(ev, OutEvent::PadAxis(Axis::RightX, v) if (v - 0.8).abs() < 1e-3)), "{out:?}");
+        // Letting go of LT drops the gyro part immediately.
+        let out = axis(&mut e, &p, Axis::LeftTrigger, 0.0);
+        assert!(out.contains(&OutEvent::PadAxis(Axis::RightX, 0.3)), "{out:?}");
+    }
+
+    #[test]
+    fn gyro_steering_follows_tilt_and_recenters() {
+        let p = gyro_profile(GyroConfig {
+            mode: GyroMode::Steering { stick: Stick::Left, max_angle: 45.0 },
+            recenter: Some(GyroInput::Button(Button::Select)),
+            ..GyroConfig::default()
+        });
+        let mut e = Engine::default();
+        let tilt = |e: &mut Engine, degrees: f32| {
+            let r = degrees.to_radians();
+            let mut out = Vec::new();
+            for _ in 0..100 {
+                let sample = MotionSample { gyro: [0.0; 3], accel: [r.sin(), r.cos(), 0.0], dt: 0.004 };
+                e.motion(&p, sample, &mut out);
+            }
+            out.iter().rev().find_map(|ev| match ev {
+                OutEvent::PadAxis(Axis::LeftX, v) => Some(*v),
+                _ => None,
+            })
+        };
+        let x = tilt(&mut e, 22.5).unwrap();
+        assert!((x - 0.5).abs() < 0.02, "half of 45 degrees: {x}");
+        // Recenter at the current tilt: it now counts as straight.
+        run(&mut e, &p, InputEvent::Button(Button::Select, true));
+        let x = tilt(&mut e, 22.5).unwrap_or(0.5);
+        assert!(x.abs() < 0.02, "{x}");
+        let x = tilt(&mut e, 67.5).unwrap();
+        assert!((x - 1.0).abs() < 0.02, "{x}");
+    }
+
+    #[test]
+    fn gyro_roll_and_inversion_options() {
+        let p = gyro_profile(GyroConfig {
+            horizontal: GyroHorizontal::Roll,
+            invert_x: true,
+            ..mouse_gyro(GyroActivation::Always)
+        });
+        let mut e = Engine::default();
+        // Yaw is ignored in roll mode; inverted roll moves right.
+        assert_eq!(mouse_total(&turn(&mut e, &p, 0.0, 60.0, 0.0, 0.5)), (0, 0));
+        let (dx, _) = mouse_total(&turn(&mut e, &p, 0.0, 0.0, 60.0, 0.5));
+        assert!(dx > 290, "{dx}");
+    }
+
+    #[test]
+    fn angle_difference_wraps() {
+        assert!((angle_diff(170.0, -170.0) + 20.0).abs() < 1e-4);
+        assert!((angle_diff(-170.0, 170.0) - 20.0).abs() < 1e-4);
     }
 }

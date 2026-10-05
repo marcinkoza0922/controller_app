@@ -344,6 +344,117 @@ pub struct Zone {
     pub action: ButtonAction,
 }
 
+/// Something that can switch gyro on/off or recenter it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GyroInput {
+    Button(Button),
+    /// Pulled past halfway.
+    LeftTrigger,
+    RightTrigger,
+}
+
+impl GyroInput {
+    pub fn all() -> Vec<GyroInput> {
+        let mut all: Vec<GyroInput> = Button::ALL.into_iter().map(GyroInput::Button).collect();
+        all.extend([GyroInput::LeftTrigger, GyroInput::RightTrigger]);
+        all
+    }
+}
+
+impl fmt::Display for GyroInput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            GyroInput::Button(b) => write!(f, "{b}"),
+            GyroInput::LeftTrigger => f.write_str("Left Trigger"),
+            GyroInput::RightTrigger => f.write_str("Right Trigger"),
+        }
+    }
+}
+
+/// When gyro output is live.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GyroActivation {
+    Always,
+    WhileHeld(GyroInput),
+    /// Off while held: a "clutch" for repositioning the controller without moving the aim.
+    UnlessHeld(GyroInput),
+    /// Each press switches gyro on or off.
+    Toggle(GyroInput),
+}
+
+/// Which rotation drives horizontal aim. Pitch always drives vertical.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GyroHorizontal {
+    /// Turning the controller left/right like a flashlight.
+    Yaw,
+    /// Tilting it like a steering wheel.
+    Roll,
+    /// Both added together, so either motion works.
+    YawAndRoll,
+}
+
+impl GyroHorizontal {
+    pub const ALL: [GyroHorizontal; 3] = [GyroHorizontal::Yaw, GyroHorizontal::Roll, GyroHorizontal::YawAndRoll];
+}
+
+impl fmt::Display for GyroHorizontal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            GyroHorizontal::Yaw => "Yaw (turn)",
+            GyroHorizontal::Roll => "Roll (tilt)",
+            GyroHorizontal::YawAndRoll => "Yaw + roll",
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GyroMode {
+    Off,
+    /// Rotation moves the mouse; `sensitivity` is pixels per degree turned.
+    Mouse { sensitivity: f32 },
+    /// Rotation speed deflects a virtual-pad stick (added to the physical stick). Turning at
+    /// `full_rate` degrees/second is full deflection; `anti_deadzone` is the smallest
+    /// deflection sent, to get past a game's own stick deadzone.
+    Stick { stick: Stick, full_rate: f32, anti_deadzone: f32 },
+    /// Tilting like a steering wheel moves a stick left/right; `max_angle` degrees from
+    /// center is full lock.
+    Steering { stick: Stick, max_angle: f32 },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GyroConfig {
+    pub mode: GyroMode,
+    pub horizontal: GyroHorizontal,
+    #[serde(default)]
+    pub invert_x: bool,
+    #[serde(default)]
+    pub invert_y: bool,
+    pub activation: GyroActivation,
+    /// Sets the current tilt as straight ahead (Steering) and clears accumulated motion.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recenter: Option<GyroInput>,
+    /// Rotation slower than this (degrees/second) is scaled down, hiding jitter and drift.
+    pub noise_threshold: f32,
+}
+
+impl Default for GyroConfig {
+    fn default() -> Self {
+        GyroConfig {
+            mode: GyroMode::Off,
+            horizontal: GyroHorizontal::Yaw,
+            invert_x: false,
+            invert_y: false,
+            activation: GyroActivation::Always,
+            recenter: None,
+            noise_threshold: 1.0,
+        }
+    }
+}
+
 /// A stick or trigger, for addressing zones.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Analog {
@@ -435,6 +546,9 @@ pub struct Profile {
     /// Hold time before a press counts as a long press.
     #[serde(default = "default_long_press_ms")]
     pub long_press_ms: u64,
+    /// Only used by controllers with motion sensors (PlayStation, Switch).
+    #[serde(default)]
+    pub gyro: GyroConfig,
 }
 
 impl Profile {
@@ -525,6 +639,7 @@ impl Profile {
             gestures: BTreeMap::new(),
             tap_window_ms: default_tap_window_ms(),
             long_press_ms: default_long_press_ms(),
+            gyro: GyroConfig::default(),
         }
     }
 
@@ -558,6 +673,12 @@ impl Profile {
             right_stick: StickConfig::new(StickAction::Mouse { speed: 1600.0 }, 0.1, 2.0),
             left_trigger: TriggerAction::Button { action: Mouse(MouseButton::Right), threshold: 0.3 }.into(),
             right_trigger: TriggerAction::Button { action: Mouse(MouseButton::Left), threshold: 0.3 }.into(),
+            // Gyro aiming while aiming down sights (LT), on pads that have a gyro.
+            gyro: GyroConfig {
+                mode: GyroMode::Mouse { sensitivity: 15.0 },
+                activation: GyroActivation::WhileHeld(GyroInput::LeftTrigger),
+                ..GyroConfig::default()
+            },
             ..Profile::passthrough(name)
         }
     }
@@ -674,6 +795,7 @@ impl Profile {
             gestures: BTreeMap::new(),
             tap_window_ms: default_tap_window_ms(),
             long_press_ms: default_long_press_ms(),
+            gyro: GyroConfig::default(),
         }
     }
 }
@@ -735,6 +857,9 @@ pub struct Config {
     pub ignored_devices: Vec<String>,
     #[serde(default)]
     pub auto_switch: AutoSwitch,
+    /// Gyro drift (degrees/second per raw sensor axis) measured by "Calibrate gyro", per controller.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub gyro_calibration: BTreeMap<String, [f32; 3]>,
     pub profiles: Vec<Profile>,
 }
 
@@ -745,6 +870,7 @@ impl Default for Config {
             active_profile: "Gamepad".into(),
             ignored_devices: Vec::new(),
             auto_switch: AutoSwitch::default(),
+            gyro_calibration: BTreeMap::new(),
             profiles: vec![Profile::passthrough("Gamepad"), Profile::desktop("Desktop")],
         }
     }
@@ -940,6 +1066,30 @@ mod tests {
         let back: Config = toml::from_str(&toml::to_string_pretty(&config).unwrap()).unwrap();
         assert_eq!(config, back);
         assert_eq!(config.profiles[0].button(Button::RightStick).key_names(), [&"KEY_C".to_string()]);
+    }
+
+    #[test]
+    fn gyro_config_roundtrips_and_is_optional() {
+        let mut config = Config::default();
+        config.profiles[0].gyro = GyroConfig {
+            mode: GyroMode::Stick { stick: Stick::Right, full_rate: 300.0, anti_deadzone: 0.2 },
+            horizontal: GyroHorizontal::YawAndRoll,
+            invert_x: true,
+            invert_y: false,
+            activation: GyroActivation::Toggle(GyroInput::Button(Button::RightStick)),
+            recenter: Some(GyroInput::Button(Button::Select)),
+            noise_threshold: 2.0,
+        };
+        config.gyro_calibration.insert("Pad".into(), [0.1, -0.2, 0.05]);
+        let back: Config = toml::from_str(&toml::to_string_pretty(&config).unwrap()).unwrap();
+        assert_eq!(config, back);
+
+        let mut value = toml::Value::try_from(Config::default()).unwrap();
+        for profile in value["profiles"].as_array_mut().unwrap() {
+            profile.as_table_mut().unwrap().remove("gyro");
+        }
+        let old: Config = toml::from_str(&toml::to_string(&value).unwrap()).unwrap();
+        assert_eq!(old.profiles[0].gyro, GyroConfig::default());
     }
 
     #[test]
