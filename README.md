@@ -31,7 +31,7 @@ Each profile maps:
 
 - **buttons**: to a gamepad button, a key or key combo (`LEFTCTRL+C`), a mouse button, the scroll wheel (one notch per press, continuous while held), *next profile*, or **several of these at once**.
 - **sticks**: to a gamepad stick, mouse pointer, scroll wheel or direction keys (WASD/arrows), with a deadzone, a response curve and an adjustable press threshold. Each stick's **directions also act as buttons** on top of that (Left Stick Up, …): they can have any action or gesture and can be part of combos, e.g. LB + Right Stick Right. Gamepad outputs include stick directions too, so a button (or the D-pad) can push the virtual stick, and two directions make a diagonal.
-- **triggers**: to an analog gamepad trigger, or to a button action past a threshold.
+- **triggers**: to an analog gamepad trigger, or to anything a button can do (a gamepad button, key, mouse button, macro, …), pressed once pulled past a threshold.
 
 On top of that:
 
@@ -50,7 +50,7 @@ More templates are available under "New from template…" in the GUI:
 
 ## Macros
 
-The Macros tab holds named input sequences shared by all profiles. Each step is a **tap** (press, hold for N ms, release), **hold down**, **release**, **wait** (N ms), or **move stick** (a virtual-pad stick to a direction or custom position, held until the next stick step and recentered when the macro ends). Steps can press a key or key combo, mouse button, scroll wheel or gamepad button. "Insert motion…" adds fighting-game motions one frame apart: quarter circles, dragon punch and half circles, written facing right. Map a macro with the "Macro…" action:
+The Macros tab holds named input sequences shared by all profiles, each in its own collapsible card ("+ New macro" adds one at the top). Each step is a **tap** (press, hold for N ms, release), **hold down**, **release**, **wait** (N ms), or **move stick** (a virtual-pad stick to a direction or custom position, held until the next stick step and recentered when the macro ends). Steps can press a key or key combo, mouse button, scroll wheel or gamepad button. "Insert motion…" adds fighting-game motions one frame apart: quarter circles, dragon punch and half circles, written facing right. Map a macro with the "Macro…" action:
 
 - **Play once**: each press plays it through to the end, even if you let go early.
 - **Repeat while held**: it loops until you let go, then stops at once.

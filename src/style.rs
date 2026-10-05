@@ -4,7 +4,7 @@
 
 use iced::{
     Background, Border, Color, Shadow, Theme, Vector,
-    widget::{container, overlay::menu, pick_list, text_input},
+    widget::{button, container, overlay::menu, pick_list, text_input},
 };
 
 /// Section cards: a step above the page, with a subtle edge.
@@ -50,6 +50,70 @@ pub fn tooltip(theme: &Theme) -> container::Style {
         border: Border { width: 1.0, radius: 6.0.into(), color: p.background.stronger.color },
         shadow: popup_shadow(),
         ..container::Style::default()
+    }
+}
+
+/// Top-level page tabs: plain text over an underline, so they read as navigation rather
+/// than as buttons like the section switches inside a page.
+pub fn page_tab(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |theme, status| {
+        let p = theme.extended_palette();
+        let text_color = if selected {
+            p.primary.base.color
+        } else if matches!(status, button::Status::Hovered | button::Status::Pressed) {
+            p.background.base.text
+        } else {
+            muted(p.background.base.text)
+        };
+        button::Style { background: None, text_color, ..button::Style::default() }
+    }
+}
+
+/// The bar under a page tab: the accent color under the open page.
+pub fn page_tab_underline(selected: bool) -> impl Fn(&Theme) -> container::Style {
+    move |theme| {
+        let p = theme.extended_palette();
+        container::Style {
+            background: selected.then(|| p.primary.base.color.into()),
+            border: Border { radius: 2.0.into(), ..Border::default() },
+            ..container::Style::default()
+        }
+    }
+}
+
+/// The track behind a segmented control (the section switches inside a page).
+pub fn segments(theme: &Theme) -> container::Style {
+    let p = theme.extended_palette();
+    container::Style {
+        background: Some(p.background.weak.color.into()),
+        border: Border { width: 1.0, radius: 8.0.into(), color: p.background.strong.color },
+        ..container::Style::default()
+    }
+}
+
+/// One segment: the chosen one is a raised chip on the track.
+pub fn segment(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |theme, status| {
+        let p = theme.extended_palette();
+        let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+        let background = if selected {
+            Some(p.background.base.color.into())
+        } else if hovered {
+            Some(p.background.strong.color.into())
+        } else {
+            None
+        };
+        button::Style {
+            background,
+            text_color: if selected { p.primary.base.color } else { p.background.weak.text },
+            border: Border { radius: 6.0.into(), ..Border::default() },
+            shadow: if selected {
+                Shadow { color: Color { a: 0.25, ..Color::BLACK }, offset: Vector::new(0.0, 1.0), blur_radius: 3.0 }
+            } else {
+                Shadow::default()
+            },
+            ..button::Style::default()
+        }
     }
 }
 

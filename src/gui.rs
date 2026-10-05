@@ -57,7 +57,8 @@ struct App {
     finding: bool,
     found: Option<Button>,
     /// Index into `config.macros` shown in the Macros tab.
-    editing_macro: usize,
+    /// Macros whose cards are open, by index in `Config::macros`.
+    open_macros: HashSet<usize>,
     /// Menus (by index) whose card is open in the Overlays tab.
     open_menus: HashSet<usize>,
     /// Appearance editors that are open: a menu's, or the keyboard's (`None`).
@@ -118,6 +119,11 @@ impl fmt::Display for QuickChoice {
             None => f.write_str("—"),
         }
     }
+}
+
+/// Open-card indices after item `i` is removed: later items move up one place.
+fn shift_removed(set: &HashSet<usize>, i: usize) -> HashSet<usize> {
+    set.iter().filter(|j| **j != i).map(|j| if *j > i { j - 1 } else { *j }).collect()
 }
 
 /// The "add a menu" card: one button per kind, kept apart from the menus themselves.
@@ -585,15 +591,16 @@ enum Message {
     ExpandAll(bool),
     StartFind,
     CancelFind,
-    EditMacro(String),
+    ToggleMacro(usize),
     NewMacro,
-    DeleteMacro,
-    RenameMacro(String),
-    AddMacroStep(StepKind),
-    SetMacroStep(usize, MacroStep),
-    MoveMacroStep(usize, bool),
-    RemoveMacroStep(usize),
-    InsertMotion(Motion),
+    DeleteMacro(usize),
+    RenameMacro(usize, String),
+    AddMacroStep(usize, StepKind),
+    /// Step `.1` of macro `.0`.
+    SetMacroStep(usize, usize, MacroStep),
+    MoveMacroStep(usize, usize, bool),
+    RemoveMacroStep(usize, usize),
+    InsertMotion(usize, Motion),
     ToggleMenu(usize),
     ToggleAppearance(Option<usize>),
     NewMenu(MenuKindTag),
@@ -696,7 +703,7 @@ impl App {
             expanded: HashSet::new(),
             finding: false,
             found: None,
-            editing_macro: 0,
+            open_macros: HashSet::new(),
             open_menus: HashSet::new(),
             open_appearance: HashSet::new(),
         };
@@ -995,9 +1002,9 @@ impl App {
                 self.found = None;
             }
             Message::CancelFind => self.finding = false,
-            Message::EditMacro(name) => {
-                if let Some(i) = self.config.macros.iter().position(|m| m.name == name) {
-                    self.editing_macro = i;
+            Message::ToggleMacro(i) => {
+                if !self.open_macros.remove(&i) {
+                    self.open_macros.insert(i);
                 }
             }
             Message::NewMacro => {
@@ -1006,18 +1013,20 @@ impl App {
                     .find(|n| !self.config.macros.iter().any(|m| &m.name == n))
                     .unwrap();
                 let tap = MacroStep::Tap { action: ButtonAction::Keys(Vec::new()), hold_ms: DEFAULT_TAP_MS };
-                self.config.macros.push(Macro { name, steps: vec![tap] });
-                self.editing_macro = self.config.macros.len() - 1;
+                // New macros go first, right under the button that made them, already open.
+                self.config.macros.insert(0, Macro { name, steps: vec![tap] });
+                self.open_macros = self.open_macros.iter().map(|j| j + 1).collect();
+                self.open_macros.insert(0);
             }
-            Message::DeleteMacro => {
-                if self.editing_macro < self.config.macros.len() {
-                    self.config.macros.remove(self.editing_macro);
-                    self.editing_macro = self.editing_macro.min(self.config.macros.len().saturating_sub(1));
+            Message::DeleteMacro(i) => {
+                if i < self.config.macros.len() {
+                    self.config.macros.remove(i);
+                    self.open_macros = shift_removed(&self.open_macros, i);
                 }
             }
-            Message::RenameMacro(name) => {
-                let taken = self.config.macros.iter().enumerate().any(|(i, m)| i != self.editing_macro && m.name == name);
-                if let Some(m) = self.config.macros.get_mut(self.editing_macro)
+            Message::RenameMacro(mi, name) => {
+                let taken = self.config.macros.iter().enumerate().any(|(i, m)| i != mi && m.name == name);
+                if let Some(m) = self.config.macros.get_mut(mi)
                     && !taken
                 {
                     let old = std::mem::replace(&mut m.name, name.clone());
@@ -1035,18 +1044,18 @@ impl App {
                     }
                 }
             }
-            Message::AddMacroStep(kind) => {
-                if let Some(m) = self.config.macros.get_mut(self.editing_macro) {
+            Message::AddMacroStep(mi, kind) => {
+                if let Some(m) = self.config.macros.get_mut(mi) {
                     m.steps.push(convert_step(&MacroStep::Wait(0), kind));
                 }
             }
-            Message::SetMacroStep(i, step) => {
-                if let Some(s) = self.config.macros.get_mut(self.editing_macro).and_then(|m| m.steps.get_mut(i)) {
+            Message::SetMacroStep(mi, i, step) => {
+                if let Some(s) = self.config.macros.get_mut(mi).and_then(|m| m.steps.get_mut(i)) {
                     *s = step;
                 }
             }
-            Message::MoveMacroStep(i, up) => {
-                if let Some(m) = self.config.macros.get_mut(self.editing_macro) {
+            Message::MoveMacroStep(mi, i, up) => {
+                if let Some(m) = self.config.macros.get_mut(mi) {
                     let j = if up { i.checked_sub(1) } else { Some(i + 1).filter(|j| *j < m.steps.len()) };
                     if let Some(j) = j {
                         m.steps.swap(i, j);
@@ -1074,21 +1083,20 @@ impl App {
                 if menu.items.is_empty() {
                     menu.items.push(MenuItem { label: "Item 1".into(), action: ButtonAction::Keys(Vec::new()), button: None });
                 }
-                self.config.menus.push(menu);
-                // The new menu gets its own open card.
-                self.open_menus.insert(self.config.menus.len() - 1);
+                // New menus go first, right under the button that made them, already open.
+                self.config.menus.insert(0, menu);
+                self.open_menus = self.open_menus.iter().map(|j| j + 1).collect();
+                self.open_menus.insert(0);
+                self.open_appearance = self.open_appearance.iter().map(|a| a.map(|j| j + 1)).collect();
             }
             Message::DeleteMenu(i) => {
                 if i < self.config.menus.len() {
                     self.config.menus.remove(i);
                     // Later menus move up one place, and so do their open cards.
-                    let shift = |set: &HashSet<usize>| -> HashSet<usize> {
-                        set.iter().filter(|j| **j != i).map(|j| if *j > i { j - 1 } else { *j }).collect()
-                    };
-                    self.open_menus = shift(&self.open_menus);
+                    self.open_menus = shift_removed(&self.open_menus, i);
                     let menus_open: HashSet<usize> = self.open_appearance.iter().filter_map(|a| *a).collect();
                     let keyboard = self.open_appearance.contains(&None);
-                    self.open_appearance = shift(&menus_open).into_iter().map(Some).collect();
+                    self.open_appearance = shift_removed(&menus_open, i).into_iter().map(Some).collect();
                     if keyboard {
                         self.open_appearance.insert(None);
                     }
@@ -1166,13 +1174,13 @@ impl App {
                     it.button = choice.0;
                 }
             }
-            Message::InsertMotion(motion) => {
-                if let Some(m) = self.config.macros.get_mut(self.editing_macro) {
+            Message::InsertMotion(mi, motion) => {
+                if let Some(m) = self.config.macros.get_mut(mi) {
                     m.steps.extend(motion.steps());
                 }
             }
-            Message::RemoveMacroStep(i) => {
-                if let Some(m) = self.config.macros.get_mut(self.editing_macro)
+            Message::RemoveMacroStep(mi, i) => {
+                if let Some(m) = self.config.macros.get_mut(mi)
                     && i < m.steps.len()
                 {
                     m.steps.remove(i);
@@ -1496,22 +1504,28 @@ impl App {
     fn view(&self) -> Element<'_, Message> {
         let names = Names::of(&self.config);
         let profile_issue = self.profile().is_some_and(|p| ProfileTab::ALL.iter().any(|t| section_has_problem(p, *t, &names)));
-        let tab = |label: &'static str, tab: Tab, issue: bool| {
+        let tab = |label: &'static str, tab: Tab, issue: bool| -> Element<'_, Message> {
             let label = if issue { format!("{label}  ⚠") } else { label.to_string() };
-            button(text(label))
-                .style(if self.tab == tab { button::primary } else { button::secondary })
-                .on_press(Message::SelectTab(tab))
+            let selected = self.tab == tab;
+            column![
+                button(text(label).size(17)).style(style::page_tab(selected)).padding([6, 14]).on_press(Message::SelectTab(tab)),
+                container(space()).width(Length::Fill).height(3).style(style::page_tab_underline(selected)),
+            ]
+            .width(Length::Shrink)
+            .into()
         };
         let content = column![
             self.view_header(),
-            row![
-                tab("Overview", Tab::Overview, false),
-                tab("Profile", Tab::Profile, profile_issue),
-                tab("Macros", Tab::Macros, macros_have_problem(&self.config.macros)),
-                tab("Overlays", Tab::Overlays, menus_have_problem(&self.config.menus, &names)),
-            ]
-            .spacing(6),
-            rule::horizontal(1),
+            column![
+                row![
+                    tab("Overview", Tab::Overview, false),
+                    tab("Profile", Tab::Profile, profile_issue),
+                    tab("Macros", Tab::Macros, macros_have_problem(&self.config.macros)),
+                    tab("Overlays", Tab::Overlays, menus_have_problem(&self.config.menus, &names)),
+                ]
+                .spacing(4),
+                rule::horizontal(1),
+            ],
         ]
         .spacing(16)
         .padding(20);
@@ -1562,14 +1576,17 @@ impl App {
         let sub_tab = |t: ProfileTab| {
             let label = if section_has_problem(p, t, names) { format!("{t}  ⚠") } else { t.to_string() };
             button(text(label).size(14))
-                .style(if self.profile_tab == t { button::primary } else { button::secondary })
+                .style(style::segment(self.profile_tab == t))
+                .padding([5, 14])
                 .on_press(Message::SelectProfileTab(t))
         };
-        let mut tabs = row![].spacing(6).align_y(Alignment::Center);
+        let mut segments = row![].spacing(2);
         for t in ProfileTab::ALL {
-            tabs = tabs.push(sub_tab(t));
+            segments = segments.push(sub_tab(t));
         }
-        tabs = tabs.push(space::horizontal());
+        let mut tabs = row![container(segments).padding(3).style(style::segments), space::horizontal()]
+            .spacing(6)
+            .align_y(Alignment::Center);
         if self.profile_tab != ProfileTab::Gyro {
             tabs = tabs
                 .push(button(text("Expand all").size(13)).style(button::text).on_press(Message::ExpandAll(true)))
@@ -1813,53 +1830,78 @@ impl App {
     }
 
     fn view_macros(&self) -> Element<'_, Message> {
-        let names: Vec<String> = self.config.macros.iter().map(|m| m.name.clone()).collect();
-        let current = self.config.macros.get(self.editing_macro);
-        let col = column![
+        let add = container(
             row![
-                text("Macros").size(20),
+                button(text("+ New macro")).style(button::secondary).on_press(Message::NewMacro),
+                text("A macro plays a sequence of inputs.").size(13).color(MUTED_COLOR),
+                space::horizontal(),
                 help(
-                    "A macro plays a sequence of inputs. Map it to any button, gesture, combo, trigger \
-                     or zone with the \"Macro…\" action in a profile."
+                    "A macro plays a sequence of inputs. Map it to any button, gesture, combo, trigger, \
+                     zone or menu item with the \"Macro…\" action."
                         .into(),
                 ),
             ]
-            .spacing(8)
+            .spacing(12)
             .align_y(Alignment::Center),
-            row![
-                dropdown(names, current.map(|m| m.name.clone()), Message::EditMacro)
-                    .placeholder("No macros")
-                    .width(200),
-                field("Macro name", current.map(|m| m.name.as_str()).unwrap_or(""))
-                    .on_input_maybe(current.is_some().then_some(Message::RenameMacro))
-                    .width(200),
-                space::horizontal(),
-                button(text("+ New macro")).style(button::secondary).on_press(Message::NewMacro),
-                button(text("Delete")).style(button::danger).on_press_maybe(current.is_some().then_some(Message::DeleteMacro)),
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center),
-        ]
-        .spacing(10);
+        )
+        .padding(14)
+        .width(Length::Fill)
+        .style(style::card);
+        let mut col = column![add].spacing(16);
+        for (i, m) in self.config.macros.iter().enumerate() {
+            col = col.push(self.view_macro_card(i, m));
+        }
+        col.into()
+    }
 
-        let Some(m) = current else {
-            return col.push(text("Create a macro to get started.").color(MUTED_COLOR)).into();
+    /// A macro as its own collapsible card: a summary line, or its steps when open.
+    fn view_macro_card<'a>(&'a self, mi: usize, m: &'a Macro) -> Element<'a, Message> {
+        let open = self.open_macros.contains(&mi);
+        let problem = if m.name.trim().is_empty() {
+            Some("needs a name".to_string())
+        } else if self.config.macros[..mi].iter().chain(&self.config.macros[mi + 1..]).any(|o| o.name == m.name) {
+            Some("name used twice".to_string())
+        } else {
+            m.steps.iter().filter_map(MacroStep::action).find_map(|a| action_problem(a, &Names::default()))
         };
-        let mi = self.editing_macro;
+        let chevron = if open { "▾" } else { "▸" };
+        let title = text(format!("{chevron}  {}", if m.name.is_empty() { "(unnamed)" } else { &m.name })).size(18);
+        let title = if problem.is_some() { title.color(ERROR_COLOR) } else { title };
+        let total: u64 = m.steps.iter().map(MacroStep::duration_ms).sum();
+        let n = m.steps.len();
+        let mut header = row![
+            button(title).style(button::text).padding(0).on_press(Message::ToggleMacro(mi)),
+            text(format!("{n} step{} · {total} ms", if n == 1 { "" } else { "s" })).size(13).color(MUTED_COLOR),
+            space::horizontal(),
+        ]
+        .spacing(12)
+        .align_y(Alignment::Center);
+        if let Some(problem) = &problem {
+            header = header.push(text(format!("⚠ {problem}")).size(12).color(ERROR_COLOR));
+        }
+        header = header.push(button(text("Delete").size(13)).style(button::danger).on_press(Message::DeleteMacro(mi)));
+        let mut col = column![header].spacing(12);
+        if open {
+            col = col.push(self.view_macro_editor(mi, m));
+        }
+        container(col).padding(14).width(Length::Fill).style(style::card).into()
+    }
+
+    fn view_macro_editor<'a>(&'a self, mi: usize, m: &'a Macro) -> Element<'a, Message> {
         let last = m.steps.len().saturating_sub(1);
         let mut steps = column![].spacing(8);
         for (i, step) in m.steps.iter().enumerate() {
             let kind = dropdown(STEP_KINDS, Some(step_kind(step)), {
                 let step = step.clone();
-                move |k| Message::SetMacroStep(i, convert_step(&step, k))
+                move |k| Message::SetMacroStep(mi, i, convert_step(&step, k))
             })
             .width(120);
             let body: Element<'_, Message> = match step {
                 MacroStep::Wait(ms) => row![
-                    slider(10.0..=5000.0, *ms as f32, move |v| Message::SetMacroStep(i, MacroStep::Wait(v as u64)))
+                    slider(10.0..=5000.0, *ms as f32, move |v| Message::SetMacroStep(mi, i, MacroStep::Wait(v as u64)))
                         .step(10.0_f32)
                         .width(220),
-                    ms_field(*ms, move |v| Message::SetMacroStep(i, MacroStep::Wait(v))),
+                    ms_field(*ms, move |v| Message::SetMacroStep(mi, i, MacroStep::Wait(v))),
                 ]
                 .spacing(10)
                 .align_y(Alignment::Center)
@@ -1872,13 +1914,13 @@ impl App {
                         row![
                             text("held for").size(13),
                             slider(10.0..=1000.0, hold_ms as f32, move |v| {
-                                Message::SetMacroStep(i, MacroStep::Tap { action: held.clone(), hold_ms: v as u64 })
+                                Message::SetMacroStep(mi, i, MacroStep::Tap { action: held.clone(), hold_ms: v as u64 })
                             })
                             .step(10.0_f32)
                             .width(180),
                             {
                                 let held = action.clone();
-                                ms_field(hold_ms, move |v| Message::SetMacroStep(i, MacroStep::Tap { action: held.clone(), hold_ms: v }))
+                                ms_field(hold_ms, move |v| Message::SetMacroStep(mi, i, MacroStep::Tap { action: held.clone(), hold_ms: v }))
                             },
                         ]
                         .spacing(10)
@@ -1892,12 +1934,12 @@ impl App {
                     let preset = StickPreset::of(x, y);
                     let mut body = column![row![
                         dropdown([Stick::Left, Stick::Right], Some(stick), move |s| {
-                            Message::SetMacroStep(i, MacroStep::Stick { stick: s, x, y })
+                            Message::SetMacroStep(mi, i, MacroStep::Stick { stick: s, x, y })
                         })
                         .width(140),
                         dropdown(StickPreset::ALL, Some(preset), move |p: StickPreset| {
                             let (x, y) = p.position().unwrap_or((x, y));
-                            Message::SetMacroStep(i, MacroStep::Stick { stick, x, y })
+                            Message::SetMacroStep(mi, i, MacroStep::Stick { stick, x, y })
                         })
                         .width(170),
                     ]
@@ -1908,11 +1950,11 @@ impl App {
                         body = body.push(
                             row![
                                 text("Horizontal").size(12),
-                                slider(-1.0..=1.0, x, move |v| Message::SetMacroStep(i, MacroStep::Stick { stick, x: v, y }))
+                                slider(-1.0..=1.0, x, move |v| Message::SetMacroStep(mi, i, MacroStep::Stick { stick, x: v, y }))
                                     .step(0.05_f32)
                                     .width(120),
                                 text("Vertical").size(12),
-                                slider(-1.0..=1.0, -y, move |v| Message::SetMacroStep(i, MacroStep::Stick { stick, x, y: -v }))
+                                slider(-1.0..=1.0, -y, move |v| Message::SetMacroStep(mi, i, MacroStep::Stick { stick, x, y: -v }))
                                     .step(0.05_f32)
                                     .width(120),
                                 text(format!("{x:+.2}, {:+.2}", -y)).size(12),
@@ -1938,13 +1980,13 @@ impl App {
             steps = steps.push(
                 container(
                     row![
-                        text(format!("{}.", i + 1)).width(28),
+                        container(text(format!("{}.", i + 1))).width(28).padding(iced::Padding::ZERO.top(6)),
                         kind,
                         body,
                         space::horizontal(),
-                        small("↑", (i > 0).then_some(Message::MoveMacroStep(i, true))),
-                        small("↓", (i < last).then_some(Message::MoveMacroStep(i, false))),
-                        small("✕", Some(Message::RemoveMacroStep(i))),
+                        small("↑", (i > 0).then_some(Message::MoveMacroStep(mi, i, true))),
+                        small("↓", (i < last).then_some(Message::MoveMacroStep(mi, i, false))),
+                        small("✕", Some(Message::RemoveMacroStep(mi, i))),
                     ]
                     .spacing(8)
                     .align_y(Alignment::Start),
@@ -1958,12 +2000,12 @@ impl App {
         let mut footer = column![
             row![
                 text("Add step:").size(13),
-                button(text("Tap").size(13)).style(button::secondary).on_press(Message::AddMacroStep(StepKind::Tap)),
-                button(text("Hold down").size(13)).style(button::secondary).on_press(Message::AddMacroStep(StepKind::Press)),
-                button(text("Release").size(13)).style(button::secondary).on_press(Message::AddMacroStep(StepKind::Release)),
-                button(text("Wait").size(13)).style(button::secondary).on_press(Message::AddMacroStep(StepKind::Wait)),
-                button(text("Move stick").size(13)).style(button::secondary).on_press(Message::AddMacroStep(StepKind::Stick)),
-                dropdown(Motion::ALL, None::<Motion>, Message::InsertMotion).placeholder("Insert motion…").width(230),
+                button(text("Tap").size(13)).style(button::secondary).on_press(Message::AddMacroStep(mi, StepKind::Tap)),
+                button(text("Hold down").size(13)).style(button::secondary).on_press(Message::AddMacroStep(mi, StepKind::Press)),
+                button(text("Release").size(13)).style(button::secondary).on_press(Message::AddMacroStep(mi, StepKind::Release)),
+                button(text("Wait").size(13)).style(button::secondary).on_press(Message::AddMacroStep(mi, StepKind::Wait)),
+                button(text("Move stick").size(13)).style(button::secondary).on_press(Message::AddMacroStep(mi, StepKind::Stick)),
+                dropdown(Motion::ALL, None::<Motion>, move |m| Message::InsertMotion(mi, m)).placeholder("Insert motion…").width(230),
                 space::horizontal(),
                 text(format!("Plays for {total} ms")).size(13).color(MUTED_COLOR),
             ]
@@ -1980,15 +2022,26 @@ impl App {
                 .color(MUTED_COLOR),
             );
         }
-        col.push(section("Steps", None, vec![steps.into(), footer.into()])).into()
+        column![
+            labeled(
+                "Name",
+                field("Macro name", &m.name).on_input(move |n| Message::RenameMacro(mi, n)).width(220).into(),
+            ),
+            text("Steps").size(16),
+            steps,
+            footer,
+        ]
+        .spacing(10)
+        .into()
     }
 
     fn view_overlays<'a>(&'a self, names: &Names) -> Element<'a, Message> {
-        let mut col = column![self.view_keyboard_card()].spacing(16);
+        // The keyboard is always there, so it stays on top; new menus are added just below it.
+        let mut col = column![self.view_keyboard_card(), view_new_menu_card()].spacing(16);
         for (i, menu) in self.config.menus.iter().enumerate() {
             col = col.push(self.view_menu_card(i, menu, names));
         }
-        col.push(view_new_menu_card()).into()
+        col.into()
     }
 
     fn view_keyboard_card(&self) -> Element<'_, Message> {
@@ -2926,20 +2979,22 @@ fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<'a, Message
         .into_iter()
         .filter(|k| gestures.and_then(|g| g.get(*k)).is_none())
         .collect();
-    let mut line = row![
-        row_toggle(b.to_string(), target, true, problem.is_some()),
-        action_editor(p.button(b), b, &ACTION_KINDS, set_action(target), KeyField::root(target), ui.names),
-    ]
-    .spacing(10)
-    .align_y(Alignment::Center);
+    // The name gets a line of its own so the open editor reads as sitting under it.
+    let mut header = row![row_toggle(b.to_string(), target, true, problem.is_some()), space::horizontal()]
+        .spacing(10)
+        .align_y(Alignment::Center);
     if !missing.is_empty() {
-        line = line.push(space::horizontal()).push(
+        header = header.push(
             dropdown(missing, None::<GestureKind>, move |k| Message::AddGesture(b, k))
                 .placeholder("+ Gesture")
                 .width(130),
         );
     }
-    rows.push(line.into());
+    rows.push(header.into());
+    rows.push(labeled(
+        "    Press",
+        action_editor(p.button(b), b, &ACTION_KINDS, set_action(target), KeyField::root(target), ui.names),
+    ));
 
     for (kind, action) in set_gestures {
         rows.push(labeled(
@@ -3183,7 +3238,18 @@ fn action_editor<'a>(
     field: KeyField,
     names: &Names,
 ) -> Element<'a, Message> {
-    let kind = match action {
+    let kind = action_kind(action);
+    let kind_picker = {
+        let on_change = on_change.clone();
+        let (current, names) = (action.clone(), names.clone());
+        dropdown(kinds, Some(kind), move |k| on_change(new_action(k, default_button, &current, &names))).width(170)
+    };
+    let value = action_value(action, default_button, on_change, field, names);
+    row![kind_picker, value].spacing(8).align_y(Alignment::Start).into()
+}
+
+fn action_kind(action: &ButtonAction) -> ActionKind {
+    match action {
         ButtonAction::Disabled => ActionKind::Disabled,
         ButtonAction::Gamepad(_) => ActionKind::Gamepad,
         ButtonAction::Keys(_) => ActionKind::Keys,
@@ -3196,44 +3262,47 @@ fn action_editor<'a>(
         ButtonAction::Turbo { .. } => ActionKind::Turbo,
         ButtonAction::Macro { .. } => ActionKind::Macro,
         ButtonAction::OpenMenu(_) => ActionKind::Menu,
-    };
-    let first_menu = names.menus.first().cloned().unwrap_or_default();
-    let first_macro = names.macros.first().cloned().unwrap_or_default();
+    }
+}
+
+/// A fresh action of kind `k`, replacing `current`.
+fn new_action(k: ActionKind, default_button: Button, current: &ButtonAction, names: &Names) -> ButtonAction {
     // When wrapping in Toggle/Turbo, keep a simple existing action as the thing wrapped.
-    let wrappable = match action {
+    let wrappable = match current {
         ButtonAction::Gamepad(_) | ButtonAction::Keys(_) | ButtonAction::Mouse(_) | ButtonAction::Wheel(_) => {
-            Some(action.clone())
+            Some(current.clone())
         }
         _ => None,
     };
-    let kind_picker = {
-        let on_change = on_change.clone();
-        dropdown(kinds, Some(kind), move |k| {
-            on_change(match k {
-                ActionKind::Disabled => ButtonAction::Disabled,
-                ActionKind::Gamepad => ButtonAction::Gamepad(default_button),
-                ActionKind::Keys => ButtonAction::Keys(Vec::new()),
-                ActionKind::Mouse => ButtonAction::Mouse(MouseButton::Left),
-                ActionKind::Wheel => ButtonAction::Wheel(WheelDirection::Up),
-                ActionKind::NextProfile => ButtonAction::NextProfile,
-                ActionKind::Overlay => ButtonAction::ToggleOverlay,
-                // Keep what was there as the first entry.
-                ActionKind::Multiple => ButtonAction::Multi(wrappable.iter().cloned().collect()),
-                ActionKind::Toggle => ButtonAction::Toggle(Box::new(
-                    wrappable.clone().unwrap_or(ButtonAction::Keys(Vec::new())),
-                )),
-                ActionKind::Turbo => ButtonAction::Turbo {
-                    action: Box::new(wrappable.clone().unwrap_or(ButtonAction::Mouse(MouseButton::Left))),
-                    rate: DEFAULT_TURBO_RATE,
-                },
-                ActionKind::Macro => ButtonAction::Macro { name: first_macro.clone(), repeat: false },
-                ActionKind::Menu => ButtonAction::OpenMenu(first_menu.clone()),
-            })
-        })
-        .width(170)
-    };
+    match k {
+        ActionKind::Disabled => ButtonAction::Disabled,
+        ActionKind::Gamepad => ButtonAction::Gamepad(default_button),
+        ActionKind::Keys => ButtonAction::Keys(Vec::new()),
+        ActionKind::Mouse => ButtonAction::Mouse(MouseButton::Left),
+        ActionKind::Wheel => ButtonAction::Wheel(WheelDirection::Up),
+        ActionKind::NextProfile => ButtonAction::NextProfile,
+        ActionKind::Overlay => ButtonAction::ToggleOverlay,
+        // Keep what was there as the first entry.
+        ActionKind::Multiple => ButtonAction::Multi(wrappable.into_iter().collect()),
+        ActionKind::Toggle => ButtonAction::Toggle(Box::new(wrappable.unwrap_or(ButtonAction::Keys(Vec::new())))),
+        ActionKind::Turbo => ButtonAction::Turbo {
+            action: Box::new(wrappable.unwrap_or(ButtonAction::Mouse(MouseButton::Left))),
+            rate: DEFAULT_TURBO_RATE,
+        },
+        ActionKind::Macro => ButtonAction::Macro { name: names.macros.first().cloned().unwrap_or_default(), repeat: false },
+        ActionKind::Menu => ButtonAction::OpenMenu(names.menus.first().cloned().unwrap_or_default()),
+    }
+}
 
-    let value: Element<'a, Message> = match action {
+/// The settings to the right of an action's kind picker.
+fn action_value<'a>(
+    action: &'a ButtonAction,
+    default_button: Button,
+    on_change: OnAction<'a>,
+    field: KeyField,
+    names: &Names,
+) -> Element<'a, Message> {
+    match action {
         ButtonAction::Gamepad(b) => dropdown(Button::EVERY, Some(*b), move |b| {
             on_change(ButtonAction::Gamepad(b))
         })
@@ -3328,8 +3397,7 @@ fn action_editor<'a>(
             }
             line.into()
         }
-    };
-    row![kind_picker, value].spacing(8).align_y(Alignment::Start).into()
+    }
 }
 
 /// List of simultaneous actions, each with its own editor and a remove button.
@@ -3640,20 +3708,21 @@ fn value_slider<'a>(
     )
 }
 
+/// What a trigger does, in one list: pass through as an analog trigger, or act as a button
+/// with any button action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TriggerKind {
-    Disabled,
-    Gamepad,
-    Button,
+enum TriggerChoice {
+    Analog(Trigger),
+    Action(ActionKind),
 }
 
-impl fmt::Display for TriggerKind {
+impl fmt::Display for TriggerChoice {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            TriggerKind::Disabled => "Disabled",
-            TriggerKind::Gamepad => "Gamepad trigger",
-            TriggerKind::Button => "Button action",
-        })
+        match self {
+            TriggerChoice::Analog(Trigger::Left) => f.write_str("Gamepad LT (analog)"),
+            TriggerChoice::Analog(Trigger::Right) => f.write_str("Gamepad RT (analog)"),
+            TriggerChoice::Action(k) => k.fmt(f),
+        }
     }
 }
 
@@ -3664,52 +3733,53 @@ fn trigger_editor<'a>(
     analog: bool,
     names: &Names,
 ) -> Element<'a, Message> {
-    let kind = match action {
-        TriggerAction::Disabled => TriggerKind::Disabled,
-        TriggerAction::Gamepad(_) => TriggerKind::Gamepad,
-        TriggerAction::Button { .. } => TriggerKind::Button,
+    let choice = match action {
+        TriggerAction::Disabled => TriggerChoice::Action(ActionKind::Disabled),
+        TriggerAction::Gamepad(out) => TriggerChoice::Analog(*out),
+        TriggerAction::Button { action, .. } => TriggerChoice::Action(action_kind(action)),
     };
-    let kinds = [TriggerKind::Disabled, TriggerKind::Gamepad, TriggerKind::Button];
-    let picker = dropdown(kinds, Some(kind), move |k| {
-        Message::SetTrigger(
-            t,
-            match k {
-                TriggerKind::Disabled => TriggerAction::Disabled,
-                TriggerKind::Gamepad => TriggerAction::Gamepad(t),
-                TriggerKind::Button => TriggerAction::Button {
-                    action: ButtonAction::Mouse(MouseButton::Left),
-                    threshold: 0.5,
+    // Analog outputs first, then everything a button can do.
+    let other = if t == Trigger::Left { Trigger::Right } else { Trigger::Left };
+    let mut choices = vec![TriggerChoice::Action(ActionKind::Disabled), TriggerChoice::Analog(t), TriggerChoice::Analog(other)];
+    choices.extend(ACTION_KINDS.into_iter().skip(1).map(TriggerChoice::Action));
+    // A trigger acting as a button presses the matching bumper by default.
+    let default_button = if t == Trigger::Left { Button::LeftBumper } else { Button::RightBumper };
+    let (threshold, current) = match action {
+        TriggerAction::Button { action, threshold } => (*threshold, action.clone()),
+        _ => (0.5, ButtonAction::Disabled),
+    };
+    let picker = {
+        let names = names.clone();
+        dropdown(choices, Some(choice), move |c| {
+            Message::SetTrigger(
+                t,
+                match c {
+                    TriggerChoice::Analog(out) => TriggerAction::Gamepad(out),
+                    TriggerChoice::Action(ActionKind::Disabled) => TriggerAction::Disabled,
+                    TriggerChoice::Action(k) => {
+                        TriggerAction::Button { action: new_action(k, default_button, &current, &names), threshold }
+                    }
                 },
-            },
-        )
-    })
-    .width(170);
+            )
+        })
+        .width(215)
+    };
 
-    let mut rows = column![labeled(t.to_string(), picker.into())].spacing(8);
-    match action {
-        TriggerAction::Gamepad(target) => {
-            rows = rows.push(labeled(
-                "    Output",
-                dropdown([Trigger::Left, Trigger::Right], Some(*target), move |o| {
-                    Message::SetTrigger(t, TriggerAction::Gamepad(o))
-                })
-                .width(170)
-                .into(),
-            ));
+    let mut line = row![text(t.to_string()).width(LABEL_WIDTH), picker].spacing(10).align_y(Alignment::Start);
+    let mut rows = column![].spacing(8);
+    if let TriggerAction::Button { action: inner, threshold } = action {
+        let threshold = *threshold;
+        let on_change: OnAction<'a> = Rc::new(move |a| Message::SetTrigger(t, TriggerAction::Button { action: a, threshold }));
+        line = line.push(action_value(inner, default_button, on_change, KeyField::root(Target::Trigger(t)), names));
+        rows = rows.push(line);
+        if analog {
+            let inner = inner.clone();
+            rows = rows.push(value_slider("    Presses at", 0.05..=0.95, threshold, 0.05, "", move |v| {
+                Message::SetTrigger(t, TriggerAction::Button { action: inner.clone(), threshold: v })
+            }));
         }
-        TriggerAction::Button { action: inner, threshold } => {
-            rows = rows.push(labeled(
-                "    Action",
-                action_editor(inner, Button::South, &ACTION_KINDS, set_action(Target::Trigger(t)), KeyField::root(Target::Trigger(t)), names),
-            ));
-            if analog {
-                let inner = inner.clone();
-                rows = rows.push(value_slider("    Threshold", 0.05..=0.95, *threshold, 0.05, "", move |v| {
-                    Message::SetTrigger(t, TriggerAction::Button { action: inner.clone(), threshold: v })
-                }));
-            }
-        }
-        TriggerAction::Disabled => {}
+    } else {
+        rows = rows.push(line);
     }
     if analog {
         return rows.push(zone_editor(Analog::Trigger(t), zones, names)).into();
@@ -3891,9 +3961,10 @@ mod tests {
     fn macro_editing_steps_and_renames_follow_mappings() {
         let mut app = app();
         let _ = app.update(Message::NewMacro);
-        let _ = app.update(Message::AddMacroStep(StepKind::Wait));
-        let _ = app.update(Message::AddMacroStep(StepKind::Press));
-        let _ = app.update(Message::MoveMacroStep(2, true));
+        assert!(app.open_macros.contains(&0), "a new macro opens as its own card");
+        let _ = app.update(Message::AddMacroStep(0, StepKind::Wait));
+        let _ = app.update(Message::AddMacroStep(0, StepKind::Press));
+        let _ = app.update(Message::MoveMacroStep(0, 2, true));
         assert_eq!(
             app.config.macros[0].steps.iter().map(step_kind).collect::<Vec<_>>(),
             [StepKind::Tap, StepKind::Press, StepKind::Wait]
@@ -3904,7 +3975,13 @@ mod tests {
 
         let mapped = ButtonAction::Toggle(Box::new(ButtonAction::Macro { name: "Macro".into(), repeat: true }));
         app.config.profiles[1].set_button(Button::West, mapped);
-        let _ = app.update(Message::RenameMacro("Jump spam".into()));
+        let _ = app.update(Message::RenameMacro(0, "Jump spam".into()));
+        // A second macro goes on top, and the first one's open card moves down with it.
+        let _ = app.update(Message::NewMacro);
+        assert_eq!(app.config.macros[1].name, "Jump spam");
+        assert_eq!(app.open_macros, HashSet::from([0, 1]));
+        let _ = app.update(Message::DeleteMacro(0));
+        assert_eq!(app.open_macros, HashSet::from([0]));
         assert_eq!(
             app.config.profiles[1].button(Button::West),
             &ButtonAction::Toggle(Box::new(ButtonAction::Macro { name: "Jump spam".into(), repeat: true }))
@@ -3912,7 +3989,7 @@ mod tests {
         // Step 2 (Hold down) has no key yet, so saving is blocked until it gets one.
         assert!(app.validate().is_none() || app.validate().unwrap().contains("unknown key"));
 
-        let _ = app.update(Message::DeleteMacro);
+        let _ = app.update(Message::DeleteMacro(0));
         assert!(app.validate().unwrap().contains("missing macro"), "{:?}", app.validate());
     }
 
@@ -3945,7 +4022,7 @@ mod tests {
         let _ = app.update(Message::NewMacro);
         let up = Target::Button(Button::RightStickUp);
         let _ = app.update(Message::SetAction(up, ButtonAction::Macro { name: "Macro".into(), repeat: false }));
-        let _ = app.update(Message::RenameMacro("Hadouken".into()));
+        let _ = app.update(Message::RenameMacro(0, "Hadouken".into()));
         assert_eq!(
             app.config.profiles[0].button(Button::RightStickUp),
             &ButtonAction::Macro { name: "Hadouken".into(), repeat: false }
@@ -4084,13 +4161,14 @@ mod tests {
         pick(&mut app, KeyField::root(Target::MenuItem(0, 0)), false, &["KEY_M"]);
         assert_eq!(app.config.menus[0].items[0].action, ButtonAction::Keys(vec!["KEY_M".into()]));
 
-        // A second menu opened from the first and from a profile follows a rename.
+        // A second menu goes on top; opened from the first and from a profile, it follows a rename.
         let _ = app.update(Message::NewMenu(MenuKindTag::Radial));
-        let _ = app.update(Message::RenameMenu(1, "Weapons".into()));
-        app.config.menus[0].items[1].action = ButtonAction::OpenMenu("Weapons".into());
+        assert_eq!(app.open_menus, HashSet::from([0, 1]), "the older card moved down, still open");
+        let _ = app.update(Message::RenameMenu(0, "Weapons".into()));
+        app.config.menus[1].items[1].action = ButtonAction::OpenMenu("Weapons".into());
         app.config.profiles[0].set_button(Button::Select, ButtonAction::OpenMenu("Weapons".into()));
-        let _ = app.update(Message::RenameMenu(1, "Wheel".into()));
-        assert_eq!(app.config.menus[0].items[1].action, ButtonAction::OpenMenu("Wheel".into()));
+        let _ = app.update(Message::RenameMenu(0, "Wheel".into()));
+        assert_eq!(app.config.menus[1].items[1].action, ButtonAction::OpenMenu("Wheel".into()));
         assert_eq!(app.config.profiles[0].button(Button::Select), &ButtonAction::OpenMenu("Wheel".into()));
         assert_eq!(app.validate(), None);
 
@@ -4098,7 +4176,7 @@ mod tests {
         let _ = app.update(Message::ToggleMenu(0));
         let _ = app.update(Message::ToggleAppearance(Some(1)));
         let _ = app.update(Message::DeleteMenu(0));
-        assert_eq!(app.config.menus[0].name, "Wheel");
+        assert_eq!(app.config.menus[0].name, "Menu");
         assert!(app.open_menus.contains(&0) && app.open_appearance.contains(&Some(0)));
         let _ = app.update(Message::DeleteMenu(0));
         let err = app.validate().unwrap();
