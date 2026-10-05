@@ -14,9 +14,9 @@ use iced::{
 
 use crate::{
     config::{
-        Analog, Button, ButtonAction, Combo, Config, GestureKind, GyroActivation, GyroConfig,
-        GyroHorizontal, GyroInput, GyroMode, Macro, MacroStep, MouseButton, Rule, RuleKind, WheelDirection,
-        Zone, Profile, Stick, StickAction, StickConfig,
+        Analog, Button, ButtonAction, CarouselControls, Cluster, Combo, Config, GestureKind, GyroActivation,
+        GyroConfig, GyroHorizontal, GyroInput, GyroMode, Macro, MacroStep, Menu, MenuItem, MenuKind, MenuKindTag,
+        MouseButton, Rule, RuleKind, WheelDirection, Zone, Profile, Stick, StickAction, StickConfig,
         Trigger, TriggerAction,
     },
     ipc::{self, FocusBackend, InputSnapshot, Request, Response, Status, WindowInfo},
@@ -56,6 +56,8 @@ struct App {
     found: Option<Button>,
     /// Index into `config.macros` shown in the Macros tab.
     editing_macro: usize,
+    /// Index into `config.menus` shown in the Overlays tab.
+    editing_menu: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -67,6 +69,8 @@ enum Target {
     Zone(Analog, usize),
     /// Step `.1` of macro `.0` (in `Config::macros`), not part of any profile.
     MacroStep(usize, usize),
+    /// Item `.1` of menu `.0` (in `Config::menus`).
+    MenuItem(usize, usize),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +78,7 @@ enum Tab {
     Overview,
     Profile,
     Macros,
+    Overlays,
 }
 
 /// Sections of the profile editor.
@@ -85,9 +90,69 @@ enum ProfileTab {
     Gyro,
 }
 
+/// A menu's cancel button in a picker; `None` means the kind's default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CancelChoice(Option<Button>);
+
+impl fmt::Display for CancelChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(b) => write!(f, "{b}"),
+            None => f.write_str("Default"),
+        }
+    }
+}
+
+/// A menu item's quick-select button in a picker; `None` means none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct QuickChoice(Option<Button>);
+
+impl fmt::Display for QuickChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(b) => f.write_str(crate::menu::button_badge(b)),
+            None => f.write_str("—"),
+        }
+    }
+}
+
+/// A cascade menu always has exactly four slots (up, right, down, left), some maybe empty.
+fn fit_items(menu: &mut Menu) {
+    if let MenuKind::Cascade { .. } = menu.kind {
+        menu.items.truncate(4);
+        while menu.items.len() < 4 {
+            menu.items.push(MenuItem { label: String::new(), action: ButtonAction::Disabled, button: None });
+        }
+    }
+}
+
+fn menus_have_problem(menus: &[Menu], names: &Names) -> bool {
+    menus.iter().enumerate().any(|(i, m)| {
+        m.name.trim().is_empty()
+            || menus[..i].iter().any(|o| o.name == m.name)
+            || m.items.iter().any(|item| action_problem(&item.action, names).is_some())
+    })
+}
+
+/// Macro and menu names, for "Macro…"/"Open menu…" pickers and for checking references.
+#[derive(Debug, Clone, Default)]
+struct Names {
+    macros: Vec<String>,
+    menus: Vec<String>,
+}
+
+impl Names {
+    fn of(config: &Config) -> Self {
+        Names {
+            macros: config.macros.iter().map(|m| m.name.clone()).collect(),
+            menus: config.menus.iter().map(|m| m.name.clone()).collect(),
+        }
+    }
+}
+
 /// What the free view functions need to know about the app beyond the profile itself.
 struct Ui<'a> {
-    macros: &'a [String],
+    names: &'a Names,
     expanded: &'a HashSet<Target>,
     /// Row picked by "Find by pressing", highlighted and open.
     found: Option<Button>,
@@ -363,6 +428,17 @@ enum Message {
     MoveMacroStep(usize, bool),
     RemoveMacroStep(usize),
     InsertMotion(Motion),
+    EditMenu(String),
+    NewMenu(MenuKindTag),
+    DeleteMenu,
+    RenameMenu(String),
+    SetMenuKind(MenuKind),
+    SetMenuCancel(CancelChoice),
+    AddMenuItem,
+    RemoveMenuItem(usize),
+    MoveMenuItem(usize, bool),
+    SetMenuItemLabel(usize, String),
+    SetMenuItemButton(usize, QuickChoice),
     OpenKeyPicker(KeyField, Vec<String>, bool),
     PickerKey(&'static str),
     PickerClear,
@@ -452,6 +528,7 @@ impl App {
             finding: false,
             found: None,
             editing_macro: 0,
+            editing_menu: 0,
         };
         let load = Task::perform(
             async {
@@ -626,6 +703,11 @@ impl App {
                     self.editing = self.editing.min(self.config.profiles.len() - 1);
                 }
             }
+            Message::SetAction(Target::MenuItem(m, i), action) => {
+                if let Some(item) = self.config.menus.get_mut(m).and_then(|m| m.items.get_mut(i)) {
+                    item.action = action;
+                }
+            }
             Message::SetAction(Target::MacroStep(m, s), action) => {
                 if let Some(slot) = self.config.macros.get_mut(m).and_then(|m| m.steps.get_mut(s)).and_then(|s| s.action_mut()) {
                     *slot = action;
@@ -653,7 +735,7 @@ impl App {
                                 z.action = action;
                             }
                         }
-                        Target::MacroStep(..) => {}
+                        Target::MacroStep(..) | Target::MenuItem(..) => {}
                     }
                 }
             }
@@ -799,6 +881,97 @@ impl App {
                     if let Some(j) = j {
                         m.steps.swap(i, j);
                     }
+                }
+            }
+            Message::EditMenu(name) => {
+                if let Some(i) = self.config.menus.iter().position(|m| m.name == name) {
+                    self.editing_menu = i;
+                }
+            }
+            Message::NewMenu(kind) => {
+                let name = (1..)
+                    .map(|i| if i == 1 { "Menu".to_string() } else { format!("Menu {i}") })
+                    .find(|n| !self.config.menus.iter().any(|m| &m.name == n))
+                    .unwrap();
+                let kind = MenuKind::default_for(kind);
+                let mut menu = Menu { name, kind, items: Vec::new(), cancel: None };
+                fit_items(&mut menu);
+                if menu.items.is_empty() {
+                    menu.items.push(MenuItem { label: "Item 1".into(), action: ButtonAction::Keys(Vec::new()), button: None });
+                }
+                self.config.menus.push(menu);
+                self.editing_menu = self.config.menus.len() - 1;
+            }
+            Message::DeleteMenu => {
+                if self.editing_menu < self.config.menus.len() {
+                    self.config.menus.remove(self.editing_menu);
+                    self.editing_menu = self.editing_menu.min(self.config.menus.len().saturating_sub(1));
+                }
+            }
+            Message::RenameMenu(name) => {
+                let taken = self.config.menus.iter().enumerate().any(|(i, m)| i != self.editing_menu && m.name == name);
+                if let Some(m) = self.config.menus.get_mut(self.editing_menu)
+                    && !taken
+                {
+                    let old = std::mem::replace(&mut m.name, name.clone());
+                    // Keep every "Open menu" (in profiles and in other menus) pointing at it.
+                    let mut follow = |a: &mut ButtonAction| {
+                        a.walk_mut(&mut |a| {
+                            if let ButtonAction::OpenMenu(n) = a
+                                && *n == old
+                            {
+                                *n = name.clone();
+                            }
+                        })
+                    };
+                    for p in &mut self.config.profiles {
+                        p.actions_mut().into_iter().for_each(&mut follow);
+                    }
+                    for menu in &mut self.config.menus {
+                        menu.items.iter_mut().for_each(|item| follow(&mut item.action));
+                    }
+                }
+            }
+            Message::SetMenuKind(kind) => {
+                if let Some(m) = self.config.menus.get_mut(self.editing_menu) {
+                    m.kind = kind;
+                    fit_items(m);
+                }
+            }
+            Message::SetMenuCancel(choice) => {
+                if let Some(m) = self.config.menus.get_mut(self.editing_menu) {
+                    m.cancel = choice.0;
+                }
+            }
+            Message::AddMenuItem => {
+                if let Some(m) = self.config.menus.get_mut(self.editing_menu) {
+                    let label = format!("Item {}", m.items.len() + 1);
+                    m.items.push(MenuItem { label, action: ButtonAction::Keys(Vec::new()), button: None });
+                }
+            }
+            Message::RemoveMenuItem(i) => {
+                if let Some(m) = self.config.menus.get_mut(self.editing_menu)
+                    && i < m.items.len()
+                {
+                    m.items.remove(i);
+                }
+            }
+            Message::MoveMenuItem(i, up) => {
+                if let Some(m) = self.config.menus.get_mut(self.editing_menu) {
+                    let j = if up { i.checked_sub(1) } else { Some(i + 1).filter(|j| *j < m.items.len()) };
+                    if let Some(j) = j {
+                        m.items.swap(i, j);
+                    }
+                }
+            }
+            Message::SetMenuItemLabel(i, label) => {
+                if let Some(item) = self.config.menus.get_mut(self.editing_menu).and_then(|m| m.items.get_mut(i)) {
+                    item.label = label;
+                }
+            }
+            Message::SetMenuItemButton(i, choice) => {
+                if let Some(item) = self.config.menus.get_mut(self.editing_menu).and_then(|m| m.items.get_mut(i)) {
+                    item.button = choice.0;
                 }
             }
             Message::InsertMotion(motion) => {
@@ -951,6 +1124,13 @@ impl App {
 
     /// Writes keys chosen in the on-screen keyboard into the field it was opened for.
     fn apply_keys(&mut self, field: KeyField, keys: Vec<String>) {
+        if let KeyField::Action { target: Target::MenuItem(m, i), path } = &field {
+            let item = self.config.menus.get_mut(*m).and_then(|m| m.items.get_mut(*i));
+            if let Some(action) = item.and_then(|item| action_at(&mut item.action, path)) {
+                *action = ButtonAction::Keys(keys);
+            }
+            return;
+        }
         if let KeyField::Action { target: Target::MacroStep(m, s), path } = &field {
             let step = self.config.macros.get_mut(*m).and_then(|m| m.steps.get_mut(*s));
             if let Some(action) = step.and_then(|s| s.action_mut()).and_then(|a| action_at(a, path)) {
@@ -982,7 +1162,7 @@ impl App {
                     Target::Gesture(b, kind) => p.gestures.get_mut(&b).and_then(|g| g.slot(kind).as_mut()),
                     Target::Zone(a, i) => p.zones_mut(a).get_mut(i).map(|z| &mut z.action),
                     // Handled above, outside any profile.
-                    Target::MacroStep(..) => None,
+                    Target::MacroStep(..) | Target::MenuItem(..) => None,
                 };
                 if let Some(action) = root.and_then(|a| action_at(a, &path)) {
                     *action = ButtonAction::Keys(keys);
@@ -1039,6 +1219,25 @@ impl App {
             let keys = m.steps.iter().filter_map(MacroStep::action).flat_map(|a| a.key_names());
             if let Some(bad) = keys.into_iter().find(|k| KeyCode::from_str(k).is_err()) {
                 return Some(format!("Macro {:?}: unknown key {:?}", m.name, short_key(bad)));
+            }
+        }
+        let names = Names::of(&self.config);
+        for (i, m) in self.config.menus.iter().enumerate() {
+            if m.name.trim().is_empty() {
+                return Some("Menu names cannot be empty.".into());
+            }
+            if self.config.menus[..i].iter().any(|o| o.name == m.name) {
+                return Some(format!("Two menus are named {:?}.", m.name));
+            }
+            if let Some(problem) = m.items.iter().find_map(|item| action_problem(&item.action, &names)) {
+                return Some(format!("Menu {:?}: {problem}", m.name));
+            }
+        }
+        for p in &self.config.profiles {
+            if let Some(problem) = p.actions().into_iter().find_map(|a| {
+                action_problem(a, &names).filter(|problem| problem.starts_with("missing menu"))
+            }) {
+                return Some(format!("Profile {:?} uses a {problem}.", p.name));
             }
         }
         for p in &self.config.profiles {
@@ -1103,8 +1302,8 @@ impl App {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let macro_names: Vec<String> = self.config.macros.iter().map(|m| m.name.clone()).collect();
-        let profile_issue = self.profile().is_some_and(|p| ProfileTab::ALL.iter().any(|t| section_has_problem(p, *t, &macro_names)));
+        let names = Names::of(&self.config);
+        let profile_issue = self.profile().is_some_and(|p| ProfileTab::ALL.iter().any(|t| section_has_problem(p, *t, &names)));
         let tab = |label: &'static str, tab: Tab, issue: bool| {
             let label = if issue { format!("{label}  ⚠") } else { label.to_string() };
             button(text(label))
@@ -1117,6 +1316,7 @@ impl App {
                 tab("Overview", Tab::Overview, false),
                 tab("Profile", Tab::Profile, profile_issue),
                 tab("Macros", Tab::Macros, macros_have_problem(&self.config.macros)),
+                tab("Overlays", Tab::Overlays, menus_have_problem(&self.config.menus, &names)),
             ]
             .spacing(6),
             rule::horizontal(1),
@@ -1132,8 +1332,9 @@ impl App {
                 rule::horizontal(1).into(),
                 self.view_auto_switch(),
             ]),
-            Tab::Profile => content.push(self.view_profile_tab(&macro_names)),
+            Tab::Profile => content.push(self.view_profile_tab(&names)),
             Tab::Macros => content.push(self.view_macros()),
+            Tab::Overlays => content.push(self.view_overlays(&names)),
         };
 
         let base: Element<'_, Message> =
@@ -1144,7 +1345,7 @@ impl App {
         }
     }
 
-    fn view_profile_tab<'a>(&'a self, macro_names: &[String]) -> Element<'a, Message> {
+    fn view_profile_tab<'a>(&'a self, names: &Names) -> Element<'a, Message> {
         let mut col = column![self.view_profile_bar()].spacing(16);
         let Some(p) = self.profile() else { return col.into() };
         col = col.push(self.view_live(Some(p)));
@@ -1167,7 +1368,7 @@ impl App {
             .into()
         };
         let sub_tab = |t: ProfileTab| {
-            let label = if section_has_problem(p, t, macro_names) { format!("{t}  ⚠") } else { t.to_string() };
+            let label = if section_has_problem(p, t, names) { format!("{t}  ⚠") } else { t.to_string() };
             button(text(label).size(14))
                 .style(if self.profile_tab == t { button::primary } else { button::secondary })
                 .on_press(Message::SelectProfileTab(t))
@@ -1185,7 +1386,7 @@ impl App {
         col = col.push(row![find].align_y(Alignment::Center)).push(tabs);
 
         let ui = Ui {
-            macros: macro_names,
+            names,
             expanded: &self.expanded,
             found: self.found,
             analog_triggers: self.analog_triggers(),
@@ -1306,23 +1507,6 @@ impl App {
             }
             Some(_) => list = list.push(text("No controllers detected.").color(MUTED_COLOR)),
             None => list = list.push(text("Unavailable while the daemon is not running.").color(MUTED_COLOR)),
-        }
-        if let Some(status) = &self.status {
-            let label = if status.overlay_visible { "Close on-screen keyboard" } else { "On-screen keyboard" };
-            list = list.push(
-                row![
-                    button(text(label).size(13)).style(button::secondary).on_press(Message::ToggleOverlay),
-                    help(
-                        "An on-screen keyboard over everything, typed with the controller: D-pad or \
-                         stick to move, A to press, X backspace, Y space, Start enter, hold B to close. \
-                         Map \"On-screen keyboard\" to a button or gesture to open it from the \
-                         controller."
-                            .into(),
-                    ),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            );
         }
         if let Some(status) = &self.status
             && !status.motion_access_denied.is_empty()
@@ -1492,7 +1676,7 @@ impl App {
                     let hold_ms = *hold_ms;
                     let held = action.clone();
                     column![
-                        action_editor(action, Button::South, MACRO_STEP_KINDS, set_action(Target::MacroStep(mi, i)), KeyField::root(Target::MacroStep(mi, i)), &[]),
+                        action_editor(action, Button::South, MACRO_STEP_KINDS, set_action(Target::MacroStep(mi, i)), KeyField::root(Target::MacroStep(mi, i)), &Names::default()),
                         row![
                             text("held for").size(13),
                             slider(10.0..=1000.0, hold_ms as f32, move |v| {
@@ -1553,7 +1737,7 @@ impl App {
                     MACRO_STEP_KINDS,
                     set_action(Target::MacroStep(mi, i)),
                     KeyField::root(Target::MacroStep(mi, i)),
-                    &[],
+                    &Names::default(),
                 ),
             };
             let small = |label: &'static str, msg: Option<Message>| {
@@ -1605,6 +1789,145 @@ impl App {
             );
         }
         col.push(section("Steps", None, vec![steps.into(), footer.into()])).into()
+    }
+
+    fn view_overlays<'a>(&'a self, names: &Names) -> Element<'a, Message> {
+        let keyboard_open = self.status.as_ref().is_some_and(|s| s.overlay_visible);
+        let keyboard = section(
+            "On-screen keyboard",
+            Some(
+                "A keyboard over everything, typed with the controller: D-pad or stick to move, A to \
+                 press, X backspace, Y space, Start enter, hold B to close. Map \"On-screen keyboard\" \
+                 to a button or gesture to open it from the controller."
+                    .into(),
+            ),
+            vec![
+                button(text(if keyboard_open { "Close it" } else { "Open it now" }).size(14))
+                    .style(button::secondary)
+                    .on_press(Message::ToggleOverlay)
+                    .into(),
+            ],
+        );
+        column![keyboard, self.view_menus(names)].spacing(16).into()
+    }
+
+    fn view_menus<'a>(&'a self, names: &Names) -> Element<'a, Message> {
+        let current = self.config.menus.get(self.editing_menu);
+        let mut rows: Vec<Element<'a, Message>> = vec![
+            row![
+                dropdown(names.menus.clone(), current.map(|m| m.name.clone()), Message::EditMenu)
+                    .placeholder("No menus")
+                    .width(180),
+                field("Menu name", current.map(|m| m.name.as_str()).unwrap_or(""))
+                    .on_input_maybe(current.is_some().then_some(Message::RenameMenu))
+                    .width(180),
+                space::horizontal(),
+                dropdown(MenuKindTag::ALL, None::<MenuKindTag>, Message::NewMenu).placeholder("+ New menu…").width(220),
+                button(text("Delete")).style(button::danger).on_press_maybe(current.is_some().then_some(Message::DeleteMenu)),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .into(),
+        ];
+        let Some(menu) = current else {
+            rows.push(text("Create a menu, then open it from a profile with the \"Open menu…\" action.").color(MUTED_COLOR).into());
+            return section("Menus", Some(MENUS_HELP.into()), rows);
+        };
+        let mi = self.editing_menu;
+
+        // Kind and its settings.
+        let kind_tag = menu.kind.tag();
+        let mut kind_row = row![dropdown(MenuKindTag::ALL, Some(kind_tag), |t| Message::SetMenuKind(MenuKind::default_for(t))).width(260)]
+            .spacing(8)
+            .align_y(Alignment::Center);
+        match menu.kind {
+            MenuKind::Radial { stick } => {
+                kind_row = kind_row.push(text("aim with")).push(
+                    dropdown([Stick::Left, Stick::Right], Some(stick), |s| Message::SetMenuKind(MenuKind::Radial { stick: s })).width(150),
+                );
+            }
+            MenuKind::Cascade { cluster } => {
+                kind_row = kind_row.push(text("slots on")).push(
+                    dropdown([Cluster::DPad, Cluster::FaceButtons], Some(cluster), |c| Message::SetMenuKind(MenuKind::Cascade { cluster: c }))
+                        .width(150),
+                );
+            }
+            MenuKind::Carousel { controls } => {
+                kind_row = kind_row.push(text("cycle with")).push(
+                    dropdown(CarouselControls::ALL, Some(controls), |c| Message::SetMenuKind(MenuKind::Carousel { controls: c })).width(200),
+                );
+            }
+            MenuKind::List | MenuKind::Buttons => {}
+        }
+        rows.push(labeled("Kind", kind_row.into()));
+        let mut cancels = vec![CancelChoice(None)];
+        cancels.extend(Button::ALL.into_iter().map(|b| CancelChoice(Some(b))));
+        rows.push(labeled(
+            "Back / close",
+            row![
+                dropdown(cancels, Some(CancelChoice(menu.cancel)), Message::SetMenuCancel).width(200),
+                text(format!("(default: {})", crate::menu::button_badge(Menu { cancel: None, ..menu.clone() }.cancel_button())))
+                    .size(12)
+                    .color(MUTED_COLOR),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .into(),
+        ));
+
+        // Items.
+        let cascade_slots = match menu.kind {
+            MenuKind::Cascade { cluster } => Some(cluster.slots()),
+            _ => None,
+        };
+        let quick = matches!(menu.kind, MenuKind::Buttons);
+        let last = menu.items.len().saturating_sub(1);
+        let mut items = column![].spacing(8);
+        for (i, item) in menu.items.iter().enumerate() {
+            let target = Target::MenuItem(mi, i);
+            let name: String = match cascade_slots {
+                Some(slots) => format!("{}  {}", crate::menu::button_badge(slots[i]), ["up", "right", "down", "left"][i]),
+                None => format!("{}.", i + 1),
+            };
+            let mut line = row![
+                text(name).width(70),
+                field("Label", &item.label).on_input(move |l| Message::SetMenuItemLabel(i, l)).width(150),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Start);
+            if quick {
+                let mut options = vec![QuickChoice(None)];
+                options.extend(Button::ALL.into_iter().map(|b| QuickChoice(Some(b))));
+                line = line.push(
+                    tooltip(
+                        dropdown(options, Some(QuickChoice(item.button)), move |c| Message::SetMenuItemButton(i, c)).width(90),
+                        container(text("Quick-select button").size(13)).padding(8).style(style::tooltip),
+                        tooltip::Position::Top,
+                    ),
+                );
+            }
+            line = line.push(action_editor(&item.action, Button::South, MENU_ITEM_KINDS, set_action(target), KeyField::root(target), names));
+            if cascade_slots.is_none() {
+                let small = |label: &'static str, msg: Option<Message>| {
+                    button(text(label).size(13)).style(button::secondary).on_press_maybe(msg)
+                };
+                line = line
+                    .push(space::horizontal())
+                    .push(small("↑", (i > 0).then_some(Message::MoveMenuItem(i, true))))
+                    .push(small("↓", (i < last).then_some(Message::MoveMenuItem(i, false))))
+                    .push(small("✕", Some(Message::RemoveMenuItem(i))));
+            }
+            let mut boxed = column![line].spacing(4);
+            if let Some(problem) = action_problem(&item.action, names) {
+                boxed = boxed.push(text(format!("⚠ {problem}")).size(12).color(ERROR_COLOR));
+            }
+            items = items.push(container(boxed).padding(8).style(style::inset));
+        }
+        rows.push(items.into());
+        if cascade_slots.is_none() {
+            rows.push(button(text("+ Add item").size(13)).style(button::secondary).on_press(Message::AddMenuItem).into());
+        }
+        section("Menus", Some(MENUS_HELP.into()), rows)
     }
 
     fn view_profile_bar(&self) -> Element<'_, Message> {
@@ -1927,7 +2250,7 @@ fn labeled<'a>(label: impl text::IntoFragment<'a>, editor: Element<'a, Message>)
 }
 
 fn view_profile<'a>(p: &'a Profile, ui: &Ui, tab: ProfileTab) -> Element<'a, Message> {
-    let macros = ui.macros;
+    let names = ui.names;
     let sections: Vec<Element<'a, Message>> = match tab {
         ProfileTab::Buttons => vec![section(
             "Buttons",
@@ -1942,14 +2265,14 @@ fn view_profile<'a>(p: &'a Profile, ui: &Ui, tab: ProfileTab) -> Element<'a, Mes
         ProfileTab::Sticks => {
             let mut sticks = Vec::new();
             for s in [Stick::Left, Stick::Right] {
-                sticks.push(stick_editor(s, p.stick(s), macros));
+                sticks.push(stick_editor(s, p.stick(s), names));
                 for b in Button::stick_directions(s) {
                     sticks.extend(button_row(p, b, ui));
                 }
             }
             let triggers = [Trigger::Left, Trigger::Right]
                 .into_iter()
-                .map(|t| trigger_editor(t, p.trigger(t), p.zones(Analog::Trigger(t)), ui.analog_triggers, macros))
+                .map(|t| trigger_editor(t, p.trigger(t), p.zones(Analog::Trigger(t)), ui.analog_triggers, names))
                 .collect();
             vec![
                 section(
@@ -2011,6 +2334,7 @@ fn summarize(action: &ButtonAction) -> String {
         ButtonAction::Wheel(d) => d.to_string(),
         ButtonAction::NextProfile => "Next profile".into(),
         ButtonAction::ToggleOverlay => "On-screen keyboard".into(),
+        ButtonAction::OpenMenu(name) => format!("Menu “{name}”"),
         ButtonAction::Multi(list) if list.is_empty() => "(nothing)".into(),
         ButtonAction::Multi(list) => list.iter().map(summarize).collect::<Vec<_>>().join(" & "),
         ButtonAction::Toggle(inner) => format!("Toggle {}", summarize(inner)),
@@ -2021,7 +2345,7 @@ fn summarize(action: &ButtonAction) -> String {
 }
 
 /// What's wrong with an action, if anything (the same things saving checks).
-fn action_problem(action: &ButtonAction, macros: &[String]) -> Option<String> {
+fn action_problem(action: &ButtonAction, names: &Names) -> Option<String> {
     let mut problem = None;
     action.walk(&mut |a| {
         if problem.is_some() {
@@ -2033,8 +2357,11 @@ fn action_problem(action: &ButtonAction, macros: &[String]) -> Option<String> {
                     problem = Some(format!("unknown key {:?}", short_key(bad)));
                 }
             }
-            ButtonAction::Macro { name, .. } if !macros.contains(name) => {
+            ButtonAction::Macro { name, .. } if !names.macros.contains(name) => {
                 problem = Some(format!("missing macro {name:?}"));
+            }
+            ButtonAction::OpenMenu(name) if !names.menus.contains(name) => {
+                problem = Some(format!("missing menu {name:?}"));
             }
             _ => {}
         }
@@ -2043,8 +2370,8 @@ fn action_problem(action: &ButtonAction, macros: &[String]) -> Option<String> {
 }
 
 /// Whether a profile section contains anything saving would reject.
-fn section_has_problem(p: &Profile, tab: ProfileTab, macros: &[String]) -> bool {
-    let bad = |a: &ButtonAction| action_problem(a, macros).is_some();
+fn section_has_problem(p: &Profile, tab: ProfileTab, names: &Names) -> bool {
+    let bad = |a: &ButtonAction| action_problem(a, names).is_some();
     let button_bad = |b: Button| {
         bad(p.button(b)) || p.gestures.get(&b).is_some_and(|g| GestureKind::ALL.iter().any(|k| g.get(*k).is_some_and(bad)))
     };
@@ -2073,7 +2400,7 @@ fn macros_have_problem(macros: &[Macro]) -> bool {
     macros.iter().enumerate().any(|(i, m)| {
         m.name.trim().is_empty()
             || macros[..i].iter().any(|o| o.name == m.name)
-            || m.steps.iter().filter_map(MacroStep::action).any(|a| action_problem(a, &[]).is_some())
+            || m.steps.iter().filter_map(MacroStep::action).any(|a| action_problem(a, &Names::default()).is_some())
     })
 }
 
@@ -2330,7 +2657,7 @@ fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<'a, Message
         GestureKind::ALL.into_iter().filter_map(|k| gestures.and_then(|g| g.get(k)).map(|a| (k, a))).collect();
     let problem = std::iter::once(p.button(b))
         .chain(set_gestures.iter().map(|(_, a)| *a))
-        .find_map(|a| action_problem(a, ui.macros));
+        .find_map(|a| action_problem(a, ui.names));
     let mut rows: Vec<Element<'a, Message>> = Vec::new();
 
     if !open {
@@ -2356,7 +2683,7 @@ fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<'a, Message
         .collect();
     let mut line = row![
         row_toggle(b.to_string(), target, true, problem.is_some()),
-        action_editor(p.button(b), b, &ACTION_KINDS, set_action(target), KeyField::root(target), ui.macros),
+        action_editor(p.button(b), b, &ACTION_KINDS, set_action(target), KeyField::root(target), ui.names),
     ]
     .spacing(10)
     .align_y(Alignment::Center);
@@ -2373,7 +2700,7 @@ fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<'a, Message
         rows.push(labeled(
             format!("    {kind}"),
             row![
-                action_editor(action, b, &ACTION_KINDS, set_action(Target::Gesture(b, kind)), KeyField::root(Target::Gesture(b, kind)), ui.macros),
+                action_editor(action, b, &ACTION_KINDS, set_action(Target::Gesture(b, kind)), KeyField::root(Target::Gesture(b, kind)), ui.names),
                 button(text("✕").size(13))
                     .style(button::secondary)
                     .on_press(Message::RemoveGesture(b, kind)),
@@ -2408,7 +2735,7 @@ fn combo_rows<'a>(p: &'a Profile, ui: &Ui) -> Vec<Element<'a, Message>> {
         let problem = if combo.buttons.len() < 2 {
             Some("needs at least two buttons".to_string())
         } else {
-            action_problem(&combo.action, ui.macros)
+            action_problem(&combo.action, ui.names)
         };
         if !open {
             let mut line = row![row_toggle(name, target, false, problem.is_some()), text(summarize(&combo.action))]
@@ -2449,7 +2776,7 @@ fn combo_rows<'a>(p: &'a Profile, ui: &Ui) -> Vec<Element<'a, Message>> {
             ]
             .spacing(10)
             .align_y(Alignment::Center),
-            labeled("    Action", action_editor(&combo.action, Button::South, &ACTION_KINDS, set_action(target), KeyField::root(target), ui.macros)),
+            labeled("    Action", action_editor(&combo.action, Button::South, &ACTION_KINDS, set_action(target), KeyField::root(target), ui.names)),
         ]
         .spacing(8);
         if let Some(problem) = problem {
@@ -2501,6 +2828,7 @@ enum ActionKind {
     Toggle,
     Turbo,
     Macro,
+    Menu,
     Multiple,
 }
 
@@ -2516,6 +2844,7 @@ impl fmt::Display for ActionKind {
             ActionKind::Overlay => "On-screen keyboard",
             ActionKind::Toggle => "Toggle (press on / off)…",
             ActionKind::Macro => "Macro…",
+            ActionKind::Menu => "Open menu…",
             ActionKind::Turbo => "Turbo (repeat while held)…",
             ActionKind::Multiple => "Multiple…",
         })
@@ -2523,7 +2852,7 @@ impl fmt::Display for ActionKind {
 }
 
 /// Every kind, for a top-level action.
-const ACTION_KINDS: [ActionKind; 11] = [
+const ACTION_KINDS: [ActionKind; 12] = [
     ActionKind::Disabled,
     ActionKind::Gamepad,
     ActionKind::Keys,
@@ -2534,8 +2863,30 @@ const ACTION_KINDS: [ActionKind; 11] = [
     ActionKind::Toggle,
     ActionKind::Turbo,
     ActionKind::Macro,
+    ActionKind::Menu,
     ActionKind::Multiple,
 ];
+/// What a menu item can do: anything a button can, including opening a submenu.
+const MENU_ITEM_KINDS: &[ActionKind] = &[
+    ActionKind::Disabled,
+    ActionKind::Gamepad,
+    ActionKind::Keys,
+    ActionKind::Mouse,
+    ActionKind::Wheel,
+    ActionKind::NextProfile,
+    ActionKind::Overlay,
+    ActionKind::Toggle,
+    ActionKind::Macro,
+    ActionKind::Menu,
+    ActionKind::Multiple,
+];
+
+const MENUS_HELP: &str = "On-screen menus you open with the \"Open menu…\" action from any button, \
+    gesture or combo. Radial: hold the opening button, aim a stick, release to choose. Cascade: four \
+    slots on the D-pad or face buttons; a slot can open another menu. List: move with the D-pad or \
+    left stick, A chooses. Button menu: a list where items also have their own button. Carousel: cycle \
+    with the chosen controls, A chooses. Choosing an item taps its action like a button press.";
+
 /// What a macro step can press: plain outputs only.
 const MACRO_STEP_KINDS: &[ActionKind] =
     &[ActionKind::Keys, ActionKind::Mouse, ActionKind::Wheel, ActionKind::Gamepad];
@@ -2585,7 +2936,7 @@ fn action_editor<'a>(
     kinds: &'static [ActionKind],
     on_change: OnAction<'a>,
     field: KeyField,
-    macros: &[String],
+    names: &Names,
 ) -> Element<'a, Message> {
     let kind = match action {
         ButtonAction::Disabled => ActionKind::Disabled,
@@ -2599,8 +2950,10 @@ fn action_editor<'a>(
         ButtonAction::Toggle(_) => ActionKind::Toggle,
         ButtonAction::Turbo { .. } => ActionKind::Turbo,
         ButtonAction::Macro { .. } => ActionKind::Macro,
+        ButtonAction::OpenMenu(_) => ActionKind::Menu,
     };
-    let first_macro = macros.first().cloned().unwrap_or_default();
+    let first_menu = names.menus.first().cloned().unwrap_or_default();
+    let first_macro = names.macros.first().cloned().unwrap_or_default();
     // When wrapping in Toggle/Turbo, keep a simple existing action as the thing wrapped.
     let wrappable = match action {
         ButtonAction::Gamepad(_) | ButtonAction::Keys(_) | ButtonAction::Mouse(_) | ButtonAction::Wheel(_) => {
@@ -2629,6 +2982,7 @@ fn action_editor<'a>(
                     rate: DEFAULT_TURBO_RATE,
                 },
                 ActionKind::Macro => ButtonAction::Macro { name: first_macro.clone(), repeat: false },
+                ActionKind::Menu => ButtonAction::OpenMenu(first_menu.clone()),
             })
         })
         .width(170)
@@ -2656,13 +3010,13 @@ fn action_editor<'a>(
             move |s| on_change(ButtonAction::Keys(text_to_keys(&s))),
             Message::OpenKeyPicker(field, keys.clone(), false),
         ),
-        ButtonAction::Multi(list) => multi_editor(list, default_button, on_change, field, macros),
+        ButtonAction::Multi(list) => multi_editor(list, default_button, on_change, field, names),
         ButtonAction::Toggle(inner) => {
             let parent = on_change.clone();
             let wrap: OnAction<'a> = Rc::new(move |a| parent(ButtonAction::Toggle(Box::new(a))));
             column![
                 text("Each press turns this on or off:").size(12).color(MUTED_COLOR),
-                action_editor(inner, default_button, TOGGLE_INNER_KINDS, wrap, field.child(0), macros),
+                action_editor(inner, default_button, TOGGLE_INNER_KINDS, wrap, field.child(0), names),
             ]
             .spacing(4)
             .into()
@@ -2677,7 +3031,7 @@ fn action_editor<'a>(
             };
             column![
                 text("Repeats while held:").size(12).color(MUTED_COLOR),
-                action_editor(inner, default_button, TURBO_INNER_KINDS, wrap, field.child(0), macros),
+                action_editor(inner, default_button, TURBO_INNER_KINDS, wrap, field.child(0), names),
                 row![
                     slider(2.0..=30.0, rate, set_rate).step(1.0_f32).width(200),
                     text(format!("{rate:.0} presses/s")).size(13),
@@ -2688,18 +3042,18 @@ fn action_editor<'a>(
             .spacing(4)
             .into()
         }
-        ButtonAction::Macro { .. } if macros.is_empty() => {
+        ButtonAction::Macro { .. } if names.macros.is_empty() => {
             text("No macros yet: create one in the Macros tab.").size(12).color(MUTED_COLOR).into()
         }
         ButtonAction::Macro { name, repeat } => {
             let repeat = *repeat;
             let pick = {
                 let on_change = on_change.clone();
-                dropdown(macros.to_vec(), Some(name.clone()), move |n| on_change(ButtonAction::Macro { name: n, repeat }))
+                dropdown(names.macros.clone(), Some(name.clone()), move |n| on_change(ButtonAction::Macro { name: n, repeat }))
                     .width(200)
             };
             let name = name.clone();
-            let missing = !macros.contains(&name);
+            let missing = !names.macros.contains(&name);
             let mut line = row![
                 pick,
                 checkbox(repeat)
@@ -2717,6 +3071,18 @@ fn action_editor<'a>(
         ButtonAction::ToggleOverlay => {
             text("Hold B on the controller to close it.").size(12).color(MUTED_COLOR).into()
         }
+        ButtonAction::OpenMenu(_) if names.menus.is_empty() => {
+            text("No menus yet: create one in the Overlays tab.").size(12).color(MUTED_COLOR).into()
+        }
+        ButtonAction::OpenMenu(name) => {
+            let mut line = row![dropdown(names.menus.clone(), Some(name.clone()), move |n| on_change(ButtonAction::OpenMenu(n))).width(200)]
+                .spacing(8)
+                .align_y(Alignment::Center);
+            if !names.menus.contains(name) {
+                line = line.push(text("missing menu").size(12).color(ERROR_COLOR));
+            }
+            line.into()
+        }
     };
     row![kind_picker, value].spacing(8).align_y(Alignment::Start).into()
 }
@@ -2727,7 +3093,7 @@ fn multi_editor<'a>(
     default_button: Button,
     on_change: OnAction<'a>,
     field: KeyField,
-    macros: &[String],
+    names: &Names,
 ) -> Element<'a, Message> {
     let with = |f: &dyn Fn(&mut Vec<ButtonAction>)| {
         let mut v = list.to_vec();
@@ -2744,7 +3110,7 @@ fn multi_editor<'a>(
         });
         col = col.push(
             row![
-                action_editor(sub, default_button, MULTI_ENTRY_KINDS, entry, field.child(i), macros),
+                action_editor(sub, default_button, MULTI_ENTRY_KINDS, entry, field.child(i), names),
                 button(text("✕").size(13)).style(button::secondary).on_press(with(&|v| {
                     v.remove(i);
                 })),
@@ -2821,7 +3187,7 @@ impl fmt::Display for StickKind {
     }
 }
 
-fn stick_editor<'a>(s: Stick, cfg: &'a StickConfig, macros: &[String]) -> Element<'a, Message> {
+fn stick_editor<'a>(s: Stick, cfg: &'a StickConfig, names: &Names) -> Element<'a, Message> {
     let kind = match cfg.action {
         StickAction::Disabled => StickKind::Disabled,
         StickAction::Gamepad { .. } => StickKind::Gamepad,
@@ -2938,11 +3304,11 @@ fn stick_editor<'a>(s: Stick, cfg: &'a StickConfig, macros: &[String]) -> Elemen
         c.key_threshold = v;
         Message::SetStick(s, c)
     }));
-    rows.push(zone_editor(Analog::Stick(s), &cfg.zones, macros)).into()
+    rows.push(zone_editor(Analog::Stick(s), &cfg.zones, names)).into()
 }
 
 /// Extra actions held while the stick/trigger is within a range of travel.
-fn zone_editor<'a>(analog: Analog, zones: &'a [Zone], macros: &[String]) -> Element<'a, Message> {
+fn zone_editor<'a>(analog: Analog, zones: &'a [Zone], names: &Names) -> Element<'a, Message> {
     let what = match analog {
         Analog::Stick(_) => "pushed",
         Analog::Trigger(_) => "pulled",
@@ -2969,7 +3335,7 @@ fn zone_editor<'a>(analog: Analog, zones: &'a [Zone], macros: &[String]) -> Elem
         .align_y(Alignment::Center);
         let mut body = column![
             range,
-            action_editor(&zone.action, Button::South, &ACTION_KINDS, set_action(Target::Zone(analog, i)), KeyField::root(Target::Zone(analog, i)), macros),
+            action_editor(&zone.action, Button::South, &ACTION_KINDS, set_action(Target::Zone(analog, i)), KeyField::root(Target::Zone(analog, i)), names),
         ]
         .spacing(8);
         if min >= max {
@@ -3051,7 +3417,7 @@ fn trigger_editor<'a>(
     action: &'a TriggerAction,
     zones: &'a [Zone],
     analog: bool,
-    macros: &[String],
+    names: &Names,
 ) -> Element<'a, Message> {
     let kind = match action {
         TriggerAction::Disabled => TriggerKind::Disabled,
@@ -3089,7 +3455,7 @@ fn trigger_editor<'a>(
         TriggerAction::Button { action: inner, threshold } => {
             rows = rows.push(labeled(
                 "    Action",
-                action_editor(inner, Button::South, &ACTION_KINDS, set_action(Target::Trigger(t)), KeyField::root(Target::Trigger(t)), macros),
+                action_editor(inner, Button::South, &ACTION_KINDS, set_action(Target::Trigger(t)), KeyField::root(Target::Trigger(t)), names),
             ));
             if analog {
                 let inner = inner.clone();
@@ -3101,7 +3467,7 @@ fn trigger_editor<'a>(
         TriggerAction::Disabled => {}
     }
     if analog {
-        return rows.push(zone_editor(Analog::Trigger(t), zones, macros)).into();
+        return rows.push(zone_editor(Analog::Trigger(t), zones, names)).into();
     }
     rows = rows.push(labeled(
         "",
@@ -3120,7 +3486,7 @@ fn trigger_editor<'a>(
                     .color(ERROR_COLOR)
                     .into(),
             ))
-            .push(zone_editor(Analog::Trigger(t), zones, macros));
+            .push(zone_editor(Analog::Trigger(t), zones, names));
     }
     rows.into()
 }
@@ -3376,23 +3742,23 @@ mod tests {
 
     #[test]
     fn problems_are_found_inside_nested_actions_and_flag_their_section() {
-        let macros = vec!["Known".to_string()];
+        let names = Names { macros: vec!["Known".to_string()], ..Names::default() };
         let nested = ButtonAction::Multi(vec![
             ButtonAction::Mouse(MouseButton::Left),
             ButtonAction::Toggle(Box::new(ButtonAction::Keys(vec!["KEY_NOPE".into()]))),
         ]);
-        assert_eq!(action_problem(&nested, &macros).as_deref(), Some("unknown key \"NOPE\""));
+        assert_eq!(action_problem(&nested, &names).as_deref(), Some("unknown key \"NOPE\""));
         let missing = ButtonAction::Macro { name: "Gone".into(), repeat: false };
-        assert_eq!(action_problem(&missing, &macros).as_deref(), Some("missing macro \"Gone\""));
-        assert_eq!(action_problem(&ButtonAction::Macro { name: "Known".into(), repeat: false }, &macros), None);
+        assert_eq!(action_problem(&missing, &names).as_deref(), Some("missing macro \"Gone\""));
+        assert_eq!(action_problem(&ButtonAction::Macro { name: "Known".into(), repeat: false }, &names), None);
 
         let mut p = Profile::passthrough("p");
-        assert!(ProfileTab::ALL.iter().all(|t| !section_has_problem(&p, *t, &macros)));
+        assert!(ProfileTab::ALL.iter().all(|t| !section_has_problem(&p, *t, &names)));
         p.set_button(Button::RightStickUp, missing);
-        assert!(section_has_problem(&p, ProfileTab::Sticks, &macros), "stick directions live on the Sticks tab");
-        assert!(!section_has_problem(&p, ProfileTab::Buttons, &macros));
+        assert!(section_has_problem(&p, ProfileTab::Sticks, &names), "stick directions live on the Sticks tab");
+        assert!(!section_has_problem(&p, ProfileTab::Buttons, &names));
         p.combos.push(Combo { buttons: vec![Button::South], action: ButtonAction::Disabled });
-        assert!(section_has_problem(&p, ProfileTab::Combos, &macros));
+        assert!(section_has_problem(&p, ProfileTab::Combos, &names));
     }
 
     fn snapshot(buttons: &[Button], right_stick: (f32, f32)) -> InputSnapshot {
@@ -3427,7 +3793,8 @@ mod tests {
         let _ = app.update(Message::LiveInput(Some(snapshot(&[Button::West], (0.0, 0.0)))));
         assert!(!app.finding, "one press ends find mode");
         assert_eq!((app.tab, app.profile_tab, app.found), (Tab::Profile, ProfileTab::Buttons, Some(Button::West)));
-        let ui = Ui { macros: &[], expanded: &app.expanded, found: app.found, analog_triggers: true, any_gyro: false };
+        let names = Names::default();
+        let ui = Ui { names: &names, expanded: &app.expanded, found: app.found, analog_triggers: true, any_gyro: false };
         assert!(ui.is_open(Target::Button(Button::West)));
         // Presses while not finding don't move the editor.
         let _ = app.update(Message::LiveInput(Some(snapshot(&[Button::West, Button::North], (0.0, 0.0)))));
@@ -3453,6 +3820,37 @@ mod tests {
         assert_eq!(app.expanded.len(), Button::ALL.len() + 8);
         let _ = app.update(Message::ExpandAll(false));
         assert_eq!(app.expanded.len(), Button::ALL.len(), "collapse all only touches the current section");
+    }
+
+    #[test]
+    fn menu_editor_creates_fits_renames_and_validates() {
+        let mut app = app();
+        let _ = app.update(Message::NewMenu(MenuKindTag::Cascade));
+        assert_eq!(app.config.menus[0].items.len(), 4, "a cascade has four slots");
+        let _ = app.update(Message::SetMenuKind(MenuKind::List));
+        let _ = app.update(Message::AddMenuItem);
+        assert_eq!(app.config.menus[0].items.len(), 5);
+        let _ = app.update(Message::SetMenuKind(MenuKind::Cascade { cluster: Cluster::FaceButtons }));
+        assert_eq!(app.config.menus[0].items.len(), 4, "switching back trims to four slots");
+
+        // Items take any action; the key picker writes into them.
+        let _ = app.update(Message::SetAction(Target::MenuItem(0, 0), ButtonAction::Keys(vec![])));
+        pick(&mut app, KeyField::root(Target::MenuItem(0, 0)), false, &["KEY_M"]);
+        assert_eq!(app.config.menus[0].items[0].action, ButtonAction::Keys(vec!["KEY_M".into()]));
+
+        // A second menu opened from the first and from a profile follows a rename.
+        let _ = app.update(Message::NewMenu(MenuKindTag::Radial));
+        let _ = app.update(Message::RenameMenu("Weapons".into()));
+        app.config.menus[0].items[1].action = ButtonAction::OpenMenu("Weapons".into());
+        app.config.profiles[0].set_button(Button::Select, ButtonAction::OpenMenu("Weapons".into()));
+        let _ = app.update(Message::RenameMenu("Wheel".into()));
+        assert_eq!(app.config.menus[0].items[1].action, ButtonAction::OpenMenu("Wheel".into()));
+        assert_eq!(app.config.profiles[0].button(Button::Select), &ButtonAction::OpenMenu("Wheel".into()));
+        assert_eq!(app.validate(), None);
+
+        let _ = app.update(Message::DeleteMenu);
+        let err = app.validate().unwrap();
+        assert!(err.contains("missing menu"), "{err}");
     }
 
     #[test]

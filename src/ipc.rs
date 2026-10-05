@@ -32,8 +32,10 @@ pub enum Request {
     CalibrateGyro(String),
     /// Open or close the on-screen overlay.
     ToggleOverlay,
+    /// Show the menu with this name (items run on the most recently used controller).
+    OpenMenu(String),
     /// Keep the connection open; the daemon streams one `Option<OverlayView>` JSON line per
-    /// change. `null` means the overlay is hidden (the overlay process exits on it).
+    /// change. `null` means nothing is shown (the resident overlay idles).
     WatchOverlay,
 }
 

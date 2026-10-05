@@ -71,6 +71,18 @@ The "On-screen keyboard" action (also a button on the Overview tab, and `control
 
 New Desktop profiles open it with a long press of Guide. It needs a compositor with layer-shell (KDE Plasma, Sway, Hyprland, …).
 
+## Menus
+
+The Overlays tab also holds on-screen **action menus**, shared by all profiles. Open one from any button, gesture or combo with the "Open menu…" action (or `controller_app menu <name>`). Choosing an item taps its action like a button press, so items can be keys, macros, toggles, the keyboard, or another menu.
+
+- **Radial**: hold the opening button, aim a stick at an item, release to choose it.
+- **Cascade**: four slots on the D-pad or face buttons. A slot fires its action or opens another menu.
+- **List**: move with the D-pad or left stick; A chooses.
+- **Button menu**: a list whose items can also be chosen directly with their own button.
+- **Carousel**: cycle with the bumpers, triggers, D-pad or a stick; A chooses.
+
+B (or the menu's chosen back button) backs out of a submenu or closes the menu. Face-button cascades default to Select, since B is one of their slots. While a menu is open the controller drives it, and anything the mappings were holding is released. The overlay window stays running invisibly between uses, so menus appear instantly.
+
 ## Gyro
 
 Controllers with motion sensors (DualShock 4, DualSense, Switch Pro, Joy-Cons) can use their gyro in each profile:
@@ -103,7 +115,7 @@ Problems that would block saving (unknown keys, missing macros, incomplete combo
 
 ## CLI
 
-`controller_app status | enable | disable | profile <name> | next-profile | reload | overlay-toggle | daemon`
+`controller_app status | enable | disable | profile <name> | next-profile | reload | overlay-toggle | menu <name> | daemon`
 
 When `controller_app daemon` runs in a terminal, it keeps a live status line showing each controller's input and what is being output.
 

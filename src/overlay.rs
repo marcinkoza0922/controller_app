@@ -1,7 +1,9 @@
-//! On-screen overlay: a keyboard you type on with the controller. The daemon owns the state
-//! (`OverlayController`) and routes controller input to it while the overlay is open; the
-//! overlay process (`controller_app overlay`) only draws it, on a Wayland layer-shell
-//! surface that never takes keyboard focus, so typed keys reach the window underneath.
+//! On-screen overlay: a keyboard you type on with the controller, and action menus. The
+//! daemon owns the state (`OverlayController` here, `menu::MenuSession`) and routes
+//! controller input to it while something is shown; the overlay process
+//! (`controller_app overlay`) only draws it, on a Wayland layer-shell surface that never
+//! takes keyboard focus, so typed keys reach the window underneath. The process stays
+//! running as an invisible 1×1 surface between uses so menus appear instantly.
 
 use std::{
     collections::HashSet,
@@ -41,7 +43,14 @@ const MODIFIERS: [&str; 8] = [
 
 /// What the overlay process draws.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct OverlayView {
+pub enum OverlayView {
+    Keyboard(KeyboardView),
+    Menu(crate::menu::MenuView),
+}
+
+/// The on-screen keyboard's state.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KeyboardView {
     pub cursor: Cursor,
     /// Modifiers latched for the next key (evdev names).
     pub latched: Vec<String>,
@@ -96,9 +105,9 @@ impl OverlayController {
         self.cursor
     }
 
-    pub fn view(&self, now: Instant) -> OverlayView {
+    pub fn view(&self, now: Instant) -> KeyboardView {
         let name = |k: KeyCode| format!("{k:?}");
-        OverlayView {
+        KeyboardView {
             cursor: self.cursor,
             latched: self.latched.iter().map(|k| name(*k)).collect(),
             pressed: self.pressed.map(name),
@@ -264,6 +273,7 @@ impl OverlayController {
     }
 }
 
+
 /// Runs the overlay window: a layer-shell surface at the bottom of the screen drawing the
 /// state the daemon streams, and exiting when the daemon hides it.
 pub fn run() -> anyhow::Result<()> {
@@ -271,12 +281,13 @@ pub fn run() -> anyhow::Result<()> {
 }
 
 mod ui {
-    use std::time::Duration;
+    use std::{f32::consts::TAU, time::Duration};
 
     use iced::{
         Alignment, Border, Color, Element, Length, Subscription, Task,
+        alignment::Vertical,
         futures::{SinkExt, channel::mpsc},
-        widget::{column, container, progress_bar, row, space, text},
+        widget::{column, container, pin, progress_bar, row, space, stack, text},
     };
     use iced_layershell::{
         reexport::{Anchor, KeyboardInteractivity, Layer},
@@ -285,38 +296,57 @@ mod ui {
     };
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-    use super::OverlayView;
+    use super::{KeyboardView, OverlayView};
     use crate::{
+        config::MenuKind,
         ipc::{self, Request},
         keyboard,
+        menu::MenuView,
     };
 
     const UNIT: f32 = 46.0;
     const GAP: f32 = 4.0;
+    const TEXT: Color = Color::WHITE;
+    const MUTED: Color = Color { r: 0.75, g: 0.78, b: 0.82, a: 1.0 };
+    const PANEL: Color = Color { r: 0.086, g: 0.094, b: 0.11, a: 0.92 };
+    const CELL: Color = Color { r: 0.19, g: 0.2, b: 0.235, a: 0.95 };
+    const SELECTED: Color = Color { r: 0.18, g: 0.36, b: 0.69, a: 1.0 };
+    const ACCENT: Color = Color { r: 0.31, g: 0.63, b: 1.0, a: 1.0 };
 
     #[to_layer_message]
     #[derive(Debug, Clone)]
     enum Message {
         State(Option<OverlayView>),
+        /// The daemon went away: nothing left to draw for.
+        Disconnected,
     }
 
     struct Overlay {
         view: Option<OverlayView>,
     }
 
+    /// Idle: a 1×1 invisible surface in a corner. Showing: the whole screen, transparent
+    /// except for what is drawn, with clicks passing through.
+    fn idle() -> (Anchor, (u32, u32)) {
+        (Anchor::Top | Anchor::Right, (1, 1))
+    }
+
+    fn full_screen() -> (Anchor, (u32, u32)) {
+        (Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right, (0, 0))
+    }
+
     pub fn run() -> anyhow::Result<()> {
-        let width = (15.0 * (UNIT + GAP) + 40.0) as u32;
-        let height = (6.0 * (UNIT + GAP) + 90.0) as u32;
+        let (anchor, size) = idle();
         iced_layershell::application(boot, namespace, update, view)
-            .style(|_, _| iced::theme::Style { background_color: Color::TRANSPARENT, text_color: Color::WHITE })
+            .style(|_, _| iced::theme::Style { background_color: Color::TRANSPARENT, text_color: TEXT })
             .subscription(subscription)
             .settings(Settings {
                 layer_settings: LayerShellSettings {
-                    size: Some((width, height)),
+                    size: Some(size),
                     exclusive_zone: -1,
-                    anchor: Anchor::Bottom,
+                    anchor,
                     layer: Layer::Overlay,
-                    margin: (0, 0, 40, 0),
+                    margin: (0, 0, 0, 0),
                     // Never take keyboard focus: typed keys must reach the window underneath.
                     keyboard_interactivity: KeyboardInteractivity::None,
                     events_transparent: true,
@@ -338,9 +368,17 @@ mod ui {
 
     fn update(state: &mut Overlay, message: Message) -> Task<Message> {
         match message {
-            Message::State(Some(v)) => state.view = Some(v),
-            // Hidden (or the daemon went away): we're done.
-            Message::State(None) => return iced::exit(),
+            Message::State(view) => {
+                let was_shown = state.view.is_some();
+                state.view = view;
+                let (anchor, size) = match (was_shown, state.view.is_some()) {
+                    (false, true) => full_screen(),
+                    (true, false) => idle(),
+                    _ => return Task::none(),
+                };
+                return Task::done(Message::AnchorSizeChange(anchor, size));
+            }
+            Message::Disconnected => return iced::exit(),
             _ => {}
         }
         Task::none()
@@ -360,32 +398,51 @@ mod ui {
                 let mut lines = BufReader::new(stream).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
                     if let Ok(state) = serde_json::from_str::<Option<OverlayView>>(&line) {
-                        let hidden = state.is_none();
                         let _ = output.send(Message::State(state)).await;
-                        if hidden {
-                            return;
-                        }
                     }
                 }
             }
-            let _ = output.send(Message::State(None)).await;
+            let _ = output.send(Message::Disconnected).await;
             // Keep the stream alive until iced exits.
             tokio::time::sleep(Duration::from_secs(3600)).await;
         })
     }
 
-    fn panel(theme_bg: Color) -> impl Fn(&iced::Theme) -> container::Style {
+
+    fn panel(bg: Color) -> impl Fn(&iced::Theme) -> container::Style {
         move |_| container::Style {
-            background: Some(theme_bg.into()),
+            background: Some(bg.into()),
             border: Border { width: 1.0, radius: 14.0.into(), color: Color::from_rgba(1.0, 1.0, 1.0, 0.15) },
             ..container::Style::default()
         }
     }
 
+    fn cell(selected: bool) -> impl Fn(&iced::Theme) -> container::Style {
+        move |_| container::Style {
+            background: Some(if selected { SELECTED } else { CELL }.into()),
+            border: Border {
+                width: if selected { 2.0 } else { 1.0 },
+                radius: 9.0.into(),
+                color: if selected { Color::WHITE } else { Color::from_rgba(1.0, 1.0, 1.0, 0.12) },
+            },
+            ..container::Style::default()
+        }
+    }
+
     fn view(state: &Overlay) -> Element<'_, Message> {
-        let Some(v) = &state.view else {
-            return space().into();
-        };
+        match &state.view {
+            None => space().into(),
+            Some(OverlayView::Keyboard(k)) => container(keyboard_panel(k))
+                .center_x(Length::Fill)
+                .height(Length::Fill)
+                .align_y(Vertical::Bottom)
+                .padding(40)
+                .into(),
+            Some(OverlayView::Menu(m)) => container(menu_panel(m)).center(Length::Fill).into(),
+        }
+    }
+
+    fn keyboard_panel(v: &KeyboardView) -> Element<'_, Message> {
         let cursor_code = keyboard::key_at(v.cursor).code;
         let mut rows = column![].spacing(GAP);
         for keys in keyboard::MAIN.iter() {
@@ -400,15 +457,15 @@ mod ui {
                 let latched = v.latched.iter().any(|l| l == key.code);
                 let held = v.pressed.as_deref() == Some(key.code);
                 let (bg, border) = if held {
-                    (Color::from_rgb8(0x4e, 0xa1, 0xff), Color::WHITE)
+                    (ACCENT, Color::WHITE)
                 } else if selected {
-                    (Color::from_rgb8(0x2f, 0x5d, 0xb0), Color::WHITE)
+                    (SELECTED, Color::WHITE)
                 } else if latched {
                     (Color::from_rgb8(0x2e, 0x7d, 0x46), Color::from_rgb8(0x3f, 0xb9, 0x50))
                 } else {
-                    (Color::from_rgba8(0x30, 0x34, 0x3c, 0.95), Color::from_rgba(1.0, 1.0, 1.0, 0.12))
+                    (CELL, Color::from_rgba(1.0, 1.0, 1.0, 0.12))
                 };
-                let cap = container(text(key.label).size(if selected { 16 } else { 14 }).color(Color::WHITE))
+                let cap = container(text(key.label).size(if selected { 16 } else { 14 }).color(TEXT))
                     .center_x(width)
                     .center_y(UNIT)
                     .style(move |_| container::Style {
@@ -431,16 +488,132 @@ mod ui {
         ]
         .spacing(18)
         .align_y(Alignment::Center);
-        let mut body = column![rows, legend].spacing(12);
+        let mut body = column![rows, legend].spacing(12).width(15.0 * (UNIT + GAP));
         if v.closing > 0.0 {
             body = body.push(progress_bar(0.0..=1.0, v.closing).girth(4));
         }
-        container(body)
-            .padding(16)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .style(panel(Color::from_rgba8(0x16, 0x18, 0x1c, 0.92)))
-            .into()
+        container(body).padding(16).style(panel(PANEL)).into()
+    }
+
+    /// An item's label with its button badge and a ▸ for submenus.
+    fn item_text<'a>(label: &str, button: Option<&str>, submenu: bool, size: u32) -> Element<'a, Message> {
+        let mut line = row![].spacing(8).align_y(Alignment::Center);
+        if let Some(b) = button.filter(|b| !b.is_empty()) {
+            line = line.push(
+                container(text(b.to_string()).size(size - 2).color(Color::BLACK))
+                    .padding([1, 6])
+                    .style(|_| container::Style {
+                        background: Some(Color::from_rgb(0.85, 0.87, 0.9).into()),
+                        border: Border { radius: 5.0.into(), ..Border::default() },
+                        ..container::Style::default()
+                    }),
+            );
+        }
+        line = line.push(text(label.to_string()).size(size).color(TEXT));
+        if submenu {
+            line = line.push(text("▸").size(size).color(MUTED));
+        }
+        line.into()
+    }
+
+    fn menu_panel(m: &MenuView) -> Element<'_, Message> {
+        let body: Element<'_, Message> = match m.kind {
+            MenuKind::Radial { .. } => radial(m),
+            MenuKind::Cascade { .. } => cascade(m),
+            MenuKind::List | MenuKind::Buttons => list(m),
+            MenuKind::Carousel { .. } => carousel(m),
+        };
+        let depth = if m.depth > 0 { format!("  ({} deep)", m.depth + 1) } else { String::new() };
+        container(
+            column![
+                text(format!("{}{depth}", m.title)).size(20).color(TEXT),
+                body,
+                text(m.hint.clone()).size(13).color(MUTED),
+            ]
+            .spacing(14)
+            .align_x(Alignment::Center),
+        )
+        .padding(22)
+        .style(panel(PANEL))
+        .into()
+    }
+
+    fn radial(m: &MenuView) -> Element<'_, Message> {
+        const SIZE: f32 = 420.0;
+        const RADIUS: f32 = 150.0;
+        const CELL_W: f32 = 120.0;
+        const CELL_H: f32 = 44.0;
+        let n = m.items.len().max(1) as f32;
+        let mut layers: Vec<Element<'_, Message>> = vec![space().width(SIZE).height(SIZE).into()];
+        for (i, item) in m.items.iter().enumerate() {
+            // First item at the top, then clockwise.
+            let angle = i as f32 / n * TAU;
+            let (x, y) = (SIZE / 2.0 + RADIUS * angle.sin(), SIZE / 2.0 - RADIUS * angle.cos());
+            let selected = m.selected == Some(i);
+            let content = container(item_text(&item.label, None, item.submenu, 15))
+                .center_x(CELL_W)
+                .center_y(CELL_H)
+                .style(cell(selected));
+            layers.push(pin(content).x(x - CELL_W / 2.0).y(y - CELL_H / 2.0).into());
+        }
+        let center = container(text("●").size(18).color(MUTED)).center_x(30).center_y(30);
+        layers.push(pin(center).x(SIZE / 2.0 - 15.0).y(SIZE / 2.0 - 15.0).into());
+        stack(layers).width(SIZE).height(SIZE).into()
+    }
+
+    fn cascade(m: &MenuView) -> Element<'_, Message> {
+        let slot = |i: usize| -> Element<'_, Message> {
+            match m.items.get(i).filter(|item| !item.label.is_empty()) {
+                Some(item) => container(item_text(&item.label, item.button.as_deref(), item.submenu, 16))
+                    .center_x(190)
+                    .center_y(52)
+                    .style(cell(false))
+                    .into(),
+                None => space().width(190).height(52).into(),
+            }
+        };
+        column![
+            slot(0),
+            row![slot(3), space().width(40), slot(1)].align_y(Alignment::Center),
+            slot(2),
+        ]
+        .spacing(10)
+        .align_x(Alignment::Center)
+        .into()
+    }
+
+    fn list(m: &MenuView) -> Element<'_, Message> {
+        let mut col = column![].spacing(6).width(360);
+        for (i, item) in m.items.iter().enumerate() {
+            let selected = m.selected == Some(i);
+            col = col.push(
+                container(item_text(&item.label, item.button.as_deref(), item.submenu, 17))
+                    .padding([10, 14])
+                    .width(Length::Fill)
+                    .style(cell(selected)),
+            );
+        }
+        col.into()
+    }
+
+    fn carousel(m: &MenuView) -> Element<'_, Message> {
+        let n = m.items.len();
+        let selected = m.selected.unwrap_or(0);
+        let mut line = row![text("◀").size(22).color(MUTED)].spacing(12).align_y(Alignment::Center);
+        // The selected item in the middle, with up to two neighbors on each side.
+        let shown = n.min(5) as i32;
+        for offset in -(shown / 2)..=(shown - 1 - shown / 2) {
+            let i = (selected as i32 + offset).rem_euclid(n as i32) as usize;
+            let item = &m.items[i];
+            let big = offset == 0;
+            line = line.push(
+                container(item_text(&item.label, None, item.submenu, if big { 19 } else { 14 }))
+                    .center_x(if big { 170 } else { 120 })
+                    .center_y(if big { 80 } else { 60 })
+                    .style(cell(big)),
+            );
+        }
+        line.push(text("▶").size(22).color(MUTED)).into()
     }
 }
 

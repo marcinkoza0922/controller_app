@@ -25,12 +25,13 @@ use evdev::Device;
 
 use crate::{
     config::Config,
-    engine::Engine,
+    engine::{Engine, Opener},
     focus::{self, FocusEvent},
     input::{self, InputEvent, MotionFrame, MotionNormalizer, MotionSample, Normalizer},
     ipc::{self, DeviceInfo, FocusBackend, InputSnapshot, Request, Response, Status, WindowInfo},
     monitor::{self, InputView, OutputView, log},
     output::{FfCaps, OutEvent, VIRTUAL_PREFIX, VirtualKbm, VirtualPad},
+    menu::{MenuOutcome, MenuSession},
     overlay::{OverlayAction, OverlayController, OverlayView},
     rumble,
 };
@@ -123,6 +124,13 @@ struct SeenGamepad {
     rumble: bool,
 }
 
+/// What the overlay is showing.
+enum Active {
+    Keyboard(OverlayController),
+    /// A menu, and the controller that opened it (its engine runs the chosen item).
+    Menu { session: MenuSession, device: u64 },
+}
+
 /// A device node identity; the inode changes when a node is recreated for a new device.
 type NodeKey = (PathBuf, u64);
 
@@ -148,8 +156,8 @@ struct Daemon {
     recent_windows: Vec<WindowInfo>,
     /// Last profile chosen by process scanning, so manual switches stick until it changes.
     scan_target: Option<String>,
-    /// The on-screen overlay, while open: it gets all controller input.
-    overlay: Option<OverlayController>,
+    /// What the on-screen overlay is showing; while set it gets all controller input.
+    active: Option<Active>,
     /// Where the overlay keyboard's cursor was, for the next time it opens.
     overlay_cursor: crate::keyboard::Cursor,
     overlay_watchers: Vec<Sender<Option<OverlayView>>>,
@@ -185,7 +193,7 @@ pub fn run() -> Result<()> {
         focused: None,
         recent_windows: Vec::new(),
         scan_target: None,
-        overlay: None,
+        active: None,
         overlay_cursor: crate::keyboard::find("KEY_Q").unwrap_or_default(),
         overlay_watchers: Vec::new(),
         overlay_process: None,
@@ -198,6 +206,8 @@ pub fn run() -> Result<()> {
             let _ = tx.send(Msg::Focus(ev));
         });
     }
+    // Start the overlay window now so menus appear instantly; it idles invisibly.
+    daemon.ensure_overlay_process();
     daemon.scan();
     daemon.run(rx);
     Ok(())
@@ -259,26 +269,36 @@ impl Daemon {
     }
 
     fn next_deadline(&self) -> Option<Instant> {
-        let overlay = self.overlay.as_ref().and_then(OverlayController::next_deadline);
+        let overlay = match &self.active {
+            Some(Active::Keyboard(k)) => k.next_deadline(),
+            Some(Active::Menu { session, .. }) => session.next_deadline(),
+            None => None,
+        };
         self.devices.values().filter_map(|d| d.engine.next_deadline()).chain(overlay).min()
     }
 
     /// Fires combo members whose combo window has expired.
     fn run_timers(&mut self) {
         let now = Instant::now();
-        if let Some(ov) = &mut self.overlay
-            && ov.next_deadline().is_some_and(|d| d <= now)
-        {
-            let (actions, changed) = ov.tick(now);
-            self.apply_overlay(actions);
-            if changed {
-                self.broadcast_overlay();
+        let (mut keyboard_actions, mut changed) = (Vec::new(), false);
+        match &mut self.active {
+            Some(Active::Keyboard(k)) if k.next_deadline().is_some_and(|d| d <= now) => {
+                (keyboard_actions, changed) = k.tick(now);
             }
+            Some(Active::Menu { session, .. }) if session.next_deadline().is_some_and(|d| d <= now) => {
+                changed = session.tick(&self.config.menus, now);
+            }
+            _ => {}
+        }
+        self.apply_keyboard(keyboard_actions);
+        if changed {
+            self.broadcast_overlay();
         }
         let Some(profile) = self.config.active() else { return };
         let mut switch = false;
         let mut toggle_overlay = false;
-        for dev in self.devices.values_mut() {
+        let mut menu_request = None;
+        for (id, dev) in self.devices.iter_mut() {
             if dev.engine.next_deadline().is_none_or(|d| d > now) {
                 continue;
             }
@@ -286,6 +306,9 @@ impl Daemon {
             switch |= dev.engine.timers(profile, now, &mut out);
             dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
             toggle_overlay |= dev.engine.take_overlay_toggle();
+            if let Some(request) = dev.engine.take_menu_request() {
+                menu_request = Some((*id, request));
+            }
             dev.draw_status();
         }
         if switch && let Some(next) = self.config.next_profile_name() {
@@ -294,53 +317,91 @@ impl Daemon {
         if toggle_overlay {
             self.toggle_overlay();
         }
+        if let Some((id, (name, opener))) = menu_request {
+            self.open_menu(id, name, opener);
+        }
     }
 
-    /// Opens the overlay (launching its window) or closes it.
+    /// Opens or closes the on-screen keyboard.
     fn toggle_overlay(&mut self) {
-        if self.overlay.is_some() {
-            self.hide_overlay();
+        match self.active {
+            Some(Active::Keyboard(_)) => return self.close_overlay(),
+            Some(Active::Menu { .. }) => return,
+            None => {}
+        }
+        if !self.ensure_overlay_process() {
             return;
         }
+        self.release_mappings();
+        log!("on-screen keyboard open");
+        self.active = Some(Active::Keyboard(OverlayController::new(self.overlay_cursor)));
+        self.broadcast_overlay();
+    }
+
+    fn open_menu(&mut self, device: u64, name: String, opener: Opener) {
+        if self.active.is_some() {
+            return;
+        }
+        let Some(session) = MenuSession::open(&self.config.menus, &name, opener) else {
+            log!("no menu named {name:?}, or it has no items");
+            return;
+        };
+        if !self.ensure_overlay_process() {
+            return;
+        }
+        self.release_mappings();
+        self.active = Some(Active::Menu { session, device });
+        self.broadcast_overlay();
+    }
+
+    /// Makes sure the (normally resident) overlay window process is running.
+    fn ensure_overlay_process(&mut self) -> bool {
         if let Some(child) = &mut self.overlay_process
             && child.try_wait().ok().flatten().is_some()
         {
             self.overlay_process = None;
         }
-        if self.overlay_process.is_none() {
-            let spawned = std::env::current_exe().and_then(|exe| std::process::Command::new(exe).arg("overlay").spawn());
-            match spawned {
-                Ok(child) => self.overlay_process = Some(child),
-                Err(e) => {
-                    log!("cannot open the overlay: {e}");
-                    return;
-                }
+        if self.overlay_process.is_some() {
+            return true;
+        }
+        match std::env::current_exe().and_then(|exe| std::process::Command::new(exe).arg("overlay").spawn()) {
+            Ok(child) => {
+                self.overlay_process = Some(child);
+                true
+            }
+            Err(e) => {
+                log!("cannot start the overlay window: {e}");
+                false
             }
         }
-        // Let go of everything the mappings hold; the controller now drives the overlay.
+    }
+
+    /// Lets go of everything the mappings hold; the controller now drives the overlay.
+    fn release_mappings(&mut self) {
         for dev in self.devices.values_mut() {
             let mut out = Vec::new();
             dev.engine.release_all(&mut out);
             dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
         }
-        log!("overlay open");
-        self.overlay = Some(OverlayController::new(self.overlay_cursor));
-        self.broadcast_overlay();
     }
 
-    fn hide_overlay(&mut self) {
-        let Some(mut ov) = self.overlay.take() else { return };
-        self.overlay_cursor = ov.cursor();
-        let actions = ov.release_all();
-        self.apply_overlay(actions);
-        // The overlay process exits when it sees the overlay hidden.
+    fn close_overlay(&mut self) {
+        match self.active.take() {
+            Some(Active::Keyboard(mut k)) => {
+                self.overlay_cursor = k.cursor();
+                let actions = k.release_all();
+                self.apply_keyboard(actions);
+                log!("on-screen keyboard closed");
+            }
+            Some(Active::Menu { .. }) => {}
+            None => return,
+        }
+        // The overlay window goes back to idle (it stays running for next time).
         self.broadcast_overlay();
-        self.overlay_watchers.clear();
-        log!("overlay closed");
         self.resync_all();
     }
 
-    fn apply_overlay(&mut self, actions: Vec<OverlayAction>) {
+    fn apply_keyboard(&mut self, actions: Vec<OverlayAction>) {
         for action in actions {
             match action {
                 OverlayAction::Key(k, pressed) => {
@@ -348,25 +409,52 @@ impl Daemon {
                         log!("output error: {e:#}");
                     }
                 }
-                OverlayAction::Close => self.hide_overlay(),
+                OverlayAction::Close => self.close_overlay(),
             }
         }
     }
 
+    /// Runs a chosen menu item on the controller that opened the menu.
+    fn run_menu_item(&mut self, device: u64, menu: &str, item: usize, action: &crate::config::ButtonAction) {
+        let Some(dev) = self.devices.get_mut(&device) else { return };
+        let mut out = Vec::new();
+        let switch = dev.engine.tap_menu_item(menu, item, action, &mut out);
+        dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
+        let toggle_overlay = dev.engine.take_overlay_toggle();
+        let menu_request = dev.engine.take_menu_request();
+        if switch && let Some(next) = self.config.next_profile_name() {
+            self.switch_profile(next);
+        }
+        if toggle_overlay {
+            self.toggle_overlay();
+        }
+        if let Some((name, opener)) = menu_request {
+            self.open_menu(device, name, opener);
+        }
+    }
+
+    fn overlay_view(&self) -> Option<OverlayView> {
+        match &self.active {
+            Some(Active::Keyboard(k)) => Some(OverlayView::Keyboard(k.view(Instant::now()))),
+            Some(Active::Menu { session, .. }) => session.view(&self.config.menus).map(OverlayView::Menu),
+            None => None,
+        }
+    }
+
     fn broadcast_overlay(&mut self) {
-        let view = self.overlay.as_ref().map(|ov| ov.view(Instant::now()));
+        let view = self.overlay_view();
         self.overlay_watchers.retain(|w| w.send(view.clone()).is_ok());
     }
 
-    /// If the overlay window died (crashed or was closed), leave overlay mode so the
-    /// controller isn't stuck driving an invisible keyboard.
+    /// If the overlay window died (crashed, or no compositor yet), leave overlay mode so the
+    /// controller isn't stuck driving something invisible. It restarts on next use.
     fn check_overlay_process(&mut self) {
         let exited = self.overlay_process.as_mut().is_some_and(|c| c.try_wait().ok().flatten().is_some());
         if exited {
             self.overlay_process = None;
-            if self.overlay.is_some() {
+            if self.active.is_some() {
                 log!("overlay window went away");
-                self.hide_overlay();
+                self.close_overlay();
             }
         }
     }
@@ -416,8 +504,7 @@ impl Daemon {
             Msg::Focus(FocusEvent::Focused(window)) => self.window_focused(window),
             Msg::Motion { id, sample } => self.motion(id, sample),
             Msg::WatchOverlay(watcher) => {
-                let view = self.overlay.as_ref().map(|ov| ov.view(Instant::now()));
-                if watcher.send(view).is_ok() {
+                if watcher.send(self.overlay_view()).is_ok() {
                     self.overlay_watchers.push(watcher);
                 }
             }
@@ -462,7 +549,7 @@ impl Daemon {
         }
         let sample = dev.motion_frame.to_standard(sample);
         dev.view.set_gyro(sample.gyro);
-        let Some(profile) = self.config.active().filter(|_| self.overlay.is_none()) else { return };
+        let Some(profile) = self.config.active().filter(|_| self.active.is_none()) else { return };
         let mut out = Vec::new();
         dev.engine.motion(profile, sample, &mut out);
         dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
@@ -561,7 +648,7 @@ impl Daemon {
     }
 
     fn input(&mut self, id: u64, events: Vec<InputEvent>) {
-        if self.overlay.is_some() {
+        if self.active.is_some() {
             return self.overlay_input(id, events);
         }
         let Some(profile) = self.config.active() else { return };
@@ -585,15 +672,19 @@ impl Daemon {
             self.watchers.retain(|w| w.send(Some(snapshot.clone())).is_ok());
         }
         let toggle_overlay = dev.engine.take_overlay_toggle();
+        let menu_request = dev.engine.take_menu_request();
         if switch && let Some(next) = self.config.next_profile_name() {
             self.switch_profile(next);
         }
         if toggle_overlay {
             self.toggle_overlay();
         }
+        if let Some((name, opener)) = menu_request {
+            self.open_menu(id, name, opener);
+        }
     }
 
-    /// While the overlay is open, controller input drives it instead of the mappings.
+    /// While the overlay shows something, controller input drives it instead of the mappings.
     fn overlay_input(&mut self, id: u64, events: Vec<InputEvent>) {
         let now = Instant::now();
         if let Some(dev) = self.devices.get_mut(&id) {
@@ -603,9 +694,25 @@ impl Daemon {
             dev.draw_status();
         }
         for ev in events {
-            let Some(ov) = &mut self.overlay else { return };
-            let actions = ov.handle(ev, now);
-            self.apply_overlay(actions);
+            match &mut self.active {
+                Some(Active::Keyboard(k)) => {
+                    let actions = k.handle(ev, now);
+                    self.apply_keyboard(actions);
+                }
+                Some(Active::Menu { session, device }) => {
+                    let device = *device;
+                    match session.handle(&self.config.menus, ev, now) {
+                        Some(MenuOutcome::Choose { menu, item, action }) => {
+                            self.close_overlay();
+                            self.run_menu_item(device, &menu, item, &action);
+                            return;
+                        }
+                        Some(MenuOutcome::Close) => return self.close_overlay(),
+                        None => {}
+                    }
+                }
+                None => return,
+            }
         }
         self.broadcast_overlay();
     }
@@ -651,6 +758,14 @@ impl Daemon {
                 self.toggle_overlay();
                 Response::Ok
             }
+            Request::OpenMenu(name) => {
+                if !self.config.menus.iter().any(|m| m.name == name) {
+                    return Response::Error(format!("no menu named {name:?}"));
+                }
+                let device = self.last_active.or_else(|| self.devices.keys().next().copied()).unwrap_or(u64::MAX);
+                self.open_menu(device, name, Opener::default());
+                Response::Ok
+            }
             Request::WatchOverlay => Response::Error("WatchOverlay must be the only request".into()),
             Request::CalibrateGyro(path) => {
                 let dev = self.devices.values_mut().find(|d| d.path.as_os_str() == path.as_str());
@@ -685,6 +800,10 @@ impl Daemon {
     fn replace_config(&mut self, new: Config) -> Response {
         if new.profiles.is_empty() {
             return Response::Error("config must contain at least one profile".into());
+        }
+        // An open menu refers to menus by position, which the new config may change.
+        if matches!(self.active, Some(Active::Menu { .. })) {
+            self.close_overlay();
         }
         self.release_all();
         self.config = new;
@@ -775,7 +894,7 @@ impl Daemon {
             focused: self.focused.clone(),
             recent_windows: self.recent_windows.clone(),
             motion_access_denied: self.motion_denied.values().cloned().collect(),
-            overlay_visible: self.overlay.is_some(),
+            overlay_visible: matches!(self.active, Some(Active::Keyboard(_))),
         }
     }
 
@@ -1038,7 +1157,8 @@ fn serve_client(conn: UnixStream, tx: &Sender<Msg>) -> Result<()> {
     Ok(())
 }
 
-/// Streams overlay state to the overlay window until it is hidden or the window goes away.
+/// Streams overlay state to the (resident) overlay window until it goes away. `None` means
+/// nothing is shown; the window idles and keeps listening.
 fn watch_overlay(conn: UnixStream, tx: &Sender<Msg>) -> Result<()> {
     let (view_tx, view_rx) = mpsc::channel::<Option<OverlayView>>();
     tx.send(Msg::WatchOverlay(view_tx))?;
@@ -1046,10 +1166,9 @@ fn watch_overlay(conn: UnixStream, tx: &Sender<Msg>) -> Result<()> {
         while let Ok(newer) = view_rx.try_recv() {
             view = newer;
         }
-        let hidden = view.is_none();
         let mut line = serde_json::to_string(&view)?;
         line.push('\n');
-        if (&conn).write_all(line.as_bytes()).is_err() || hidden {
+        if (&conn).write_all(line.as_bytes()).is_err() {
             return Ok(());
         }
     }

@@ -213,6 +213,159 @@ pub enum ButtonAction {
     /// Opens or closes the on-screen overlay (keyboard). While it is open the controller
     /// drives the overlay; holding East closes it.
     ToggleOverlay,
+    /// Shows the menu named here. As a menu item's action it opens a submenu.
+    OpenMenu(String),
+}
+
+/// An on-screen action menu, shared by all profiles and opened with `ButtonAction::OpenMenu`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Menu {
+    pub name: String,
+    pub kind: MenuKind,
+    pub items: Vec<MenuItem>,
+    /// Button that backs out of the menu (one level for submenus). Defaults to East, or to
+    /// Select for a face-button cascade, where East is one of the slots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cancel: Option<Button>,
+}
+
+impl Menu {
+    pub fn cancel_button(&self) -> Button {
+        self.cancel.unwrap_or(match self.kind {
+            MenuKind::Cascade { cluster: Cluster::FaceButtons } => Button::Select,
+            _ => Button::East,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MenuItem {
+    pub label: String,
+    pub action: ButtonAction,
+    /// Quick-select button (button menus).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub button: Option<Button>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MenuKind {
+    /// Shown while the opening input is held: aim `stick` at an item, release to choose it.
+    Radial { stick: Stick },
+    /// Four slots (up, right, down, left) on the D-pad or face buttons; a slot fires its action
+    /// or, with "Open menu", cascades into another menu.
+    Cascade { cluster: Cluster },
+    /// A list moved through with the D-pad or left stick; A chooses.
+    List,
+    /// A list whose items can also be chosen directly with their quick-select button.
+    Buttons,
+    /// A row of items cycled with `controls`; A chooses.
+    Carousel { controls: CarouselControls },
+}
+
+impl MenuKind {
+    pub fn default_for(kind: MenuKindTag) -> Self {
+        match kind {
+            MenuKindTag::Radial => MenuKind::Radial { stick: Stick::Right },
+            MenuKindTag::Cascade => MenuKind::Cascade { cluster: Cluster::DPad },
+            MenuKindTag::List => MenuKind::List,
+            MenuKindTag::Buttons => MenuKind::Buttons,
+            MenuKindTag::Carousel => MenuKind::Carousel { controls: CarouselControls::Bumpers },
+        }
+    }
+
+    pub fn tag(self) -> MenuKindTag {
+        match self {
+            MenuKind::Radial { .. } => MenuKindTag::Radial,
+            MenuKind::Cascade { .. } => MenuKindTag::Cascade,
+            MenuKind::List => MenuKindTag::List,
+            MenuKind::Buttons => MenuKindTag::Buttons,
+            MenuKind::Carousel { .. } => MenuKindTag::Carousel,
+        }
+    }
+}
+
+/// Menu kinds without their settings, for pickers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MenuKindTag {
+    Radial,
+    Cascade,
+    List,
+    Buttons,
+    Carousel,
+}
+
+impl MenuKindTag {
+    pub const ALL: [MenuKindTag; 5] =
+        [MenuKindTag::Radial, MenuKindTag::Cascade, MenuKindTag::List, MenuKindTag::Buttons, MenuKindTag::Carousel];
+}
+
+impl fmt::Display for MenuKindTag {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            MenuKindTag::Radial => "Radial (hold, aim, release)",
+            MenuKindTag::Cascade => "Cascade (D-pad / face buttons)",
+            MenuKindTag::List => "List",
+            MenuKindTag::Buttons => "Button menu (list + quick buttons)",
+            MenuKindTag::Carousel => "Carousel",
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Cluster {
+    DPad,
+    FaceButtons,
+}
+
+impl Cluster {
+    /// The four slot buttons: up, right, down, left.
+    pub fn slots(self) -> [Button; 4] {
+        match self {
+            Cluster::DPad => [Button::DpadUp, Button::DpadRight, Button::DpadDown, Button::DpadLeft],
+            Cluster::FaceButtons => [Button::North, Button::East, Button::South, Button::West],
+        }
+    }
+}
+
+impl fmt::Display for Cluster {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Cluster::DPad => "D-pad",
+            Cluster::FaceButtons => "Face buttons",
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CarouselControls {
+    Bumpers,
+    Triggers,
+    DPad,
+    LeftStick,
+    RightStick,
+}
+
+impl CarouselControls {
+    pub const ALL: [CarouselControls; 5] = [
+        CarouselControls::Bumpers,
+        CarouselControls::Triggers,
+        CarouselControls::DPad,
+        CarouselControls::LeftStick,
+        CarouselControls::RightStick,
+    ];
+}
+
+impl fmt::Display for CarouselControls {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            CarouselControls::Bumpers => "Bumpers (LB / RB)",
+            CarouselControls::Triggers => "Triggers (LT / RT)",
+            CarouselControls::DPad => "D-pad left / right",
+            CarouselControls::LeftStick => "Left stick",
+            CarouselControls::RightStick => "Right stick",
+        })
+    }
 }
 
 /// A named sequence of inputs, shared by all profiles.
@@ -1042,6 +1195,9 @@ pub struct Config {
     /// Shared by all profiles; mapped with `ButtonAction::Macro`.
     #[serde(default)]
     pub macros: Vec<Macro>,
+    /// On-screen action menus, shared by all profiles; opened with `ButtonAction::OpenMenu`.
+    #[serde(default)]
+    pub menus: Vec<Menu>,
     pub profiles: Vec<Profile>,
 }
 
@@ -1054,6 +1210,7 @@ impl Default for Config {
             auto_switch: AutoSwitch::default(),
             gyro_calibration: BTreeMap::new(),
             macros: Vec::new(),
+            menus: Vec::new(),
             profiles: vec![Profile::passthrough("Gamepad"), Profile::desktop("Desktop")],
         }
     }
@@ -1333,6 +1490,40 @@ mod tests {
             assert!(dirs.iter().all(|b| b.stick_direction().is_some_and(|(stick, _)| stick == s)));
         }
         assert!(Button::ALL.iter().all(|b| b.stick_direction().is_none()), "ALL stays physical buttons only");
+    }
+
+    #[test]
+    fn menus_roundtrip_and_pick_a_sensible_cancel_button() {
+        let item = |label: &str, action| MenuItem { label: label.into(), action, button: None };
+        let mut config = Config {
+            menus: vec![
+            Menu {
+                name: "Weapons".into(),
+                kind: MenuKind::Radial { stick: Stick::Right },
+                items: (1..=4).map(|n| item(&format!("Slot {n}"), ButtonAction::Keys(vec![format!("KEY_{n}")]))).collect(),
+                cancel: None,
+            },
+            Menu {
+                name: "Pause".into(),
+                kind: MenuKind::Buttons,
+                items: vec![MenuItem { button: Some(Button::LeftBumper), ..item("Map", ButtonAction::Keys(vec!["KEY_M".into()])) }],
+                cancel: Some(Button::Start),
+            },
+            Menu {
+                name: "Faces".into(),
+                kind: MenuKind::Cascade { cluster: Cluster::FaceButtons },
+                items: vec![item("More", ButtonAction::OpenMenu("Pause".into()))],
+                cancel: None,
+            },
+            ],
+            ..Config::default()
+        };
+        config.profiles[0].set_button(Button::Select, ButtonAction::OpenMenu("Pause".into()));
+        let back: Config = toml::from_str(&toml::to_string_pretty(&config).unwrap()).unwrap();
+        assert_eq!(config, back);
+        assert_eq!(config.menus[0].cancel_button(), Button::East);
+        assert_eq!(config.menus[1].cancel_button(), Button::Start);
+        assert_eq!(config.menus[2].cancel_button(), Button::Select, "East is a slot in a face-button cascade");
     }
 
     #[test]

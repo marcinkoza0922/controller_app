@@ -42,6 +42,33 @@ enum Source {
     Gesture(Button),
     /// An analog zone (index into the stick's or trigger's zone list) that is active.
     Zone(Analog, usize),
+    /// A menu item chosen on screen (menu name, item index).
+    MenuItem(String, usize),
+}
+
+/// The physical input that opened a menu, so a radial menu can tell when it is let go.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Opener {
+    /// Released when any of these is.
+    pub buttons: Vec<Button>,
+    /// Released when this trigger drops below halfway.
+    pub trigger: Option<Trigger>,
+}
+
+impl Source {
+    fn opener(&self) -> Opener {
+        match self {
+            // Stick-direction buttons are made up by the engine; a menu can't watch for them.
+            Source::Button(b) | Source::Gesture(b) if b.stick_direction().is_none() => {
+                Opener { buttons: vec![*b], trigger: None }
+            }
+            Source::Combo(members) => {
+                Opener { buttons: members.iter().copied().filter(|b| b.stick_direction().is_none()).collect(), trigger: None }
+            }
+            Source::Trigger(t) => Opener { buttons: Vec::new(), trigger: Some(*t) },
+            _ => Opener::default(),
+        }
+    }
 }
 
 /// Gesture detection for a button acting alone that has gestures configured.
@@ -100,6 +127,8 @@ pub struct Engine {
     pushed_directions: HashMap<Button, u32>,
     /// Set when a ToggleOverlay action fires; the daemon takes it.
     overlay_toggled: bool,
+    /// Set when an OpenMenu action fires; the daemon takes it.
+    menu_request: Option<(String, Opener)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -168,6 +197,20 @@ struct TurboState {
 }
 
 impl Engine {
+    /// A menu an OpenMenu action asked for since the last call, and what opened it.
+    pub fn take_menu_request(&mut self) -> Option<(String, Opener)> {
+        self.menu_request.take()
+    }
+
+    /// Runs a chosen menu item's action as a quick press and release. Toggles and the like
+    /// keep their state per item. Returns true if it asks for the next profile.
+    pub fn tap_menu_item(&mut self, menu: &str, item: usize, action: &ButtonAction, out: &mut Vec<OutEvent>) -> bool {
+        let src = Source::MenuItem(menu.to_string(), item);
+        let switch = self.digital(src.clone(), action, true, out);
+        self.digital(src, action, false, out);
+        switch
+    }
+
     /// Whether a ToggleOverlay action fired since the last call.
     pub fn take_overlay_toggle(&mut self) -> bool {
         std::mem::take(&mut self.overlay_toggled)
@@ -576,6 +619,11 @@ impl Engine {
         ButtonAction::ToggleOverlay => {
             if pressed {
                 self.overlay_toggled = true;
+            }
+        }
+        ButtonAction::OpenMenu(name) => {
+            if pressed {
+                self.menu_request = Some((name.clone(), src.opener()));
             }
         }
             ButtonAction::Multi(actions) => {
@@ -2137,5 +2185,27 @@ mod tests {
         axis(&mut e, &p, Axis::LeftX, 0.25);
         let out = run(&mut e, &p, InputEvent::Button(Button::West, true));
         assert!(out.contains(&OutEvent::PadAxis(Axis::LeftX, 0.75)), "{out:?}");
+    }
+
+    #[test]
+    fn open_menu_reports_its_opener_and_menu_items_tap() {
+        let mut p = Profile::passthrough("p");
+        p.set_button(Button::Select, ButtonAction::OpenMenu("Pause".into()));
+        p.left_trigger = TriggerAction::Button { action: ButtonAction::OpenMenu("Wheel".into()), threshold: 0.5 }.into();
+        let mut e = Engine::default();
+        run(&mut e, &p, InputEvent::Button(Button::Select, true));
+        assert_eq!(e.take_menu_request(), Some(("Pause".into(), Opener { buttons: vec![Button::Select], trigger: None })));
+        assert_eq!(e.take_menu_request(), None);
+        axis(&mut e, &p, Axis::LeftTrigger, 1.0);
+        assert_eq!(e.take_menu_request().map(|(n, o)| (n, o.trigger)), Some(("Wheel".into(), Some(Trigger::Left))));
+
+        let mut out = Vec::new();
+        let toggle_c = toggle(key("KEY_C"));
+        e.tap_menu_item("Pause", 0, &key("KEY_M"), &mut out);
+        assert_eq!(out, vec![OutEvent::Key(KeyCode::KEY_M, true), OutEvent::Key(KeyCode::KEY_M, false)]);
+        out.clear();
+        e.tap_menu_item("Pause", 1, &toggle_c, &mut out);
+        e.tap_menu_item("Pause", 1, &toggle_c, &mut out);
+        assert_eq!(out, vec![OutEvent::Key(KeyCode::KEY_C, true), OutEvent::Key(KeyCode::KEY_C, false)], "a toggle item flips each time");
     }
 }

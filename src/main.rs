@@ -6,6 +6,7 @@ mod gui;
 mod input;
 mod ipc;
 mod keyboard;
+mod menu;
 mod monitor;
 mod output;
 mod overlay;
@@ -28,7 +29,8 @@ commands:
   profile <name>   switch the active profile
   next-profile     switch to the next profile
   reload           re-read the config file
-  overlay-toggle   open or close the on-screen keyboard overlay";
+  overlay-toggle   open or close the on-screen keyboard overlay
+  menu <name>      show an on-screen menu";
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -44,6 +46,7 @@ fn main() -> Result<()> {
         ["reload"] => send(Request::Reload),
         ["overlay"] => overlay::run(),
         ["overlay-toggle"] => send(Request::ToggleOverlay),
+        ["menu", name] => send(Request::OpenMenu(name.to_string())),
         ["-h" | "--help" | "help"] => {
             println!("{USAGE}");
             Ok(())
