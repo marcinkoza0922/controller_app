@@ -14,10 +14,10 @@ use iced::{
 
 use crate::{
     config::{
-        Analog, Button, ButtonAction, Combo, Config, GestureKind, MouseButton, Zone, Profile, Stick, StickAction, StickConfig,
+        Analog, Button, ButtonAction, Combo, Config, GestureKind, MouseButton, Rule, RuleKind, Zone, Profile, Stick, StickAction, StickConfig,
         Trigger, TriggerAction,
     },
-    ipc::{self, InputSnapshot, Request, Response, Status},
+    ipc::{self, FocusBackend, InputSnapshot, Request, Response, Status, WindowInfo},
     keyboard, pad_svg,
 };
 
@@ -107,6 +107,13 @@ enum Message {
     SetStick(Stick, StickConfig),
     SetTrigger(Trigger, TriggerAction),
     SetIgnored(String, bool),
+    SetAutoSwitch(bool),
+    SetDefaultProfile(String),
+    AddRule(Option<WindowInfo>),
+    RemoveRule(usize),
+    SetRuleKind(usize, RuleKind),
+    SetRuleValue(usize, String),
+    SetRuleProfile(usize, String),
     TestRumble(String),
     AddCombo,
     RemoveCombo(usize),
@@ -258,7 +265,47 @@ impl App {
                     .enumerate()
                     .any(|(i, p)| i != self.editing && p.name == name);
                 if !taken && let Some(p) = self.profile_mut() {
-                    p.name = name;
+                    let old = std::mem::replace(&mut p.name, name.clone());
+                    // Keep per-game rules pointing at the renamed profile.
+                    let auto = &mut self.config.auto_switch;
+                    for rule in auto.rules.iter_mut().filter(|r| r.profile == old) {
+                        rule.profile = name.clone();
+                    }
+                    if auto.default_profile.as_ref() == Some(&old) {
+                        auto.default_profile = Some(name);
+                    }
+                }
+            }
+            Message::SetAutoSwitch(on) => self.config.auto_switch.enabled = on,
+            Message::SetDefaultProfile(name) => {
+                self.config.auto_switch.default_profile = (name != KEEP_CURRENT).then_some(name);
+            }
+            Message::AddRule(window) => {
+                let profile = self.profile().map(|p| p.name.clone()).unwrap_or_default();
+                let rule = match window {
+                    Some(w) => rule_for_window(&w, profile),
+                    None => Rule { kind: RuleKind::Executable, value: String::new(), profile },
+                };
+                self.config.auto_switch.rules.push(rule);
+            }
+            Message::RemoveRule(i) => {
+                if i < self.config.auto_switch.rules.len() {
+                    self.config.auto_switch.rules.remove(i);
+                }
+            }
+            Message::SetRuleKind(i, kind) => {
+                if let Some(r) = self.config.auto_switch.rules.get_mut(i) {
+                    r.kind = kind;
+                }
+            }
+            Message::SetRuleValue(i, value) => {
+                if let Some(r) = self.config.auto_switch.rules.get_mut(i) {
+                    r.value = value;
+                }
+            }
+            Message::SetRuleProfile(i, profile) => {
+                if let Some(r) = self.config.auto_switch.rules.get_mut(i) {
+                    r.profile = profile;
                 }
             }
             Message::AddProfile(template) => {
@@ -534,6 +581,17 @@ impl App {
     }
 
     fn validate(&self) -> Option<String> {
+        let auto = &self.config.auto_switch;
+        let exists = |name: &str| self.config.profiles.iter().any(|p| p.name == name);
+        if let Some(r) = auto.rules.iter().find(|r| r.value.trim().is_empty()) {
+            return Some(format!("A per-game rule for profile {:?} has no {} to match.", r.profile, r.kind));
+        }
+        if let Some(r) = auto.rules.iter().find(|r| !exists(&r.profile)) {
+            return Some(format!("A per-game rule points to missing profile {:?}.", r.profile));
+        }
+        if let Some(d) = auto.default_profile.as_deref().filter(|d| !exists(d)) {
+            return Some(format!("The per-game default profile {d:?} no longer exists."));
+        }
         for p in &self.config.profiles {
             if p.name.trim().is_empty() {
                 return Some("Profile names cannot be empty.".into());
@@ -589,6 +647,8 @@ impl App {
             self.view_live(),
             rule::horizontal(1),
             self.view_devices(),
+            rule::horizontal(1),
+            self.view_auto_switch(),
             rule::horizontal(1),
             self.view_profile_bar(),
         ]
@@ -707,6 +767,91 @@ impl App {
         list.into()
     }
 
+    fn view_auto_switch(&self) -> Element<'_, Message> {
+        let auto = &self.config.auto_switch;
+        let names: Vec<String> = self.config.profiles.iter().map(|p| p.name.clone()).collect();
+        let how = match self.status.as_ref().map(|s| s.focus_backend) {
+            Some(FocusBackend::Kwin) => "Follows the focused window (KWin).",
+            Some(FocusBackend::ProcessScan) => {
+                "Focus tracking isn't available on this desktop, so rules apply while a matching \
+                 game process is running."
+            }
+            None => "Needs the daemon to be running.",
+        };
+        let mut defaults = vec![KEEP_CURRENT.to_string()];
+        defaults.extend(names.iter().cloned());
+        let default = auto.default_profile.clone().unwrap_or_else(|| KEEP_CURRENT.into());
+
+        let mut col = column![
+            text("Per-game profiles").size(20),
+            row![
+                toggler(auto.enabled).label("Switch profiles automatically").on_toggle(Message::SetAutoSwitch),
+                space::horizontal(),
+                text("Otherwise use"),
+                pick_list(defaults, Some(default), Message::SetDefaultProfile).width(200),
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center),
+            text(how).size(13).color(MUTED_COLOR),
+        ]
+        .spacing(10);
+
+        for (i, r) in auto.rules.iter().enumerate() {
+            let placeholder = match r.kind {
+                RuleKind::Executable => "e.g. eldenring.exe",
+                RuleKind::SteamAppId => "e.g. 1245620",
+                RuleKind::WindowClass => "e.g. steam_app_1245620",
+            };
+            let mut line = row![
+                text("When").size(14),
+                pick_list(RuleKind::ALL, Some(r.kind), move |k| Message::SetRuleKind(i, k)).width(150),
+                text("is").size(14),
+                text_input(placeholder, &r.value).on_input(move |v| Message::SetRuleValue(i, v)).width(200),
+                text("use").size(14),
+                pick_list(names.clone(), Some(r.profile.clone()), move |p| Message::SetRuleProfile(i, p)).width(160),
+                button(text("✕").size(13)).style(button::secondary).on_press(Message::RemoveRule(i)),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center);
+            if !names.contains(&r.profile) {
+                line = line.push(text("missing profile").size(12).color(ERROR_COLOR));
+            }
+            col = col.push(line);
+        }
+        col = col.push(button(text("+ Add rule").size(13)).style(button::secondary).on_press(Message::AddRule(None)));
+
+        let recent = self.status.as_ref().map(|s| s.recent_windows.as_slice()).unwrap_or_default();
+        if !recent.is_empty() {
+            let mut list = column![
+                text("Recently focused (adds a rule for the profile being edited below)").size(13).color(MUTED_COLOR)
+            ]
+            .spacing(6);
+            for w in recent {
+                let mut details = vec![w.exe.clone()];
+                if let Some(id) = &w.steam_app_id {
+                    details.push(format!("Steam {id}"));
+                }
+                if !w.class.is_empty() {
+                    details.push(format!("class {}", w.class));
+                }
+                let title: String = w.title.chars().take(60).collect();
+                list = list.push(
+                    row![
+                        column![text(title).size(14), text(details.join(" · ")).size(12).color(MUTED_COLOR)]
+                            .width(Length::Fill),
+                        button(text("+ Rule").size(13))
+                            .style(button::secondary)
+                            .on_press(Message::AddRule(Some(w.clone()))),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                );
+            }
+            col = col.push(list);
+        }
+        col.into()
+    }
+
     fn view_profile_bar(&self) -> Element<'_, Message> {
         let names: Vec<String> = self.config.profiles.iter().map(|p| p.name.clone()).collect();
         let current = self.profile().map(|p| p.name.clone());
@@ -809,6 +954,24 @@ fn view_picker(picker: &KeyPicker) -> Element<'_, Message> {
             ..container::Style::default()
         });
     opaque(mouse_area(backdrop).on_press(Message::PickerClose { apply: false }))
+}
+
+/// Shown in the "Otherwise use" list for "don't change the profile".
+const KEEP_CURRENT: &str = "(keep current profile)";
+
+/// Rule for a window using its most specific identifier: Steam App ID, then a Windows `.exe`
+/// name, then the window class, then the native executable name.
+fn rule_for_window(w: &WindowInfo, profile: String) -> Rule {
+    let (kind, value) = if let Some(id) = &w.steam_app_id {
+        (RuleKind::SteamAppId, id.clone())
+    } else if w.exe.to_ascii_lowercase().ends_with(".exe") {
+        (RuleKind::Executable, w.exe.clone())
+    } else if !w.class.is_empty() {
+        (RuleKind::WindowClass, w.class.clone())
+    } else {
+        (RuleKind::Executable, w.exe.clone())
+    };
+    Rule { kind, value, profile }
 }
 
 fn pad_handle(input: Option<&InputSnapshot>) -> svg::Handle {
@@ -1552,7 +1715,7 @@ mod tests {
     #[test]
     fn trigger_depth_settings_hide_only_when_all_pads_are_digital() {
         let mut app = app();
-        let status = |devices| Status { enabled: true, active_profile: "Gamepad".into(), devices };
+        let status = |devices| Status { enabled: true, active_profile: "Gamepad".into(), devices, ..Default::default() };
         assert!(app.analog_triggers(), "no daemon: assume analog");
 
         app.status = Some(status(vec![device("Pro Controller", false, false)]));
@@ -1567,6 +1730,46 @@ mod tests {
 
         app.status = Some(status(vec![]));
         assert!(app.analog_triggers());
+    }
+
+    #[test]
+    fn rules_from_windows_prefer_the_most_specific_identifier() {
+        let w = |class: &str, exe: &str, steam: Option<&str>| WindowInfo {
+            class: class.into(),
+            exe: exe.into(),
+            steam_app_id: steam.map(Into::into),
+            ..Default::default()
+        };
+        let pick = |w: WindowInfo| {
+            let r = rule_for_window(&w, "P".into());
+            (r.kind, r.value)
+        };
+        assert_eq!(pick(w("steam_app_1", "game.exe", Some("1"))), (RuleKind::SteamAppId, "1".into()));
+        assert_eq!(pick(w("wine", "game.exe", None)), (RuleKind::Executable, "game.exe".into()));
+        // Native exe names can be generic (java, python), so the class is preferred.
+        assert_eq!(pick(w("Minecraft", "java", None)), (RuleKind::WindowClass, "Minecraft".into()));
+        assert_eq!(pick(w("", "factorio", None)), (RuleKind::Executable, "factorio".into()));
+    }
+
+    #[test]
+    fn renaming_a_profile_updates_rules_and_default() {
+        let mut app = app();
+        app.config.auto_switch.rules.push(Rule { kind: RuleKind::SteamAppId, value: "1".into(), profile: "Gamepad".into() });
+        app.config.auto_switch.default_profile = Some("Gamepad".into());
+        let _ = app.update(Message::RenameProfile("Pad".into()));
+        assert_eq!(app.config.auto_switch.rules[0].profile, "Pad");
+        assert_eq!(app.config.auto_switch.default_profile.as_deref(), Some("Pad"));
+        assert_eq!(app.validate(), None);
+
+        let _ = app.update(Message::SetDefaultProfile(KEEP_CURRENT.into()));
+        assert_eq!(app.config.auto_switch.default_profile, None);
+    }
+
+    #[test]
+    fn rules_must_point_at_existing_profiles() {
+        let mut app = app();
+        app.config.auto_switch.rules.push(Rule { kind: RuleKind::Executable, value: "x".into(), profile: "Gone".into() });
+        assert!(app.validate().unwrap().contains("missing profile"));
     }
 
     #[test]

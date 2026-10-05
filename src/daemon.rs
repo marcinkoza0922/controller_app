@@ -26,8 +26,9 @@ use evdev::Device;
 use crate::{
     config::Config,
     engine::Engine,
+    focus::{self, FocusEvent},
     input::{self, InputEvent, Normalizer},
-    ipc::{self, DeviceInfo, InputSnapshot, Request, Response, Status},
+    ipc::{self, DeviceInfo, FocusBackend, InputSnapshot, Request, Response, Status, WindowInfo},
     monitor::{self, InputView, OutputView, log},
     output::{FfCaps, OutEvent, VIRTUAL_PREFIX, VirtualKbm, VirtualPad},
     rumble,
@@ -40,12 +41,15 @@ const POLL_TIMEOUT_MS: i32 = 200;
 const WATCH_INTERVAL: Duration = Duration::from_millis(16);
 /// Status line redraw rate while only continuous output (mouse/scroll) is changing.
 const STATUS_REDRAW: Duration = Duration::from_millis(50);
+/// How many recently focused windows the GUI can offer for new rules.
+const RECENT_WINDOWS: usize = 8;
 
 enum Msg {
     Input { id: u64, events: Vec<InputEvent> },
     Gone { id: u64 },
     Ipc { req: Request, reply: Sender<Response> },
     Watch(Sender<Option<InputSnapshot>>),
+    Focus(FocusEvent),
 }
 
 struct Managed {
@@ -90,6 +94,11 @@ struct Daemon {
     /// Device whose input watchers are shown.
     last_active: Option<u64>,
     last_draw: Instant,
+    focus_backend: FocusBackend,
+    focused: Option<WindowInfo>,
+    recent_windows: Vec<WindowInfo>,
+    /// Last profile chosen by process scanning, so manual switches stick until it changes.
+    scan_target: Option<String>,
     tx: Sender<Msg>,
 }
 
@@ -115,9 +124,19 @@ pub fn run() -> Result<()> {
         watchers: Vec::new(),
         last_active: None,
         last_draw: Instant::now(),
+        focus_backend: FocusBackend::ProcessScan,
+        focused: None,
+        recent_windows: Vec::new(),
+        scan_target: None,
         tx,
     };
     log!("controller_app daemon started, socket at {}", ipc::socket_path().display());
+    {
+        let tx = daemon.tx.clone();
+        focus::spawn(move |ev| {
+            let _ = tx.send(Msg::Focus(ev));
+        });
+    }
     daemon.scan();
     daemon.run(rx);
     Ok(())
@@ -238,6 +257,12 @@ impl Daemon {
             Msg::Ipc { req, reply } => {
                 let _ = reply.send(self.request(req));
             }
+            Msg::Focus(FocusEvent::Backend(backend)) => {
+                self.focus_backend = backend;
+                // Re-evaluate from scratch the next time processes are scanned.
+                self.scan_target = None;
+            }
+            Msg::Focus(FocusEvent::Focused(window)) => self.window_focused(window),
             Msg::Watch(watcher) => {
                 let current = self.last_active.and_then(|id| self.devices.get(&id));
                 if watcher.send(current.map(|d| d.view.snapshot(&d.name))).is_ok() {
@@ -245,6 +270,54 @@ impl Daemon {
                 }
             }
         }
+    }
+
+    fn window_focused(&mut self, window: WindowInfo) {
+        // Editing settings while a game runs must not flip the profile.
+        if focus::is_own_window(&window) {
+            return;
+        }
+        let same = |w: &WindowInfo| w.class == window.class && w.exe == window.exe && w.steam_app_id == window.steam_app_id;
+        self.recent_windows.retain(|w| !same(w));
+        self.recent_windows.insert(0, window.clone());
+        self.recent_windows.truncate(RECENT_WINDOWS);
+        self.focused = Some(window.clone());
+
+        if !self.config.auto_switch.enabled {
+            return;
+        }
+        let target = focus::profile_for(&self.config.auto_switch, &window).map(str::to_string);
+        if let Some(name) = target {
+            self.auto_switch_to(name, &describe(&window));
+        }
+    }
+
+    /// Process-scan fallback for desktops without focus tracking.
+    fn scan_processes(&mut self) {
+        let auto = &self.config.auto_switch;
+        if self.focus_backend != FocusBackend::ProcessScan || !auto.enabled || auto.rules.is_empty() {
+            return;
+        }
+        let target = focus::profile_for_processes(auto, &focus::running_processes()).map(str::to_string);
+        if target == self.scan_target {
+            return;
+        }
+        self.scan_target = target.clone();
+        if let Some(name) = target {
+            self.auto_switch_to(name, "running processes");
+        }
+    }
+
+    fn auto_switch_to(&mut self, name: String, reason: &str) {
+        if name == self.config.active_profile {
+            return;
+        }
+        if !self.config.profiles.iter().any(|p| p.name == name) {
+            log!("per-game rule points to missing profile {name:?}");
+            return;
+        }
+        log!("{reason} → profile {name:?}");
+        self.switch_profile(name);
     }
 
     fn broadcast(&mut self, snapshot: Option<InputSnapshot>) {
@@ -425,6 +498,9 @@ impl Daemon {
             enabled: self.config.enabled,
             active_profile: self.config.active().map(|p| p.name.clone()).unwrap_or_default(),
             devices,
+            focus_backend: self.focus_backend,
+            focused: self.focused.clone(),
+            recent_windows: self.recent_windows.clone(),
         }
     }
 
@@ -464,6 +540,7 @@ impl Daemon {
             }
         }
         self.skipped.retain(|k| present.contains(k));
+        self.scan_processes();
         self.gamepads.retain(|k, _| present.contains(k));
     }
 
@@ -623,4 +700,13 @@ fn watch_input(conn: UnixStream, tx: &Sender<Msg>) -> Result<()> {
         thread::sleep(WATCH_INTERVAL);
     }
     Ok(())
+}
+
+/// Short description of a window for log lines.
+fn describe(w: &WindowInfo) -> String {
+    match &w.steam_app_id {
+        Some(id) => format!("{} (Steam {id})", w.exe),
+        None if w.exe.is_empty() => w.class.clone(),
+        None => w.exe.clone(),
+    }
 }

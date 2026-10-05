@@ -512,6 +512,54 @@ impl Profile {
     }
 }
 
+/// What a per-game rule compares against the focused window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuleKind {
+    /// Executable file name, e.g. `factorio` or (Wine/Proton) `eldenring.exe`.
+    Executable,
+    SteamAppId,
+    WindowClass,
+}
+
+impl RuleKind {
+    pub const ALL: [RuleKind; 3] = [RuleKind::Executable, RuleKind::SteamAppId, RuleKind::WindowClass];
+}
+
+impl fmt::Display for RuleKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            RuleKind::Executable => "Executable",
+            RuleKind::SteamAppId => "Steam App ID",
+            RuleKind::WindowClass => "Window class",
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Rule {
+    pub kind: RuleKind,
+    pub value: String,
+    pub profile: String,
+}
+
+/// Per-game profile switching.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AutoSwitch {
+    pub enabled: bool,
+    /// Profile for windows no rule matches; `None` leaves the current profile alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_profile: Option<String>,
+    #[serde(default)]
+    pub rules: Vec<Rule>,
+}
+
+impl Default for AutoSwitch {
+    fn default() -> Self {
+        AutoSwitch { enabled: true, default_profile: None, rules: Vec::new() }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Config {
     pub enabled: bool,
@@ -519,6 +567,8 @@ pub struct Config {
     /// Device names the daemon should leave alone.
     #[serde(default)]
     pub ignored_devices: Vec<String>,
+    #[serde(default)]
+    pub auto_switch: AutoSwitch,
     pub profiles: Vec<Profile>,
 }
 
@@ -528,6 +578,7 @@ impl Default for Config {
             enabled: true,
             active_profile: "Gamepad".into(),
             ignored_devices: Vec::new(),
+            auto_switch: AutoSwitch::default(),
             profiles: vec![Profile::passthrough("Gamepad"), Profile::desktop("Desktop")],
         }
     }
@@ -654,6 +705,24 @@ mod tests {
         let config: Config = toml::from_str(&toml::to_string(&value).unwrap()).unwrap();
         assert!(config.profiles[0].combos.is_empty());
         assert_eq!(config.profiles[0].combo_window_ms, 60);
+    }
+
+    #[test]
+    fn auto_switch_roundtrips_and_is_optional() {
+        let mut config = Config::default();
+        config.auto_switch.default_profile = Some("Desktop".into());
+        config.auto_switch.rules.push(Rule {
+            kind: RuleKind::SteamAppId,
+            value: "1245620".into(),
+            profile: "Gamepad".into(),
+        });
+        let back: Config = toml::from_str(&toml::to_string_pretty(&config).unwrap()).unwrap();
+        assert_eq!(config, back);
+
+        let mut value = toml::Value::try_from(Config::default()).unwrap();
+        value.as_table_mut().unwrap().remove("auto_switch");
+        let old: Config = toml::from_str(&toml::to_string(&value).unwrap()).unwrap();
+        assert_eq!(old.auto_switch, AutoSwitch::default());
     }
 
     #[test]

@@ -34,6 +34,18 @@ On top of that:
 
 The defaults are **Gamepad** (1:1 passthrough) and **Desktop** (left stick moves the mouse, right stick scrolls, A/B click, LB+RB = Alt+Tab). Guide cycles between profiles in both.
 
+## Per-game profiles
+
+Rules switch the profile when a game's window gets focus, and an optional default profile is used for everything else. A rule matches on:
+
+- **Executable**: the program's file name. For Wine/Proton games it's the Windows `.exe` (e.g. `eldenring.exe`), not the Wine loader.
+- **Steam App ID**: taken from the environment Steam sets, or from Proton's `steam_app_<id>` window class.
+- **Window class**.
+
+The GUI lists recently focused windows with a one-click "+ Rule". Switching with Guide or the GUI stays in effect until focus changes again. Focusing the settings window never switches profiles.
+
+Focus tracking uses a small KWin script (KDE Plasma, Wayland or X11). On other desktops, rules apply while a matching process is running.
+
 ## GUI
 
 - A live controller drawing that shows sticks, buttons and triggers as you use them.

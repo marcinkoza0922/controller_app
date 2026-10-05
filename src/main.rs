@@ -1,6 +1,7 @@
 mod config;
 mod daemon;
 mod engine;
+mod focus;
 mod gui;
 mod input;
 mod ipc;
@@ -57,6 +58,15 @@ fn status() -> Result<()> {
     };
     println!("enabled: {}", s.enabled);
     println!("profile: {}", s.active_profile);
+    let tracking = match s.focus_backend {
+        ipc::FocusBackend::Kwin => "focused window (KWin)",
+        ipc::FocusBackend::ProcessScan => "running processes",
+    };
+    println!("per-game switching follows: {tracking}");
+    if let Some(w) = &s.focused {
+        let steam = w.steam_app_id.as_deref().map(|id| format!(", Steam {id}")).unwrap_or_default();
+        println!("focused: {} (class {}{steam})", w.exe, w.class);
+    }
     for d in s.devices {
         let state = if d.managed { "remapping" } else if d.ignored { "ignored" } else { "idle" };
         let triggers = if d.analog_triggers { "" } else { ", digital triggers" };

@@ -13,3 +13,4 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 tokio = { version = "1.53.2", features = ["io-util", "net", "rt", "time"] }
 toml = "1.1.6"
+zbus = "5"

@@ -38,11 +38,40 @@ pub enum Response {
     Error(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Status {
     pub enabled: bool,
     pub active_profile: String,
     pub devices: Vec<DeviceInfo>,
+    #[serde(default)]
+    pub focus_backend: FocusBackend,
+    /// Currently focused window (KWin backend only).
+    #[serde(default)]
+    pub focused: Option<WindowInfo>,
+    /// Recently focused windows, newest first, for building rules.
+    #[serde(default)]
+    pub recent_windows: Vec<WindowInfo>,
+}
+
+/// How the daemon learns which game is active.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FocusBackend {
+    /// KWin script reports focus changes (KDE Plasma, Wayland or X11).
+    Kwin,
+    /// No focus information: rules match against running processes instead.
+    #[default]
+    ProcessScan,
+}
+
+/// What we know about a window (or, for process scanning, a process).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowInfo {
+    pub class: String,
+    pub title: String,
+    pub pid: u32,
+    /// Executable file name; for Wine/Proton the Windows `.exe`, not the Wine loader.
+    pub exe: String,
+    pub steam_app_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
