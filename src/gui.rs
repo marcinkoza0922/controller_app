@@ -1,14 +1,14 @@
 //! iced front-end. Talks to the daemon over IPC; falls back to editing the config file directly
 //! when the daemon is not running.
 
-use std::{fmt, rc::Rc, str::FromStr, time::Duration};
+use std::{borrow::Borrow, collections::HashSet, fmt, rc::Rc, str::FromStr, time::Duration};
 
 use evdev::KeyCode;
 use iced::{
     Alignment, Color, Element, Length, Subscription, Task,
     widget::{
-        button, center, checkbox, column, container, mouse_area, opaque, pick_list, row, rule,
-        scrollable, slider, space, stack, svg, text, text_input, toggler,
+        button, center, checkbox, column, container, mouse_area, opaque, pick_list, pin, row, rule,
+        scrollable, slider, space, stack, svg, text, text_input, toggler, tooltip,
     },
 };
 
@@ -20,7 +20,7 @@ use crate::{
         Trigger, TriggerAction,
     },
     ipc::{self, FocusBackend, InputSnapshot, Request, Response, Status, WindowInfo},
-    keyboard, pad_svg,
+    keyboard, pad_svg, style,
 };
 
 pub fn run() -> iced::Result {
@@ -44,16 +44,21 @@ struct App {
     status: Option<Status>,
     editing: usize,
     message: Option<(String, bool)>,
-    /// Latest physical input streamed from the daemon, and its rendered drawing.
+    /// Latest physical input streamed from the daemon.
     live: Option<InputSnapshot>,
-    pad: svg::Handle,
     picker: Option<KeyPicker>,
     tab: Tab,
+    profile_tab: ProfileTab,
+    /// Rows showing their full editor instead of a one-line summary.
+    expanded: HashSet<Target>,
+    /// Waiting for a controller button press to jump to its row.
+    finding: bool,
+    found: Option<Button>,
     /// Index into `config.macros` shown in the Macros tab.
     editing_macro: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Target {
     Button(Button),
     Trigger(Trigger),
@@ -66,8 +71,34 @@ enum Target {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Tab {
-    Profiles,
+    Overview,
+    Profile,
     Macros,
+}
+
+/// Sections of the profile editor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProfileTab {
+    Buttons,
+    Sticks,
+    Combos,
+    Gyro,
+}
+
+/// What the free view functions need to know about the app beyond the profile itself.
+struct Ui<'a> {
+    macros: &'a [String],
+    expanded: &'a HashSet<Target>,
+    /// Row picked by "Find by pressing", highlighted and open.
+    found: Option<Button>,
+    analog_triggers: bool,
+    any_gyro: bool,
+}
+
+impl Ui<'_> {
+    fn is_open(&self, target: Target) -> bool {
+        self.expanded.contains(&target) || matches!(target, Target::Button(b) if self.found == Some(b))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -316,6 +347,12 @@ enum Message {
     RemoveZone(Analog, usize),
     SetZoneRange(Analog, usize, f32, f32),
     SelectTab(Tab),
+    SelectProfileTab(ProfileTab),
+    ToggleExpanded(Target),
+    /// Expand (true) or collapse every row in the current profile section.
+    ExpandAll(bool),
+    StartFind,
+    CancelFind,
     EditMacro(String),
     NewMacro,
     DeleteMacro,
@@ -407,9 +444,12 @@ impl App {
             editing: 0,
             message: None,
             live: None,
-            pad: pad_handle(None),
             picker: None,
-            tab: Tab::Profiles,
+            tab: Tab::Overview,
+            profile_tab: ProfileTab::Buttons,
+            expanded: HashSet::new(),
+            finding: false,
+            found: None,
             editing_macro: 0,
         };
         let load = Task::perform(
@@ -454,10 +494,12 @@ impl App {
                 });
             }
             Message::LiveInput(snapshot) => {
-                if snapshot != self.live {
-                    self.pad = pad_handle(snapshot.as_ref());
-                    self.live = snapshot;
+                if self.finding
+                    && let Some(b) = snapshot.as_ref().and_then(|s| newly_pressed(self.live.as_ref(), s))
+                {
+                    return self.jump_to(b);
                 }
+                self.live = snapshot;
             }
             Message::StatusLoaded(Ok(status)) => {
                 // Mirror daemon-owned fields so both copies stay comparable.
@@ -657,6 +699,48 @@ impl App {
                 }
             }
             Message::SelectTab(tab) => self.tab = tab,
+            Message::SelectProfileTab(tab) => {
+                self.profile_tab = tab;
+                self.found = None;
+            }
+            Message::ToggleExpanded(target) => {
+                if !self.expanded.remove(&target) {
+                    self.expanded.insert(target);
+                }
+                if let Target::Button(b) = target
+                    && self.found == Some(b)
+                {
+                    self.found = None;
+                    self.expanded.remove(&target);
+                }
+            }
+            Message::ExpandAll(open) => {
+                let targets: Vec<Target> = match self.profile_tab {
+                    ProfileTab::Buttons => Button::ALL.into_iter().map(Target::Button).collect(),
+                    ProfileTab::Sticks => [Stick::Left, Stick::Right]
+                        .into_iter()
+                        .flat_map(Button::stick_directions)
+                        .map(Target::Button)
+                        .collect(),
+                    ProfileTab::Combos => {
+                        (0..self.profile().map_or(0, |p| p.combos.len())).map(Target::Combo).collect()
+                    }
+                    ProfileTab::Gyro => Vec::new(),
+                };
+                for t in targets {
+                    if open {
+                        self.expanded.insert(t);
+                    } else {
+                        self.expanded.remove(&t);
+                    }
+                }
+                self.found = None;
+            }
+            Message::StartFind => {
+                self.finding = true;
+                self.found = None;
+            }
+            Message::CancelFind => self.finding = false,
             Message::EditMacro(name) => {
                 if let Some(i) = self.config.macros.iter().position(|m| m.name == name) {
                     self.editing_macro = i;
@@ -773,6 +857,8 @@ impl App {
                         buttons: vec![Button::LeftBumper, Button::RightBumper],
                         action: ButtonAction::Keys(Vec::new()),
                     });
+                    let new = Target::Combo(p.combos.len() - 1);
+                    self.expanded.insert(new);
                 }
             }
             Message::RemoveCombo(i) => {
@@ -780,6 +866,8 @@ impl App {
                     && i < p.combos.len()
                 {
                     p.combos.remove(i);
+                    // Indices shift, so open state can't carry over.
+                    self.expanded.retain(|t| !matches!(t, Target::Combo(_)));
                 }
             }
             Message::AddComboButton(i, b) => {
@@ -914,6 +1002,22 @@ impl App {
         self.status.as_ref().is_some_and(|s| s.devices.iter().any(|d| d.gyro))
     }
 
+    /// Opens and highlights `b`'s row and scrolls near it.
+    fn jump_to(&mut self, b: Button) -> Task<Message> {
+        self.finding = false;
+        self.found = Some(b);
+        self.tab = Tab::Profile;
+        let (tab, position) = match Button::ALL.iter().position(|x| *x == b) {
+            Some(i) => (ProfileTab::Buttons, i as f32 / Button::ALL.len() as f32),
+            None => {
+                let right = b.stick_direction().is_some_and(|(s, _)| s == Stick::Right);
+                (ProfileTab::Sticks, if right { 0.75 } else { 0.25 })
+            }
+        };
+        self.profile_tab = tab;
+        iced::widget::operation::snap_to("main", scrollable::RelativeOffset { x: Some(0.0), y: Some(position) })
+    }
+
     fn unique_name(&self, base: &str) -> String {
         (1..)
             .map(|i| if i == 1 { base.to_string() } else { format!("{base} {i}") })
@@ -997,45 +1101,95 @@ impl App {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let tab = |label: &'static str, tab: Tab| {
+        let macro_names: Vec<String> = self.config.macros.iter().map(|m| m.name.clone()).collect();
+        let profile_issue = self.profile().is_some_and(|p| ProfileTab::ALL.iter().any(|t| section_has_problem(p, *t, &macro_names)));
+        let tab = |label: &'static str, tab: Tab, issue: bool| {
+            let label = if issue { format!("{label}  ⚠") } else { label.to_string() };
             button(text(label))
                 .style(if self.tab == tab { button::primary } else { button::secondary })
                 .on_press(Message::SelectTab(tab))
         };
         let content = column![
             self.view_header(),
-            row![tab("Controllers & profiles", Tab::Profiles), tab("Macros", Tab::Macros)].spacing(6),
+            row![
+                tab("Overview", Tab::Overview, false),
+                tab("Profile", Tab::Profile, profile_issue),
+                tab("Macros", Tab::Macros, macros_have_problem(&self.config.macros)),
+            ]
+            .spacing(6),
             rule::horizontal(1),
         ]
         .spacing(16)
         .padding(20);
 
         let content = match self.tab {
-            Tab::Profiles => {
-                let macro_names: Vec<String> = self.config.macros.iter().map(|m| m.name.clone()).collect();
-                let content = content.extend([
-                    self.view_live(),
-                    rule::horizontal(1).into(),
-                    self.view_devices(),
-                    rule::horizontal(1).into(),
-                    self.view_auto_switch(),
-                    rule::horizontal(1).into(),
-                    self.view_profile_bar(),
-                ]);
-                match self.profile() {
-                    Some(p) => content.push(view_profile(p, self.analog_triggers(), self.any_gyro(), &macro_names)),
-                    None => content,
-                }
-            }
+            Tab::Overview => content.extend([
+                self.view_live(self.config.active()),
+                rule::horizontal(1).into(),
+                self.view_devices(),
+                rule::horizontal(1).into(),
+                self.view_auto_switch(),
+            ]),
+            Tab::Profile => content.push(self.view_profile_tab(&macro_names)),
             Tab::Macros => content.push(self.view_macros()),
         };
 
         let base: Element<'_, Message> =
-            column![scrollable(content).height(Length::Fill), self.view_footer()].into();
+            column![scrollable(content).id("main").height(Length::Fill), self.view_footer()].into();
         match &self.picker {
             Some(picker) => stack![base, view_picker(picker)].into(),
             None => base,
         }
+    }
+
+    fn view_profile_tab<'a>(&'a self, macro_names: &[String]) -> Element<'a, Message> {
+        let mut col = column![self.view_profile_bar()].spacing(16);
+        let Some(p) = self.profile() else { return col.into() };
+        col = col.push(self.view_live(Some(p)));
+
+        let find: Element<'_, Message> = if self.finding {
+            row![
+                text("Press a button or push a stick on your controller…").color(style_accent()),
+                button(text("Cancel")).style(button::secondary).on_press(Message::CancelFind),
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center)
+            .into()
+        } else {
+            row![
+                button(text("Find by pressing")).style(button::secondary).on_press(Message::StartFind),
+                help("Press a button or push a stick on your controller to jump to its mapping.".into()),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .into()
+        };
+        let sub_tab = |t: ProfileTab| {
+            let label = if section_has_problem(p, t, macro_names) { format!("{t}  ⚠") } else { t.to_string() };
+            button(text(label).size(14))
+                .style(if self.profile_tab == t { button::primary } else { button::secondary })
+                .on_press(Message::SelectProfileTab(t))
+        };
+        let mut tabs = row![].spacing(6).align_y(Alignment::Center);
+        for t in ProfileTab::ALL {
+            tabs = tabs.push(sub_tab(t));
+        }
+        tabs = tabs.push(space::horizontal());
+        if self.profile_tab != ProfileTab::Gyro {
+            tabs = tabs
+                .push(button(text("Expand all").size(13)).style(button::text).on_press(Message::ExpandAll(true)))
+                .push(button(text("Collapse all").size(13)).style(button::text).on_press(Message::ExpandAll(false)));
+        }
+        col = col.push(row![find].align_y(Alignment::Center)).push(tabs);
+
+        let ui = Ui {
+            macros: macro_names,
+            expanded: &self.expanded,
+            found: self.found,
+            analog_triggers: self.analog_triggers(),
+            any_gyro: self.any_gyro(),
+        };
+        col.push(view_profile(p, &ui, self.profile_tab)).into()
     }
 
     fn view_header(&self) -> Element<'_, Message> {
@@ -1059,7 +1213,7 @@ impl App {
                     .on_toggle_maybe(running.then_some(Message::SetEnabled)),
                 space::horizontal(),
                 text("Active profile"),
-                pick_list(names, Some(self.config.active_profile.clone()), Message::ActivateProfile)
+                dropdown(names, Some(self.config.active_profile.clone()), Message::ActivateProfile)
                     .width(200),
             ]
             .spacing(12)
@@ -1077,7 +1231,8 @@ impl App {
         header.into()
     }
 
-    fn view_live(&self) -> Element<'_, Message> {
+    /// The live controller drawing, labelled with `labels_from`'s mappings.
+    fn view_live(&self, labels_from: Option<&Profile>) -> Element<'_, Message> {
         let caption = match (&self.live, &self.status) {
             (Some(live), _) => match live.gyro {
                 Some([pitch, yaw, roll]) => {
@@ -1091,7 +1246,7 @@ impl App {
         };
         column![
             text("Live input").size(20),
-            container(svg(self.pad.clone()).width(420).height(275)).center_x(Length::Fill),
+            container(controller_drawing(self.live.as_ref(), labels_from)).center_x(Length::Fill),
             container(text(caption).size(13).color(MUTED_COLOR)).center_x(Length::Fill),
         ]
         .spacing(8)
@@ -1198,7 +1353,7 @@ impl App {
                 toggler(auto.enabled).label("Switch profiles automatically").on_toggle(Message::SetAutoSwitch),
                 space::horizontal(),
                 text("Otherwise use"),
-                pick_list(defaults, Some(default), Message::SetDefaultProfile).width(200),
+                dropdown(defaults, Some(default), Message::SetDefaultProfile).width(200),
             ]
             .spacing(12)
             .align_y(Alignment::Center),
@@ -1214,11 +1369,11 @@ impl App {
             };
             let mut line = row![
                 text("When").size(14),
-                pick_list(RuleKind::ALL, Some(r.kind), move |k| Message::SetRuleKind(i, k)).width(150),
+                dropdown(RuleKind::ALL, Some(r.kind), move |k| Message::SetRuleKind(i, k)).width(150),
                 text("is").size(14),
-                text_input(placeholder, &r.value).on_input(move |v| Message::SetRuleValue(i, v)).width(200),
+                field(placeholder, &r.value).on_input(move |v| Message::SetRuleValue(i, v)).width(200),
                 text("use").size(14),
-                pick_list(names.clone(), Some(r.profile.clone()), move |p| Message::SetRuleProfile(i, p)).width(160),
+                dropdown(names.clone(), Some(r.profile.clone()), move |p| Message::SetRuleProfile(i, p)).width(160),
                 button(text("✕").size(13)).style(button::secondary).on_press(Message::RemoveRule(i)),
             ]
             .spacing(8)
@@ -1266,18 +1421,21 @@ impl App {
         let names: Vec<String> = self.config.macros.iter().map(|m| m.name.clone()).collect();
         let current = self.config.macros.get(self.editing_macro);
         let col = column![
-            text("Macros").size(20),
-            text(
-                "A macro plays a sequence of inputs. Map it to any button, gesture, combo, trigger or \
-                 zone with the \"Macro…\" action in a profile.",
-            )
-            .size(13)
-            .color(MUTED_COLOR),
             row![
-                pick_list(names, current.map(|m| m.name.clone()), Message::EditMacro)
+                text("Macros").size(20),
+                help(
+                    "A macro plays a sequence of inputs. Map it to any button, gesture, combo, trigger \
+                     or zone with the \"Macro…\" action in a profile."
+                        .into(),
+                ),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+            row![
+                dropdown(names, current.map(|m| m.name.clone()), Message::EditMacro)
                     .placeholder("No macros")
                     .width(200),
-                text_input("Macro name", current.map(|m| m.name.as_str()).unwrap_or(""))
+                field("Macro name", current.map(|m| m.name.as_str()).unwrap_or(""))
                     .on_input_maybe(current.is_some().then_some(Message::RenameMacro))
                     .width(200),
                 space::horizontal(),
@@ -1296,7 +1454,7 @@ impl App {
         let last = m.steps.len().saturating_sub(1);
         let mut steps = column![].spacing(8);
         for (i, step) in m.steps.iter().enumerate() {
-            let kind = pick_list(STEP_KINDS, Some(step_kind(step)), {
+            let kind = dropdown(STEP_KINDS, Some(step_kind(step)), {
                 let step = step.clone();
                 move |k| Message::SetMacroStep(i, convert_step(&step, k))
             })
@@ -1305,8 +1463,8 @@ impl App {
                 MacroStep::Wait(ms) => row![
                     slider(10.0..=5000.0, *ms as f32, move |v| Message::SetMacroStep(i, MacroStep::Wait(v as u64)))
                         .step(10.0_f32)
-                        .width(260),
-                    text(format!("{ms} ms")).size(13),
+                        .width(220),
+                    ms_field(*ms, move |v| Message::SetMacroStep(i, MacroStep::Wait(v))),
                 ]
                 .spacing(10)
                 .align_y(Alignment::Center)
@@ -1322,8 +1480,11 @@ impl App {
                                 Message::SetMacroStep(i, MacroStep::Tap { action: held.clone(), hold_ms: v as u64 })
                             })
                             .step(10.0_f32)
-                            .width(200),
-                            text(format!("{hold_ms} ms")).size(13),
+                            .width(180),
+                            {
+                                let held = action.clone();
+                                ms_field(hold_ms, move |v| Message::SetMacroStep(i, MacroStep::Tap { action: held.clone(), hold_ms: v }))
+                            },
                         ]
                         .spacing(10)
                         .align_y(Alignment::Center),
@@ -1335,11 +1496,11 @@ impl App {
                     let (stick, x, y) = (*stick, *x, *y);
                     let preset = StickPreset::of(x, y);
                     let mut body = column![row![
-                        pick_list([Stick::Left, Stick::Right], Some(stick), move |s| {
+                        dropdown([Stick::Left, Stick::Right], Some(stick), move |s| {
                             Message::SetMacroStep(i, MacroStep::Stick { stick: s, x, y })
                         })
                         .width(140),
-                        pick_list(StickPreset::ALL, Some(preset), move |p: StickPreset| {
+                        dropdown(StickPreset::ALL, Some(preset), move |p: StickPreset| {
                             let (x, y) = p.position().unwrap_or((x, y));
                             Message::SetMacroStep(i, MacroStep::Stick { stick, x, y })
                         })
@@ -1394,7 +1555,7 @@ impl App {
                     .align_y(Alignment::Start),
                 )
                 .padding(8)
-                .style(container::bordered_box),
+                .style(style::inset),
             );
         }
         let total: u64 = m.steps.iter().map(MacroStep::duration_ms).sum();
@@ -1407,7 +1568,7 @@ impl App {
                 button(text("Release").size(13)).style(button::secondary).on_press(Message::AddMacroStep(StepKind::Release)),
                 button(text("Wait").size(13)).style(button::secondary).on_press(Message::AddMacroStep(StepKind::Wait)),
                 button(text("Move stick").size(13)).style(button::secondary).on_press(Message::AddMacroStep(StepKind::Stick)),
-                pick_list(Motion::ALL, None::<Motion>, Message::InsertMotion).placeholder("Insert motion…").width(230),
+                dropdown(Motion::ALL, None::<Motion>, Message::InsertMotion).placeholder("Insert motion…").width(230),
                 space::horizontal(),
                 text(format!("Plays for {total} ms")).size(13).color(MUTED_COLOR),
             ]
@@ -1424,7 +1585,7 @@ impl App {
                 .color(MUTED_COLOR),
             );
         }
-        col.push(section("Steps", vec![steps.into(), footer.into()])).into()
+        col.push(section("Steps", None, vec![steps.into(), footer.into()])).into()
     }
 
     fn view_profile_bar(&self) -> Element<'_, Message> {
@@ -1434,14 +1595,14 @@ impl App {
         column![
             text("Edit profile").size(20),
             row![
-                pick_list(names, current.clone(), Message::EditProfile).width(200),
-                text_input("Profile name", current.as_deref().unwrap_or(""))
+                dropdown(names, current.clone(), Message::EditProfile).width(170),
+                field("Profile name", current.as_deref().unwrap_or(""))
                     .on_input(Message::RenameProfile)
-                    .width(200),
+                    .width(170),
                 space::horizontal(),
-                pick_list(Template::NEW, None::<Template>, Message::AddProfile)
-                    .placeholder("+ New from template…")
-                    .width(240),
+                dropdown(Template::NEW, None::<Template>, Message::AddProfile)
+                    .placeholder("+ From template…")
+                    .width(200),
                 button(text("Duplicate")).style(button::secondary).on_press(Message::AddProfile(Template::Duplicate)),
                 button(text("Delete"))
                     .style(button::danger)
@@ -1472,7 +1633,7 @@ impl App {
             .align_y(Alignment::Center),
         )
         .padding(12)
-        .style(container::bordered_box)
+        .style(style::inset)
         .into()
     }
 }
@@ -1524,7 +1685,7 @@ fn view_picker(picker: &KeyPicker) -> Element<'_, Message> {
         .spacing(12),
     )
     .padding(20)
-    .style(container::bordered_box);
+    .style(style::inset);
 
     let backdrop = container(center(opaque(dialog)))
         .width(Length::Fill)
@@ -1570,6 +1731,41 @@ fn unreleased_holds(m: &Macro) -> usize {
     held.len()
 }
 
+
+/// A dropdown in the app's style: stands out from cards, with a raised menu.
+fn dropdown<'a, T, L, V>(options: L, selected: Option<V>, on_select: impl Fn(T) -> Message + 'a) -> iced::widget::PickList<'a, T, L, V, Message>
+where
+    T: ToString + PartialEq + Clone + 'a,
+    L: Borrow<[T]> + 'a,
+    V: Borrow<T> + 'a,
+{
+    pick_list(options, selected, on_select)
+        .style(style::dropdown)
+        .menu_style(style::dropdown_menu)
+        .padding([6, 10])
+}
+
+/// An exact milliseconds entry beside a slider (sliders can't hit 17 ms on a 5 s range).
+fn ms_field<'a>(ms: u64, on_change: impl Fn(u64) -> Message + 'a) -> Element<'a, Message> {
+    row![
+        field("ms", &ms.to_string())
+            .on_input(move |s| {
+                let digits: String = s.chars().filter(char::is_ascii_digit).take(6).collect();
+                on_change(digits.parse().unwrap_or(0))
+            })
+            .width(80),
+        text("ms").size(13),
+    ]
+    .spacing(4)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+/// A text input in the app's style.
+fn field<'a>(placeholder: &str, value: &str) -> iced::widget::TextInput<'a, Message> {
+    text_input(placeholder, value).style(style::text_field).padding([6, 10])
+}
+
 /// Shown in the "Otherwise use" list for "don't change the profile".
 const KEEP_CURRENT: &str = "(keep current profile)";
 
@@ -1588,8 +1784,67 @@ fn rule_for_window(w: &WindowInfo, profile: String) -> Rule {
     Rule { kind, value, profile }
 }
 
-fn pad_handle(input: Option<&InputSnapshot>) -> svg::Handle {
-    svg::Handle::from_memory(pad_svg::render(input).into_bytes())
+/// The controller SVG with button letters and mapping-label pills placed over it. (iced's
+/// SVG renderer may not draw SVG text, so text is real widgets pinned at drawing
+/// coordinates; the drawing is shown at 1:1.)
+fn controller_drawing<'a>(input: Option<&InputSnapshot>, labels_from: Option<&Profile>) -> Element<'a, Message> {
+    let labels = labels_from.map(drawing_labels).unwrap_or_default();
+    let handle = svg::Handle::from_memory(pad_svg::render(input, &labels).into_bytes());
+    let mut layers: Vec<Element<'a, Message>> =
+        vec![svg(handle).width(pad_svg::WIDTH).height(pad_svg::HEIGHT).into()];
+
+    for o in pad_svg::overlays(input) {
+        let [r, g, b] = o.color;
+        let letter = container(text(o.text).size(12).color(Color::from_rgb8(r, g, b)))
+            .center_x(24)
+            .center_y(20);
+        layers.push(pin(letter).x(o.x - 12.0).y(o.y - 10.0).into());
+    }
+    for l in pad_svg::place_labels(&labels) {
+        let pill = container(text(l.text).size(11).color(Color::from_rgb8(0xe6, 0xed, 0xf3)))
+            .padding([2, 6])
+            .style(|_: &iced::Theme| container::Style {
+                background: Some(Color::from_rgb8(0x1d, 0x20, 0x26).into()),
+                border: iced::Border { width: 1.0, radius: 5.0.into(), color: Color::from_rgb8(0x4e, 0xa1, 0xff) },
+                ..container::Style::default()
+            });
+        // Each column is a box the width of the margin; pills hug its inner edge.
+        let column = container(pill).width(pad_svg::LABEL_COLUMN);
+        let (column, x) = if l.right {
+            (column.align_x(iced::alignment::Horizontal::Left), pad_svg::RIGHT_COLUMN_X)
+        } else {
+            (column.align_x(iced::alignment::Horizontal::Right), 0.0)
+        };
+        layers.push(pin(column).x(x).y(l.y).into());
+    }
+    stack(layers).width(pad_svg::WIDTH).height(pad_svg::HEIGHT).into()
+}
+
+/// Labels for the controller drawing: every input that doesn't simply pass through.
+fn drawing_labels(p: &Profile) -> Vec<(pad_svg::Spot, String)> {
+    let mut labels = Vec::new();
+    for b in Button::ALL {
+        let passthrough = *p.button(b) == ButtonAction::Gamepad(b);
+        let gestures = p.gestures(b).is_some();
+        if passthrough && !gestures {
+            continue;
+        }
+        let mut label = summarize(p.button(b));
+        if gestures {
+            label.push_str(" +");
+        }
+        labels.push((pad_svg::Spot::Button(b), label));
+    }
+    for t in [Trigger::Left, Trigger::Right] {
+        let label = match p.trigger(t) {
+            TriggerAction::Gamepad(out) if *out == t => continue,
+            TriggerAction::Gamepad(out) => format!("Pad {}", if *out == Trigger::Left { "LT" } else { "RT" }),
+            TriggerAction::Disabled => "—".into(),
+            TriggerAction::Button { action, .. } => summarize(action),
+        };
+        labels.push((pad_svg::Spot::Trigger(t), label));
+    }
+    labels
 }
 
 /// Streams live input from the daemon, reconnecting every second while it is unavailable.
@@ -1617,12 +1872,32 @@ fn watch_input() -> impl iced::futures::Stream<Item = Message> {
     })
 }
 
-fn section<'a>(title: &'a str, rows: Vec<Element<'a, Message>>) -> Element<'a, Message> {
-    container(column![text(title).size(18)].extend(rows).spacing(10))
+fn section<'a>(title: &'a str, help_text: Option<String>, rows: Vec<Element<'a, Message>>) -> Element<'a, Message> {
+    let mut heading = row![text(title).size(18)].spacing(8).align_y(Alignment::Center);
+    if let Some(h) = help_text {
+        heading = heading.push(help(h));
+    }
+    container(column![heading].extend(rows).spacing(10))
         .padding(14)
         .width(Length::Fill)
-        .style(container::rounded_box)
+        .style(style::card)
         .into()
+}
+
+/// An ⓘ that explains a section on hover, instead of a paragraph of grey text.
+fn help<'a>(explanation: String) -> Element<'a, Message> {
+    tooltip(
+        text("ⓘ").size(16).color(style_accent()),
+        container(text(explanation).size(13)).padding(10).max_width(420.0).style(style::tooltip),
+        tooltip::Position::Bottom,
+    )
+    .gap(6)
+    .into()
+}
+
+/// The accent color, for hints that should catch the eye.
+fn style_accent() -> Color {
+    Color::from_rgb(0.35, 0.45, 0.95)
 }
 
 fn labeled<'a>(label: impl text::IntoFragment<'a>, editor: Element<'a, Message>) -> Element<'a, Message> {
@@ -1632,43 +1907,172 @@ fn labeled<'a>(label: impl text::IntoFragment<'a>, editor: Element<'a, Message>)
         .into()
 }
 
-fn view_profile<'a>(p: &'a Profile, analog_triggers: bool, any_gyro: bool, macros: &[String]) -> Element<'a, Message> {
-    let buttons = button_rows(p, macros);
-    let sticks = [Stick::Left, Stick::Right]
-        .into_iter()
-        .flat_map(|s| {
-            let mut rows = vec![
-                stick_editor(s, p.stick(s), macros),
-                labeled(
-                    "",
-                    text(format!(
-                        "{s} directions act as buttons on top of the mode above: give them actions or \
-                         gestures, or use them in combos (e.g. LB + {s} Right)."
-                    ))
-                    .size(12)
-                    .color(MUTED_COLOR)
+fn view_profile<'a>(p: &'a Profile, ui: &Ui, tab: ProfileTab) -> Element<'a, Message> {
+    let macros = ui.macros;
+    let sections: Vec<Element<'a, Message>> = match tab {
+        ProfileTab::Buttons => vec![section(
+            "Buttons",
+            Some(
+                "Click a button's name to edit it. Add a double tap, triple tap or long press with \
+                 \"+ Gesture\". Buttons with gestures act once the gesture is decided: a single press \
+                 fires after the tap window (or on release if only a long press is set)."
                     .into(),
-                ),
-            ];
-            for b in Button::stick_directions(s) {
-                rows.extend(button_row(p, b, macros));
+            ),
+            button_rows(p, ui),
+        )],
+        ProfileTab::Sticks => {
+            let mut sticks = Vec::new();
+            for s in [Stick::Left, Stick::Right] {
+                sticks.push(stick_editor(s, p.stick(s), macros));
+                for b in Button::stick_directions(s) {
+                    sticks.extend(button_row(p, b, ui));
+                }
             }
-            rows
+            let triggers = [Trigger::Left, Trigger::Right]
+                .into_iter()
+                .map(|t| trigger_editor(t, p.trigger(t), p.zones(Analog::Trigger(t)), ui.analog_triggers, macros))
+                .collect();
+            vec![
+                section(
+                    "Sticks",
+                    Some(
+                        "Each stick's directions (Left Stick Up, …) also act as buttons on top of the \
+                         stick's mode: give them actions or gestures, or use them in combos \
+                         (e.g. LB + Right Stick Right). They press at the stick's \"Directions press at\" \
+                         threshold."
+                            .into(),
+                    ),
+                    sticks,
+                ),
+                section("Triggers", None, triggers),
+            ]
+        }
+        ProfileTab::Combos => vec![section(
+            "Combos",
+            Some(format!(
+                "Buttons pressed within the window act as one input. Combo buttons wait up to {} ms \
+                 before acting alone; a combo button set to Disabled works as a modifier with no \
+                 time limit.",
+                p.combo_window_ms
+            )),
+            combo_rows(p, ui),
+        )],
+        ProfileTab::Gyro => vec![section(
+            "Gyro",
+            Some("Uses the controller's motion sensors. Calibrate it from the controller list on the Overview tab if the aim drifts.".into()),
+            gyro_rows(&p.gyro, ui.any_gyro),
+        )],
+    };
+    column(sections).spacing(16).into()
+}
+
+impl ProfileTab {
+    const ALL: [ProfileTab; 4] = [ProfileTab::Buttons, ProfileTab::Sticks, ProfileTab::Combos, ProfileTab::Gyro];
+}
+
+impl fmt::Display for ProfileTab {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            ProfileTab::Buttons => "Buttons",
+            ProfileTab::Sticks => "Sticks & triggers",
+            ProfileTab::Combos => "Combos",
+            ProfileTab::Gyro => "Gyro",
         })
-        .collect();
-    let triggers = [Trigger::Left, Trigger::Right]
+    }
+}
+
+/// One-line description of an action, for collapsed rows and the controller drawing.
+fn summarize(action: &ButtonAction) -> String {
+    match action {
+        ButtonAction::Disabled => "—".into(),
+        ButtonAction::Gamepad(b) => format!("Pad {}", short_button(*b)),
+        ButtonAction::Keys(keys) if keys.is_empty() => "(no key)".into(),
+        ButtonAction::Keys(keys) => keys.iter().map(|k| keyboard::label(k)).collect::<Vec<_>>().join(" + "),
+        ButtonAction::Mouse(m) => format!("{m} click"),
+        ButtonAction::Wheel(d) => d.to_string(),
+        ButtonAction::NextProfile => "Next profile".into(),
+        ButtonAction::Multi(list) if list.is_empty() => "(nothing)".into(),
+        ButtonAction::Multi(list) => list.iter().map(summarize).collect::<Vec<_>>().join(" & "),
+        ButtonAction::Toggle(inner) => format!("Toggle {}", summarize(inner)),
+        ButtonAction::Turbo { action, rate } => format!("Turbo {} ({rate:.0}/s)", summarize(action)),
+        ButtonAction::Macro { name, repeat: true } => format!("Macro “{name}” (repeat)"),
+        ButtonAction::Macro { name, .. } => format!("Macro “{name}”"),
+    }
+}
+
+/// What's wrong with an action, if anything (the same things saving checks).
+fn action_problem(action: &ButtonAction, macros: &[String]) -> Option<String> {
+    let mut problem = None;
+    action.walk(&mut |a| {
+        if problem.is_some() {
+            return;
+        }
+        match a {
+            ButtonAction::Keys(keys) => {
+                if let Some(bad) = keys.iter().find(|k| KeyCode::from_str(k).is_err()) {
+                    problem = Some(format!("unknown key {:?}", short_key(bad)));
+                }
+            }
+            ButtonAction::Macro { name, .. } if !macros.contains(name) => {
+                problem = Some(format!("missing macro {name:?}"));
+            }
+            _ => {}
+        }
+    });
+    problem
+}
+
+/// Whether a profile section contains anything saving would reject.
+fn section_has_problem(p: &Profile, tab: ProfileTab, macros: &[String]) -> bool {
+    let bad = |a: &ButtonAction| action_problem(a, macros).is_some();
+    let button_bad = |b: Button| {
+        bad(p.button(b)) || p.gestures.get(&b).is_some_and(|g| GestureKind::ALL.iter().any(|k| g.get(*k).is_some_and(bad)))
+    };
+    match tab {
+        ProfileTab::Buttons => Button::ALL.into_iter().any(button_bad),
+        ProfileTab::Sticks => {
+            let dirs = [Stick::Left, Stick::Right].into_iter().flat_map(Button::stick_directions).any(button_bad);
+            let zones = [Analog::Stick(Stick::Left), Analog::Stick(Stick::Right), Analog::Trigger(Trigger::Left), Analog::Trigger(Trigger::Right)]
+                .into_iter()
+                .any(|a| p.zones(a).iter().any(|z| z.min >= z.max || bad(&z.action)));
+            let triggers = [Trigger::Left, Trigger::Right]
+                .into_iter()
+                .any(|t| matches!(p.trigger(t), TriggerAction::Button { action, .. } if bad(action)));
+            let keys = [Stick::Left, Stick::Right].into_iter().any(|s| match &p.stick(s).action {
+                StickAction::Keys { up, down, left, right } => [up, down, left, right].iter().any(|k| KeyCode::from_str(k).is_err()),
+                _ => false,
+            });
+            dirs || zones || triggers || keys
+        }
+        ProfileTab::Combos => p.combos.iter().any(|c| c.buttons.len() < 2 || bad(&c.action)),
+        ProfileTab::Gyro => false,
+    }
+}
+
+fn macros_have_problem(macros: &[Macro]) -> bool {
+    macros.iter().enumerate().any(|(i, m)| {
+        m.name.trim().is_empty()
+            || macros[..i].iter().any(|o| o.name == m.name)
+            || m.steps.iter().filter_map(MacroStep::action).any(|a| action_problem(a, &[]).is_some())
+    })
+}
+
+/// A button pressed (or stick pushed firmly) in `now` that wasn't in `before`, for
+/// "Find by pressing".
+fn newly_pressed(before: Option<&InputSnapshot>, now: &InputSnapshot) -> Option<Button> {
+    let was_down = |b: &Button| before.is_some_and(|s| s.buttons.contains(b));
+    if let Some(b) = now.buttons.iter().find(|b| !was_down(b)) {
+        return Some(*b);
+    }
+    const FIRM: f32 = 0.7;
+    let pushed = |s: &InputSnapshot, stick: Stick| -> Option<Button> {
+        let (x, y) = if stick == Stick::Left { s.left_stick } else { s.right_stick };
+        let [up, down, left, right] = Button::stick_directions(stick);
+        [(up, -y), (down, y), (left, -x), (right, x)].into_iter().find(|(_, v)| *v > FIRM).map(|(b, _)| b)
+    };
+    [Stick::Left, Stick::Right]
         .into_iter()
-        .map(|t| trigger_editor(t, p.trigger(t), p.zones(Analog::Trigger(t)), analog_triggers, macros))
-        .collect();
-    column![
-        section("Buttons", buttons),
-        section("Combos", combo_rows(p, macros)),
-        section("Sticks", sticks),
-        section("Triggers", triggers),
-        section("Gyro", gyro_rows(&p.gyro, any_gyro)),
-    ]
-    .spacing(16)
-    .into()
+        .find_map(|stick| pushed(now, stick).filter(|b| before.and_then(|s| pushed(s, stick)) != Some(*b)))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1728,13 +2132,19 @@ fn gyro_rows(cfg: &GyroConfig, any_gyro: bool) -> Vec<Element<'_, Message>> {
         f(&mut c);
         Message::SetGyro(c)
     };
-    let hint = if any_gyro {
-        "Uses the controller's motion sensors. Calibrate it from the controller list if the aim drifts."
-    } else {
-        "None of your managed controllers report a gyro (PlayStation and Switch controllers do). \
-         These settings apply once one is connected."
-    };
-    let mut rows: Vec<Element<'_, Message>> = vec![text(hint).size(13).color(MUTED_COLOR).into()];
+    // Without a gyro controller this is a status worth seeing, not just help.
+    let mut rows: Vec<Element<'_, Message>> = Vec::new();
+    if !any_gyro {
+        rows.push(
+            text(
+                "None of your managed controllers report a gyro (PlayStation and Switch controllers do). \
+                 These settings apply once one is connected.",
+            )
+            .size(13)
+            .color(MUTED_COLOR)
+            .into(),
+        );
+    }
 
     let kind = match cfg.mode {
         GyroMode::Off => GyroModeKind::Off,
@@ -1745,7 +2155,7 @@ fn gyro_rows(cfg: &GyroConfig, any_gyro: bool) -> Vec<Element<'_, Message>> {
     let kinds = [GyroModeKind::Off, GyroModeKind::Mouse, GyroModeKind::Stick, GyroModeKind::Steering];
     rows.push(labeled(
         "Gyro",
-        pick_list(kinds, Some(kind), move |k| {
+        dropdown(kinds, Some(kind), move |k| {
             let mode = match k {
                 GyroModeKind::Off => GyroMode::Off,
                 GyroModeKind::Mouse => GyroMode::Mouse { sensitivity: 15.0 },
@@ -1768,7 +2178,7 @@ fn gyro_rows(cfg: &GyroConfig, any_gyro: bool) -> Vec<Element<'_, Message>> {
         GyroMode::Stick { stick, full_rate, anti_deadzone } => {
             rows.push(labeled(
                 "    Output stick",
-                pick_list([Stick::Left, Stick::Right], Some(stick), move |s| {
+                dropdown([Stick::Left, Stick::Right], Some(stick), move |s| {
                     with(&|c| c.mode = GyroMode::Stick { stick: s, full_rate, anti_deadzone })
                 })
                 .width(170)
@@ -1784,7 +2194,7 @@ fn gyro_rows(cfg: &GyroConfig, any_gyro: bool) -> Vec<Element<'_, Message>> {
         GyroMode::Steering { stick, max_angle } => {
             rows.push(labeled(
                 "    Output stick",
-                pick_list([Stick::Left, Stick::Right], Some(stick), move |s| {
+                dropdown([Stick::Left, Stick::Right], Some(stick), move |s| {
                     with(&|c| c.mode = GyroMode::Steering { stick: s, max_angle })
                 })
                 .width(170)
@@ -1800,7 +2210,7 @@ fn gyro_rows(cfg: &GyroConfig, any_gyro: bool) -> Vec<Element<'_, Message>> {
     if !steering {
         rows.push(labeled(
             "    Horizontal from",
-            pick_list(GyroHorizontal::ALL, Some(cfg.horizontal), move |h| with(&|c| c.horizontal = h))
+            dropdown(GyroHorizontal::ALL, Some(cfg.horizontal), move |h| with(&|c| c.horizontal = h))
                 .width(170)
                 .into(),
         ));
@@ -1826,7 +2236,7 @@ fn gyro_rows(cfg: &GyroConfig, any_gyro: bool) -> Vec<Element<'_, Message>> {
     };
     let current_input = activation_input.unwrap_or(GyroInput::LeftTrigger);
     let activation_kinds = [ActivationKind::Always, ActivationKind::WhileHeld, ActivationKind::UnlessHeld, ActivationKind::Toggle];
-    let mut active_row = row![pick_list(activation_kinds, Some(activation_kind), move |k| {
+    let mut active_row = row![dropdown(activation_kinds, Some(activation_kind), move |k| {
         with(&|c| c.activation = activation(k, current_input))
     })
     .width(220)]
@@ -1834,7 +2244,7 @@ fn gyro_rows(cfg: &GyroConfig, any_gyro: bool) -> Vec<Element<'_, Message>> {
     .align_y(Alignment::Center);
     if activation_input.is_some() {
         active_row = active_row.push(
-            pick_list(GyroInput::all(), activation_input, move |i| with(&|c| c.activation = activation(activation_kind, i)))
+            dropdown(GyroInput::all(), activation_input, move |i| with(&|c| c.activation = activation(activation_kind, i)))
                 .width(200),
         );
     }
@@ -1845,7 +2255,7 @@ fn gyro_rows(cfg: &GyroConfig, any_gyro: bool) -> Vec<Element<'_, Message>> {
     rows.push(labeled(
         "    Recenter with",
         row![
-            pick_list(recenter_choices, Some(RecenterChoice(cfg.recenter)), move |r: RecenterChoice| {
+            dropdown(recenter_choices, Some(RecenterChoice(cfg.recenter)), move |r: RecenterChoice| {
                 with(&|c| c.recenter = r.0)
             })
             .width(200),
@@ -1865,78 +2275,131 @@ fn gyro_rows(cfg: &GyroConfig, any_gyro: bool) -> Vec<Element<'_, Message>> {
     rows
 }
 
-fn button_rows<'a>(p: &'a Profile, macros: &[String]) -> Vec<Element<'a, Message>> {
+fn button_rows<'a>(p: &'a Profile, ui: &Ui) -> Vec<Element<'a, Message>> {
     let mut rows: Vec<Element<'a, Message>> = vec![
-        text(
-            "Add a double tap, triple tap or long press to any button. Buttons with gestures act \
-             once the gesture is decided: a single press fires after the tap window (or on \
-             release if only a long press is set).",
-        )
-        .size(13)
-        .color(MUTED_COLOR)
-        .into(),
         value_slider("Tap window", 100.0..=600.0, p.tap_window_ms as f32, 10.0, "ms", Message::SetTapWindow),
         value_slider("Long press after", 200.0..=1500.0, p.long_press_ms as f32, 50.0, "ms", Message::SetLongPress),
     ];
     for b in Button::ALL {
-        rows.extend(button_row(p, b, macros));
+        rows.extend(button_row(p, b, ui));
     }
     rows
 }
 
 /// One button's action editor with its "+ Gesture" picker and any gesture rows.
-fn button_row<'a>(p: &'a Profile, b: Button, macros: &[String]) -> Vec<Element<'a, Message>> {
-    let mut rows = Vec::new();
-    {
-        let gestures = p.gestures.get(&b);
-        let missing: Vec<GestureKind> = GestureKind::ALL
-            .into_iter()
-            .filter(|k| gestures.and_then(|g| g.get(*k)).is_none())
-            .collect();
-        let mut line = row![labeled(b.to_string(), action_editor(p.button(b), b, &ACTION_KINDS, set_action(Target::Button(b)), KeyField::root(Target::Button(b)), macros))]
-            .align_y(Alignment::Center);
-        if !missing.is_empty() {
-            line = line.push(space::horizontal()).push(
-                pick_list(missing, None::<GestureKind>, move |k| Message::AddGesture(b, k))
-                    .placeholder("+ Gesture")
-                    .width(130),
-            );
-        }
-        rows.push(line.into());
-
-        for kind in GestureKind::ALL {
-            if let Some(action) = gestures.and_then(|g| g.get(kind)) {
-                rows.push(labeled(
-                    format!("    {kind}"),
-                    row![
-                        action_editor(action, b, &ACTION_KINDS, set_action(Target::Gesture(b, kind)), KeyField::root(Target::Gesture(b, kind)), macros),
-                        button(text("✕").size(13))
-                            .style(button::secondary)
-                            .on_press(Message::RemoveGesture(b, kind)),
-                    ]
-                    .spacing(6)
-                    .align_y(Alignment::Center)
-                    .into(),
-                ));
-            }
-        }
-    }
-    rows
+/// The label column of a collapsible row: click to open or close it.
+fn row_toggle<'a>(label: String, target: Target, open: bool, problem: bool) -> Element<'a, Message> {
+    let chevron = if open { "▾" } else { "▸" };
+    let label = text(format!("{chevron} {label}"));
+    let label = if problem { label.color(ERROR_COLOR) } else { label };
+    button(label)
+        .style(button::text)
+        .padding([4, 0])
+        .width(LABEL_WIDTH)
+        .on_press(Message::ToggleExpanded(target))
+        .into()
 }
 
-fn combo_rows<'a>(p: &'a Profile, macros: &[String]) -> Vec<Element<'a, Message>> {
-    let mut rows: Vec<Element<'a, Message>> = vec![
-        text(format!(
-            "Buttons pressed within the window act as one input. Combo buttons wait up to {} ms \
-             before acting alone; a combo button set to Disabled works as a modifier with no time limit.",
-            p.combo_window_ms
-        ))
-        .size(13)
-        .color(MUTED_COLOR)
-        .into(),
-        value_slider("Combo window", 20.0..=300.0, p.combo_window_ms as f32, 5.0, "ms", Message::SetComboWindow),
-    ];
+/// One button: collapsed to a summary ("A ▸ E · double tap: Q"), or open with its action
+/// editor, "+ Gesture" picker and gesture rows.
+fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<'a, Message>> {
+    let target = Target::Button(b);
+    let open = ui.is_open(target);
+    let gestures = p.gestures.get(&b);
+    let set_gestures: Vec<(GestureKind, &'a ButtonAction)> =
+        GestureKind::ALL.into_iter().filter_map(|k| gestures.and_then(|g| g.get(k)).map(|a| (k, a))).collect();
+    let problem = std::iter::once(p.button(b))
+        .chain(set_gestures.iter().map(|(_, a)| *a))
+        .find_map(|a| action_problem(a, ui.macros));
+    let mut rows: Vec<Element<'a, Message>> = Vec::new();
+
+    if !open {
+        let mut summary = summarize(p.button(b));
+        for (k, a) in &set_gestures {
+            summary.push_str(&format!("  ·  {k}: {}", summarize(a)));
+        }
+        let disabled = matches!(p.button(b), ButtonAction::Disabled) && set_gestures.is_empty();
+        let summary = text(summary).color_maybe(disabled.then_some(MUTED_COLOR));
+        let mut line = row![row_toggle(b.to_string(), target, false, problem.is_some()), summary]
+            .spacing(10)
+            .align_y(Alignment::Center);
+        if let Some(problem) = problem {
+            line = line.push(space::horizontal()).push(text(format!("⚠ {problem}")).size(12).color(ERROR_COLOR));
+        }
+        rows.push(line.into());
+        return rows;
+    }
+
+    let missing: Vec<GestureKind> = GestureKind::ALL
+        .into_iter()
+        .filter(|k| gestures.and_then(|g| g.get(*k)).is_none())
+        .collect();
+    let mut line = row![
+        row_toggle(b.to_string(), target, true, problem.is_some()),
+        action_editor(p.button(b), b, &ACTION_KINDS, set_action(target), KeyField::root(target), ui.macros),
+    ]
+    .spacing(10)
+    .align_y(Alignment::Center);
+    if !missing.is_empty() {
+        line = line.push(space::horizontal()).push(
+            dropdown(missing, None::<GestureKind>, move |k| Message::AddGesture(b, k))
+                .placeholder("+ Gesture")
+                .width(130),
+        );
+    }
+    rows.push(line.into());
+
+    for (kind, action) in set_gestures {
+        rows.push(labeled(
+            format!("    {kind}"),
+            row![
+                action_editor(action, b, &ACTION_KINDS, set_action(Target::Gesture(b, kind)), KeyField::root(Target::Gesture(b, kind)), ui.macros),
+                button(text("✕").size(13))
+                    .style(button::secondary)
+                    .on_press(Message::RemoveGesture(b, kind)),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center)
+            .into(),
+        ));
+    }
+    if let Some(problem) = problem {
+        rows.push(labeled("", text(format!("⚠ {problem}")).size(12).color(ERROR_COLOR).into()));
+    }
+    // An open row sits in a framed box, picked out in the accent color when it was just found.
+    let border = if ui.found == Some(b) { style_accent() } else { Color::TRANSPARENT };
+    vec![container(column(rows).spacing(8)).padding(6).style(style::highlight(border)).into()]
+}
+
+fn combo_rows<'a>(p: &'a Profile, ui: &Ui) -> Vec<Element<'a, Message>> {
+    let mut rows: Vec<Element<'a, Message>> = vec![value_slider(
+        "Combo window",
+        20.0..=300.0,
+        p.combo_window_ms as f32,
+        5.0,
+        "ms",
+        Message::SetComboWindow,
+    )];
     for (i, combo) in p.combos.iter().enumerate() {
+        let target = Target::Combo(i);
+        let open = ui.is_open(target);
+        let name = combo.buttons.iter().map(|b| short_button(*b)).collect::<Vec<_>>().join(" + ");
+        let name = if name.is_empty() { "(no buttons)".to_string() } else { name };
+        let problem = if combo.buttons.len() < 2 {
+            Some("needs at least two buttons".to_string())
+        } else {
+            action_problem(&combo.action, ui.macros)
+        };
+        if !open {
+            let mut line = row![row_toggle(name, target, false, problem.is_some()), text(summarize(&combo.action))]
+                .spacing(10)
+                .align_y(Alignment::Center);
+            if let Some(problem) = problem {
+                line = line.push(space::horizontal()).push(text(format!("⚠ {problem}")).size(12).color(ERROR_COLOR));
+            }
+            rows.push(line.into());
+            continue;
+        }
         let mut members = row![].spacing(6).align_y(Alignment::Center);
         for (n, &b) in combo.buttons.iter().enumerate() {
             if n > 0 {
@@ -1951,29 +2414,28 @@ fn combo_rows<'a>(p: &'a Profile, macros: &[String]) -> Vec<Element<'a, Message>
         let remaining: Vec<Button> =
             Button::EVERY.into_iter().filter(|b| !combo.buttons.contains(b)).collect();
         members = members.push(
-            pick_list(remaining, None::<Button>, move |b| Message::AddComboButton(i, b))
+            dropdown(remaining, None::<Button>, move |b| Message::AddComboButton(i, b))
                 .placeholder("Add button…")
                 .width(170),
         );
-        rows.push(
-            container(
-                column![
-                    row![
-                        members,
-                        space::horizontal(),
-                        button(text("Remove combo").size(13))
-                            .style(button::danger)
-                            .on_press(Message::RemoveCombo(i)),
-                    ]
-                    .align_y(Alignment::Center),
-                    labeled("    Action", action_editor(&combo.action, Button::South, &ACTION_KINDS, set_action(Target::Combo(i)), KeyField::root(Target::Combo(i)), macros)),
-                ]
-                .spacing(8),
-            )
-            .padding(10)
-            .style(container::bordered_box)
-            .into(),
-        );
+        let mut body = column![
+            row![
+                row_toggle(name, target, true, problem.is_some()),
+                members,
+                space::horizontal(),
+                button(text("Remove combo").size(13))
+                    .style(button::danger)
+                    .on_press(Message::RemoveCombo(i)),
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center),
+            labeled("    Action", action_editor(&combo.action, Button::South, &ACTION_KINDS, set_action(target), KeyField::root(target), ui.macros)),
+        ]
+        .spacing(8);
+        if let Some(problem) = problem {
+            body = body.push(labeled("", text(format!("⚠ {problem}")).size(12).color(ERROR_COLOR).into()));
+        }
+        rows.push(container(body).padding(10).style(style::inset).into());
     }
     rows.push(button(text("+ Add combo")).style(button::secondary).on_press(Message::AddCombo).into());
     rows
@@ -2124,7 +2586,7 @@ fn action_editor<'a>(
     };
     let kind_picker = {
         let on_change = on_change.clone();
-        pick_list(kinds, Some(kind), move |k| {
+        dropdown(kinds, Some(kind), move |k| {
             on_change(match k {
                 ActionKind::Disabled => ButtonAction::Disabled,
                 ActionKind::Gamepad => ButtonAction::Gamepad(default_button),
@@ -2148,17 +2610,17 @@ fn action_editor<'a>(
     };
 
     let value: Element<'a, Message> = match action {
-        ButtonAction::Gamepad(b) => pick_list(Button::EVERY, Some(*b), move |b| {
+        ButtonAction::Gamepad(b) => dropdown(Button::EVERY, Some(*b), move |b| {
             on_change(ButtonAction::Gamepad(b))
         })
         .width(220)
         .into(),
-        ButtonAction::Mouse(m) => pick_list(MouseButton::ALL, Some(*m), move |m| {
+        ButtonAction::Mouse(m) => dropdown(MouseButton::ALL, Some(*m), move |m| {
             on_change(ButtonAction::Mouse(m))
         })
         .width(220)
         .into(),
-        ButtonAction::Wheel(d) => pick_list(WheelDirection::ALL, Some(*d), move |d| {
+        ButtonAction::Wheel(d) => dropdown(WheelDirection::ALL, Some(*d), move |d| {
             on_change(ButtonAction::Wheel(d))
         })
         .width(220)
@@ -2208,7 +2670,7 @@ fn action_editor<'a>(
             let repeat = *repeat;
             let pick = {
                 let on_change = on_change.clone();
-                pick_list(macros.to_vec(), Some(name.clone()), move |n| on_change(ButtonAction::Macro { name: n, repeat }))
+                dropdown(macros.to_vec(), Some(name.clone()), move |n| on_change(ButtonAction::Macro { name: n, repeat }))
                     .width(200)
             };
             let name = name.clone();
@@ -2281,7 +2743,7 @@ fn key_input<'a>(
 ) -> Element<'a, Message> {
     let valid = value.is_empty()
         || value.split('+').all(|k| KeyCode::from_str(&format!("KEY_{k}")).is_ok());
-    let input = text_input(placeholder, value).on_input(on_input).width(180);
+    let input = field(placeholder, value).on_input(on_input).width(180);
     let pick = button(text("⌨").size(14)).style(button::secondary).on_press(open_picker);
     let mut r = row![input, pick].spacing(6).align_y(Alignment::Center);
     if !valid {
@@ -2351,7 +2813,7 @@ fn stick_editor<'a>(s: Stick, cfg: &'a StickConfig, macros: &[String]) -> Elemen
         StickKind::Scroll,
         StickKind::Keys,
     ];
-    let picker = pick_list(kinds, Some(kind), move |k| {
+    let picker = dropdown(kinds, Some(kind), move |k| {
         with(match k {
             StickKind::Disabled => StickAction::Disabled,
             StickKind::Gamepad => StickAction::Gamepad { stick: s, invert_y: false },
@@ -2371,7 +2833,7 @@ fn stick_editor<'a>(s: Stick, cfg: &'a StickConfig, macros: &[String]) -> Elemen
             rows = rows.push(labeled(
                 "    Output",
                 row![
-                    pick_list([Stick::Left, Stick::Right], Some(stick), move |t| {
+                    dropdown([Stick::Left, Stick::Right], Some(stick), move |t| {
                         with(StickAction::Gamepad { stick: t, invert_y })
                     })
                     .width(170),
@@ -2457,12 +2919,11 @@ fn zone_editor<'a>(analog: Analog, zones: &'a [Zone], macros: &[String]) -> Elem
         Analog::Stick(_) => "pushed",
         Analog::Trigger(_) => "pulled",
     };
-    let mut col = column![text(format!(
-        "Zones: extra outputs held while it is {what} within a range (0 = just past rest, 1 = all the way)."
-    ))
-    .size(12)
-    .color(MUTED_COLOR)]
-    .spacing(8);
+    let zones_help = help(format!(
+        "Zones: extra outputs held while it is {what} within a range (0 = just past rest, 1 = all the \
+         way), on top of its main action."
+    ));
+    let mut col = column![].spacing(8);
 
     for (i, zone) in zones.iter().enumerate() {
         let (min, max) = (zone.min, zone.max);
@@ -2486,13 +2947,14 @@ fn zone_editor<'a>(analog: Analog, zones: &'a [Zone], macros: &[String]) -> Elem
         if min >= max {
             body = body.push(text("The range must start below where it ends.").size(12).color(ERROR_COLOR));
         }
-        col = col.push(container(body).padding(10).style(container::bordered_box));
+        col = col.push(container(body).padding(10).style(style::inset));
     }
 
     let mut buttons = row![
         button(text("+ Add zone").size(13)).style(button::secondary).on_press(Message::AddZone(analog, ZonePreset::Empty)),
     ]
-    .spacing(8);
+    .spacing(8)
+    .align_y(Alignment::Center);
     if matches!(analog, Analog::Stick(_)) {
         buttons = buttons.push(
             button(text("+ Walk modifier (Shift on partial push)").size(13))
@@ -2500,7 +2962,7 @@ fn zone_editor<'a>(analog: Analog, zones: &'a [Zone], macros: &[String]) -> Elem
                 .on_press(Message::AddZone(analog, ZonePreset::Walk)),
         );
     }
-    labeled("    Zones", col.push(buttons).into())
+    labeled("    Zones", col.push(buttons.push(zones_help)).into())
 }
 
 fn wasd() -> StickAction {
@@ -2569,7 +3031,7 @@ fn trigger_editor<'a>(
         TriggerAction::Button { .. } => TriggerKind::Button,
     };
     let kinds = [TriggerKind::Disabled, TriggerKind::Gamepad, TriggerKind::Button];
-    let picker = pick_list(kinds, Some(kind), move |k| {
+    let picker = dropdown(kinds, Some(kind), move |k| {
         Message::SetTrigger(
             t,
             match k {
@@ -2589,7 +3051,7 @@ fn trigger_editor<'a>(
         TriggerAction::Gamepad(target) => {
             rows = rows.push(labeled(
                 "    Output",
-                pick_list([Trigger::Left, Trigger::Right], Some(*target), move |o| {
+                dropdown([Trigger::Left, Trigger::Right], Some(*target), move |o| {
                     Message::SetTrigger(t, TriggerAction::Gamepad(o))
                 })
                 .width(170)
@@ -2866,6 +3328,103 @@ mod tests {
         ));
         app.config.macros[0].steps = vec![MacroStep::Wait(10)];
         assert!(app.validate().unwrap().contains("NOPE"), "{:?}", app.validate());
+    }
+
+    #[test]
+    fn summaries_read_like_the_mapping() {
+        let keys = |k: &[&str]| ButtonAction::Keys(k.iter().map(|s| s.to_string()).collect());
+        assert_eq!(summarize(&keys(&["KEY_LEFTCTRL", "KEY_C"])), "Left Ctrl + C");
+        assert_eq!(summarize(&ButtonAction::Disabled), "—");
+        assert_eq!(
+            summarize(&ButtonAction::Toggle(Box::new(ButtonAction::Turbo {
+                action: Box::new(ButtonAction::Mouse(MouseButton::Left)),
+                rate: 12.0
+            }))),
+            "Toggle Turbo Left click (12/s)"
+        );
+        assert_eq!(summarize(&ButtonAction::Macro { name: "QCF".into(), repeat: true }), "Macro “QCF” (repeat)");
+        assert_eq!(summarize(&ButtonAction::Gamepad(Button::RightStickRight)), "Pad RS→");
+    }
+
+    #[test]
+    fn problems_are_found_inside_nested_actions_and_flag_their_section() {
+        let macros = vec!["Known".to_string()];
+        let nested = ButtonAction::Multi(vec![
+            ButtonAction::Mouse(MouseButton::Left),
+            ButtonAction::Toggle(Box::new(ButtonAction::Keys(vec!["KEY_NOPE".into()]))),
+        ]);
+        assert_eq!(action_problem(&nested, &macros).as_deref(), Some("unknown key \"NOPE\""));
+        let missing = ButtonAction::Macro { name: "Gone".into(), repeat: false };
+        assert_eq!(action_problem(&missing, &macros).as_deref(), Some("missing macro \"Gone\""));
+        assert_eq!(action_problem(&ButtonAction::Macro { name: "Known".into(), repeat: false }, &macros), None);
+
+        let mut p = Profile::passthrough("p");
+        assert!(ProfileTab::ALL.iter().all(|t| !section_has_problem(&p, *t, &macros)));
+        p.set_button(Button::RightStickUp, missing);
+        assert!(section_has_problem(&p, ProfileTab::Sticks, &macros), "stick directions live on the Sticks tab");
+        assert!(!section_has_problem(&p, ProfileTab::Buttons, &macros));
+        p.combos.push(Combo { buttons: vec![Button::South], action: ButtonAction::Disabled });
+        assert!(section_has_problem(&p, ProfileTab::Combos, &macros));
+    }
+
+    fn snapshot(buttons: &[Button], right_stick: (f32, f32)) -> InputSnapshot {
+        InputSnapshot {
+            device: "Pad".into(),
+            buttons: buttons.to_vec(),
+            left_stick: (0.0, 0.0),
+            right_stick,
+            left_trigger: 0.0,
+            right_trigger: 0.0,
+            gyro: None,
+        }
+    }
+
+    #[test]
+    fn find_by_pressing_detects_new_presses_and_firm_stick_pushes() {
+        let held = snapshot(&[Button::South], (0.0, 0.0));
+        assert_eq!(newly_pressed(None, &held), Some(Button::South));
+        // Still held from before: not new. A second button is.
+        assert_eq!(newly_pressed(Some(&held), &held), None);
+        assert_eq!(newly_pressed(Some(&held), &snapshot(&[Button::South, Button::West], (0.0, 0.0))), Some(Button::West));
+        // A light touch on a stick doesn't count; a firm push does.
+        assert_eq!(newly_pressed(Some(&held), &snapshot(&[Button::South], (0.4, 0.0))), None);
+        assert_eq!(newly_pressed(Some(&held), &snapshot(&[Button::South], (0.0, -0.9))), Some(Button::RightStickUp));
+    }
+
+    #[test]
+    fn find_by_pressing_opens_and_highlights_the_row() {
+        let mut app = app();
+        let _ = app.update(Message::StartFind);
+        assert!(app.finding);
+        let _ = app.update(Message::LiveInput(Some(snapshot(&[Button::West], (0.0, 0.0)))));
+        assert!(!app.finding, "one press ends find mode");
+        assert_eq!((app.tab, app.profile_tab, app.found), (Tab::Profile, ProfileTab::Buttons, Some(Button::West)));
+        let ui = Ui { macros: &[], expanded: &app.expanded, found: app.found, analog_triggers: true, any_gyro: false };
+        assert!(ui.is_open(Target::Button(Button::West)));
+        // Presses while not finding don't move the editor.
+        let _ = app.update(Message::LiveInput(Some(snapshot(&[Button::West, Button::North], (0.0, 0.0)))));
+        assert_eq!(app.found, Some(Button::West));
+        // A stick push jumps to the Sticks & triggers tab.
+        let _ = app.update(Message::StartFind);
+        let _ = app.update(Message::LiveInput(Some(snapshot(&[], (0.95, 0.0)))));
+        assert_eq!((app.profile_tab, app.found), (ProfileTab::Sticks, Some(Button::RightStickRight)));
+    }
+
+    #[test]
+    fn rows_expand_and_collapse() {
+        let mut app = app();
+        let a = Target::Button(Button::South);
+        let _ = app.update(Message::ToggleExpanded(a));
+        assert!(app.expanded.contains(&a));
+        let _ = app.update(Message::ToggleExpanded(a));
+        assert!(!app.expanded.contains(&a));
+        let _ = app.update(Message::ExpandAll(true));
+        assert_eq!(app.expanded.len(), Button::ALL.len());
+        let _ = app.update(Message::SelectProfileTab(ProfileTab::Sticks));
+        let _ = app.update(Message::ExpandAll(true));
+        assert_eq!(app.expanded.len(), Button::ALL.len() + 8);
+        let _ = app.update(Message::ExpandAll(false));
+        assert_eq!(app.expanded.len(), Button::ALL.len(), "collapse all only touches the current section");
     }
 
     #[test]

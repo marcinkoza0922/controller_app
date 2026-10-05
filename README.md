@@ -81,9 +81,11 @@ Focus tracking uses a small KWin script (KDE Plasma, Wayland or X11). On other d
 
 ## GUI
 
-- A live controller drawing that shows sticks, buttons and triggers as you use them.
-- Profile editor with an on-screen keyboard for picking keys, so you don't need to know evdev key names.
-- Per-controller "Manage" toggles and a "Test rumble" button (a strong pulse, then a weak one, for pads that support rumble), plus the enabled switch and the active profile.
+- **Overview**: a live controller drawing labelled with the active profile's mappings, the controller list (Manage, Test rumble, Calibrate gyro), and per-game rules.
+- **Profile**: the profile being edited, with its own labelled drawing and sub-tabs for Buttons, Sticks & triggers, Combos and Gyro. Mappings collapse to one-line summaries ("A ▸ Left click"); click a name to edit it. **Find by pressing** jumps to whatever you press or push on the controller.
+- **Macros**: step editor with exact millisecond fields.
+
+Problems that would block saving (unknown keys, missing macros, incomplete combos) are flagged on the row and with ⚠ on its tab. Section explanations sit behind ⓘ tooltips, and keys can be picked from an on-screen keyboard.
 
 ## CLI
 

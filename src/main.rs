@@ -10,6 +10,7 @@ mod monitor;
 mod output;
 mod pad_svg;
 mod rumble;
+mod style;
 
 use anyhow::{Result, bail};
 
