@@ -1,0 +1,100 @@
+//! Daemon <-> client protocol: one JSON request line, one JSON response line per connection.
+
+use std::{
+    io::{BufRead, BufReader, Write},
+    os::unix::net::UnixStream,
+    path::PathBuf,
+    time::Duration,
+};
+
+use anyhow::{Context, Result, bail};
+use serde::{Deserialize, Serialize};
+
+use crate::config::{Button, Config};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Request {
+    Status,
+    GetConfig,
+    /// Replace profiles/ignore list. The daemon keeps its current `enabled` and active profile.
+    SetConfig(Config),
+    /// Re-read the config file from disk.
+    Reload,
+    SetEnabled(bool),
+    SetProfile(String),
+    NextProfile,
+    /// Keep the connection open; the daemon streams one `Option<InputSnapshot>` JSON line per
+    /// update (at most ~60/s). `null` means no controller is active.
+    WatchInput,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Response {
+    Ok,
+    Status(Status),
+    Config(Config),
+    Error(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Status {
+    pub enabled: bool,
+    pub active_profile: String,
+    pub devices: Vec<DeviceInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DeviceInfo {
+    pub name: String,
+    pub path: String,
+    /// Grabbed and being remapped right now.
+    pub managed: bool,
+    pub ignored: bool,
+    /// False when the triggers only report on/off (e.g. Switch controllers).
+    #[serde(default = "yes")]
+    pub analog_triggers: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// Physical (pre-mapping) input state of the most recently used controller.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InputSnapshot {
+    pub device: String,
+    pub buttons: Vec<Button>,
+    /// Sticks are -1.0..1.0 (Y positive = down).
+    pub left_stick: (f32, f32),
+    pub right_stick: (f32, f32),
+    /// 0.0..1.0
+    pub left_trigger: f32,
+    pub right_trigger: f32,
+}
+
+pub fn socket_path() -> PathBuf {
+    match dirs::runtime_dir() {
+        Some(dir) => dir.join("controller_app.sock"),
+        None => std::env::temp_dir().join(format!("controller_app-{}.sock", unsafe { libc::getuid() })),
+    }
+}
+
+/// Blocking request to the daemon. Fine to call from a GUI via `spawn_blocking`.
+pub fn request(req: &Request) -> Result<Response> {
+    let path = socket_path();
+    let stream = UnixStream::connect(&path)
+        .with_context(|| format!("daemon not reachable at {}", path.display()))?;
+    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+
+    let mut line = serde_json::to_string(req)?;
+    line.push('\n');
+    (&stream).write_all(line.as_bytes())?;
+
+    let mut reply = String::new();
+    BufReader::new(&stream).read_line(&mut reply)?;
+    match serde_json::from_str(&reply)? {
+        Response::Error(e) => bail!(e),
+        r => Ok(r),
+    }
+}

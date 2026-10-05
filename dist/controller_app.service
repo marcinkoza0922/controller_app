@@ -1,0 +1,11 @@
+[Unit]
+Description=Controller App gamepad remapper
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/.cargo/bin/controller_app daemon
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
