@@ -2090,7 +2090,7 @@ impl App {
             "On-screen keyboard",
             Some(
                 "A keyboard over everything, typed with the controller: D-pad or stick to move, A to \
-                 press, X backspace, Y space, Start enter, hold B to close. Map \"On-screen keyboard\" \
+                 press, X backspace, Y space, Start enter, hold LT for Shift, hold B to close. Map \"On-screen keyboard\" \
                  to a button or gesture to open it from the controller."
                     .into(),
             ),

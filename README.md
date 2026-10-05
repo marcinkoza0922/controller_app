@@ -67,6 +67,7 @@ The "On-screen keyboard" action (also a button on the Overview tab, and `control
 | A | press the selected key (holding A holds the key) |
 | Shift / Ctrl / Alt / Super | latch for the next key |
 | X / Y / Start | Backspace / Space / Enter |
+| hold LT | hold Shift |
 | hold B | close |
 
 New Desktop profiles open it with a long press of Guide. It needs a compositor with layer-shell (KDE Plasma, Sway, Hyprland, …).

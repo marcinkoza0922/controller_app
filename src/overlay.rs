@@ -26,6 +26,9 @@ pub const HOLD_TO_CLOSE: Duration = Duration::from_millis(700);
 const REPEAT_DELAY: Duration = Duration::from_millis(350);
 /// ...this often.
 const REPEAT_EVERY: Duration = Duration::from_millis(90);
+/// Left trigger pull that holds Shift on the keyboard, and where it lets go.
+const SHIFT_PRESS: f32 = 0.5;
+const SHIFT_RELEASE: f32 = 0.3;
 /// Stick deflection that counts as a direction, and where it lets go.
 const STICK_PRESS: f32 = 0.6;
 const STICK_RELEASE: f32 = 0.45;
@@ -83,6 +86,8 @@ pub struct OverlayController {
     /// Direction being held and when it next repeats.
     repeat: Option<((i32, i32), Instant)>,
     east_since: Option<Instant>,
+    /// Shift held down by the left trigger.
+    trigger_shift: bool,
 }
 
 fn code(name: &str) -> Option<KeyCode> {
@@ -105,6 +110,7 @@ impl OverlayController {
             stick_dir: None,
             repeat: None,
             east_since: None,
+            trigger_shift: false,
         }
     }
 
@@ -122,7 +128,7 @@ impl OverlayController {
             layout: self.layout,
             style: crate::config::OverlayStyle::keyboard(),
             cursor: self.cursor,
-            latched: self.latched.iter().map(|k| name(*k)).collect(),
+            latched: self.latched.iter().chain(self.trigger_shift.then_some(&KeyCode::KEY_LEFTSHIFT)).map(|k| name(*k)).collect(),
             pressed: self.pressed.map(name),
             closing: self
                 .east_since
@@ -144,8 +150,28 @@ impl OverlayController {
                 self.stick_moved(now);
                 Vec::new()
             }
+            InputEvent::Axis(Axis::LeftTrigger, v) if self.layout == Layout::Keyboard => self.left_trigger(v),
             InputEvent::Axis(..) => Vec::new(),
         }
+    }
+
+    /// Holding the left trigger holds Shift (alongside any latched modifiers).
+    fn left_trigger(&mut self, value: f32) -> Vec<OverlayAction> {
+        let shift = KeyCode::KEY_LEFTSHIFT;
+        let latched = self.latched.contains(&shift);
+        if !self.trigger_shift && value >= SHIFT_PRESS {
+            self.trigger_shift = true;
+            // Already down if latched; still mark it so letting go of the trigger is quiet.
+            if !latched {
+                return vec![OverlayAction::Key(shift, true)];
+            }
+        } else if self.trigger_shift && value < SHIFT_RELEASE {
+            self.trigger_shift = false;
+            if !latched {
+                return vec![OverlayAction::Key(shift, false)];
+            }
+        }
+        Vec::new()
     }
 
     fn button(&mut self, b: Button, pressed: bool, now: Instant) -> Vec<OverlayAction> {
@@ -241,7 +267,9 @@ impl OverlayController {
     }
 
     fn release_latched(&mut self) -> Vec<OverlayAction> {
-        self.latched.drain(..).rev().map(|k| OverlayAction::Key(k, false)).collect()
+        // Shift stays down while the trigger holds it.
+        let held = self.trigger_shift.then_some(KeyCode::KEY_LEFTSHIFT);
+        self.latched.drain(..).rev().filter(|k| Some(*k) != held).map(|k| OverlayAction::Key(k, false)).collect()
     }
 
     /// Key repeat for held directions and hold-to-close. Returns what happened and whether
@@ -278,6 +306,9 @@ impl OverlayController {
     pub fn release_all(&mut self) -> Vec<OverlayAction> {
         let mut out: Vec<OverlayAction> = self.pressed.take().map(|k| OverlayAction::Key(k, false)).into_iter().collect();
         out.extend(self.release_latched());
+        if std::mem::take(&mut self.trigger_shift) {
+            out.push(OverlayAction::Key(KeyCode::KEY_LEFTSHIFT, false));
+        }
         self.repeat = None;
         self.east_since = None;
         self.dpad.clear();
@@ -568,7 +599,8 @@ pub mod draw {
                 hint("X  backspace"),
                 hint("Y  space"),
                 hint("Start  enter"),
-                hint("Shift/Ctrl/Alt latch for the next key"),
+                hint("hold LT  shift"),
+                hint("Shift/Ctrl/Alt keys latch"),
                 space::horizontal(),
                 hint("hold B to close"),
             ]
@@ -806,6 +838,27 @@ mod tests {
             "capital Z, then shift lets go"
         );
         assert!(c.view(t0).latched.is_empty());
+    }
+
+    #[test]
+    fn left_trigger_holds_shift() {
+        let mut c = start();
+        let t0 = Instant::now();
+        let shift = KeyCode::KEY_LEFTSHIFT;
+        assert_eq!(c.handle(InputEvent::Axis(Axis::LeftTrigger, 0.8), t0), vec![OverlayAction::Key(shift, true)]);
+        assert!(c.handle(InputEvent::Axis(Axis::LeftTrigger, 0.9), t0).is_empty());
+        assert_eq!(c.view(t0).latched, ["KEY_LEFTSHIFT"]);
+        // Typing keeps it held: capitals until the trigger lets go.
+        c.handle(InputEvent::Button(Button::South, true), t0);
+        assert_eq!(c.handle(InputEvent::Button(Button::South, false), t0), vec![OverlayAction::Key(KeyCode::KEY_Q, false)]);
+        assert_eq!(c.handle(InputEvent::Axis(Axis::LeftTrigger, 0.1), t0), vec![OverlayAction::Key(shift, false)]);
+        assert!(c.view(t0).latched.is_empty());
+        // Closing while held lets go of it.
+        c.handle(InputEvent::Axis(Axis::LeftTrigger, 1.0), t0);
+        assert_eq!(c.release_all(), vec![OverlayAction::Key(shift, false)]);
+        // Not on the numpad.
+        let mut n = OverlayController::new(Layout::Numpad, Layout::Numpad.home());
+        assert!(n.handle(InputEvent::Axis(Axis::LeftTrigger, 1.0), t0).is_empty());
     }
 
     #[test]
