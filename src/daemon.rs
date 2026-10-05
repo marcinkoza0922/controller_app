@@ -551,6 +551,9 @@ impl Daemon {
         }
         self.release_all();
         self.config = new;
+        for dev in self.devices.values_mut() {
+            dev.engine.set_macros(&self.config.macros);
+        }
         let ignored = self.config.ignored_devices.clone();
         let enabled = self.config.enabled;
         self.release_devices(|d| !enabled || ignored.contains(&d.name));
@@ -734,7 +737,11 @@ impl Daemon {
         let mut managed = Managed {
             path,
             name,
-            engine: Engine::default(),
+            engine: {
+                let mut engine = Engine::default();
+                engine.set_macros(&self.config.macros);
+                engine
+            },
             pad,
             stop,
             view: InputView::default(),

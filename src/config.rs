@@ -139,6 +139,55 @@ pub enum ButtonAction {
     Toggle(Box<ButtonAction>),
     /// While held, presses and releases the inner action `rate` times per second.
     Turbo { action: Box<ButtonAction>, rate: f32 },
+    /// Plays the macro named `name`: once per press, or looping while held if `repeat`.
+    Macro { name: String, #[serde(default)] repeat: bool },
+}
+
+/// A named sequence of inputs, shared by all profiles.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Macro {
+    pub name: String,
+    pub steps: Vec<MacroStep>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MacroStep {
+    /// Press, hold for `hold_ms`, release.
+    Tap { action: ButtonAction, hold_ms: u64 },
+    /// Press and keep held (until a matching Release or the macro ends).
+    Press(ButtonAction),
+    Release(ButtonAction),
+    /// Pause, in milliseconds.
+    Wait(u64),
+    /// Moves a virtual-pad stick to (x, y), -1..1 with y positive down, until another step
+    /// moves it; it returns to center when the macro ends.
+    Stick { stick: Stick, x: f32, y: f32 },
+}
+
+impl MacroStep {
+    pub fn action(&self) -> Option<&ButtonAction> {
+        match self {
+            MacroStep::Tap { action, .. } | MacroStep::Press(action) | MacroStep::Release(action) => Some(action),
+            MacroStep::Wait(_) | MacroStep::Stick { .. } => None,
+        }
+    }
+
+    pub fn action_mut(&mut self) -> Option<&mut ButtonAction> {
+        match self {
+            MacroStep::Tap { action, .. } | MacroStep::Press(action) | MacroStep::Release(action) => Some(action),
+            MacroStep::Wait(_) | MacroStep::Stick { .. } => None,
+        }
+    }
+
+    /// Time this step takes, in milliseconds.
+    pub fn duration_ms(&self) -> u64 {
+        match self {
+            MacroStep::Tap { hold_ms, .. } => *hold_ms,
+            MacroStep::Wait(ms) => *ms,
+            MacroStep::Press(_) | MacroStep::Release(_) | MacroStep::Stick { .. } => 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -193,6 +242,25 @@ impl ButtonAction {
             ButtonAction::Multi(actions) => actions.iter().flat_map(|a| a.key_names()).collect(),
             ButtonAction::Toggle(inner) | ButtonAction::Turbo { action: inner, .. } => inner.key_names(),
             _ => Vec::new(),
+        }
+    }
+
+    /// This action and every action nested inside it.
+    pub fn walk(&self, f: &mut dyn FnMut(&ButtonAction)) {
+        f(self);
+        match self {
+            ButtonAction::Multi(actions) => actions.iter().for_each(|a| a.walk(f)),
+            ButtonAction::Toggle(inner) | ButtonAction::Turbo { action: inner, .. } => inner.walk(f),
+            _ => {}
+        }
+    }
+
+    pub fn walk_mut(&mut self, f: &mut dyn FnMut(&mut ButtonAction)) {
+        f(self);
+        match self {
+            ButtonAction::Multi(actions) => actions.iter_mut().for_each(|a| a.walk_mut(f)),
+            ButtonAction::Toggle(inner) | ButtonAction::Turbo { action: inner, .. } => inner.walk_mut(f),
+            _ => {}
         }
     }
 }
@@ -310,6 +378,59 @@ pub enum StickAction {
         left: String,
         right: String,
     },
+    /// Any action per direction, pressed past the stick's `key_threshold`.
+    Directions {
+        up: ButtonAction,
+        down: ButtonAction,
+        left: ButtonAction,
+        right: ButtonAction,
+    },
+}
+
+/// Stick directions, in the order `StickAction::Directions` lists them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Direction {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+impl Direction {
+    pub const ALL: [Direction; 4] = [Direction::Up, Direction::Down, Direction::Left, Direction::Right];
+}
+
+impl fmt::Display for Direction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+impl StickAction {
+    /// The action for one direction in `Directions` mode.
+    pub fn direction(&self, d: Direction) -> Option<&ButtonAction> {
+        match self {
+            StickAction::Directions { up, down, left, right } => Some(match d {
+                Direction::Up => up,
+                Direction::Down => down,
+                Direction::Left => left,
+                Direction::Right => right,
+            }),
+            _ => None,
+        }
+    }
+
+    pub fn direction_mut(&mut self, d: Direction) -> Option<&mut ButtonAction> {
+        match self {
+            StickAction::Directions { up, down, left, right } => Some(match d {
+                Direction::Up => up,
+                Direction::Down => down,
+                Direction::Left => left,
+                Direction::Right => right,
+            }),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -562,6 +683,45 @@ impl Profile {
     }
 
     /// The button's gestures, if it has any set.
+    /// Every top-level action in the profile: buttons, gestures, combos, triggers and zones.
+    pub fn actions(&self) -> Vec<&ButtonAction> {
+        let mut all: Vec<&ButtonAction> = self.buttons.values().collect();
+        all.extend(self.gestures.values().flat_map(|g| GestureKind::ALL.into_iter().filter_map(|k| g.get(k))));
+        all.extend(self.combos.iter().map(|c| &c.action));
+        for t in [&self.left_trigger, &self.right_trigger] {
+            if let TriggerAction::Button { action, .. } = &t.action {
+                all.push(action);
+            }
+            all.extend(t.zones.iter().map(|z| &z.action));
+        }
+        all.extend(self.left_stick.zones.iter().chain(&self.right_stick.zones).map(|z| &z.action));
+        for stick in [&self.left_stick, &self.right_stick] {
+            all.extend(Direction::ALL.into_iter().filter_map(|d| stick.action.direction(d)));
+        }
+        all
+    }
+
+    pub fn actions_mut(&mut self) -> Vec<&mut ButtonAction> {
+        let mut all: Vec<&mut ButtonAction> = self.buttons.values_mut().collect();
+        for g in self.gestures.values_mut() {
+            all.extend([&mut g.double_tap, &mut g.triple_tap, &mut g.long_press].into_iter().filter_map(|s| s.as_mut()));
+        }
+        all.extend(self.combos.iter_mut().map(|c| &mut c.action));
+        for t in [&mut self.left_trigger, &mut self.right_trigger] {
+            if let TriggerAction::Button { action, .. } = &mut t.action {
+                all.push(action);
+            }
+            all.extend(t.zones.iter_mut().map(|z| &mut z.action));
+        }
+        for stick in [&mut self.left_stick, &mut self.right_stick] {
+            all.extend(stick.zones.iter_mut().map(|z| &mut z.action));
+            if let StickAction::Directions { up, down, left, right } = &mut stick.action {
+                all.extend([up, down, left, right]);
+            }
+        }
+        all
+    }
+
     pub fn gestures(&self, b: Button) -> Option<&Gestures> {
         self.gestures.get(&b).filter(|g| !g.is_empty())
     }
@@ -860,6 +1020,9 @@ pub struct Config {
     /// Gyro drift (degrees/second per raw sensor axis) measured by "Calibrate gyro", per controller.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub gyro_calibration: BTreeMap<String, [f32; 3]>,
+    /// Shared by all profiles; mapped with `ButtonAction::Macro`.
+    #[serde(default)]
+    pub macros: Vec<Macro>,
     pub profiles: Vec<Profile>,
 }
 
@@ -871,6 +1034,7 @@ impl Default for Config {
             ignored_devices: Vec::new(),
             auto_switch: AutoSwitch::default(),
             gyro_calibration: BTreeMap::new(),
+            macros: Vec::new(),
             profiles: vec![Profile::passthrough("Gamepad"), Profile::desktop("Desktop")],
         }
     }
@@ -1090,6 +1254,57 @@ mod tests {
         }
         let old: Config = toml::from_str(&toml::to_string(&value).unwrap()).unwrap();
         assert_eq!(old.profiles[0].gyro, GyroConfig::default());
+    }
+
+    #[test]
+    fn macros_roundtrip_and_walk_finds_nested_mappings() {
+        let mut config = Config::default();
+        let key = |k: &str| ButtonAction::Keys(vec![k.into()]);
+        config.macros.push(Macro {
+            name: "Combo".into(),
+            steps: vec![
+                MacroStep::Tap { action: key("KEY_A"), hold_ms: 40 },
+                MacroStep::Wait(100),
+                MacroStep::Press(key("KEY_LEFTSHIFT")),
+                MacroStep::Tap { action: ButtonAction::Mouse(MouseButton::Left), hold_ms: 20 },
+                MacroStep::Release(key("KEY_LEFTSHIFT")),
+            ],
+        });
+        let mapped = ButtonAction::Toggle(Box::new(ButtonAction::Macro { name: "Combo".into(), repeat: true }));
+        config.profiles[0].set_button(Button::West, mapped);
+        let back: Config = toml::from_str(&toml::to_string_pretty(&config).unwrap()).unwrap();
+        assert_eq!(config, back);
+
+        let mut names = Vec::new();
+        for a in config.profiles[0].actions() {
+            a.walk(&mut |a| {
+                if let ButtonAction::Macro { name, .. } = a {
+                    names.push(name.clone());
+                }
+            });
+        }
+        assert_eq!(names, ["Combo"]);
+        assert_eq!(config.macros[0].steps.iter().map(MacroStep::duration_ms).sum::<u64>(), 160);
+    }
+
+    #[test]
+    fn stick_directions_and_macro_stick_steps_roundtrip() {
+        let mut config = Config::default();
+        config.profiles[0].right_stick.action = StickAction::Directions {
+            up: ButtonAction::Macro { name: "Jump".into(), repeat: false },
+            down: ButtonAction::Keys(vec!["KEY_C".into()]),
+            left: ButtonAction::Disabled,
+            right: ButtonAction::Mouse(MouseButton::Right),
+        };
+        config.macros.push(Macro {
+            name: "Jump".into(),
+            steps: vec![MacroStep::Stick { stick: Stick::Left, x: 0.0, y: -1.0 }, MacroStep::Wait(17)],
+        });
+        let back: Config = toml::from_str(&toml::to_string_pretty(&config).unwrap()).unwrap();
+        assert_eq!(config, back);
+        // Direction actions are visited, so macro renames and validation reach them.
+        let found = config.profiles[0].actions().into_iter().any(|a| matches!(a, ButtonAction::Macro { .. }));
+        assert!(found);
     }
 
     #[test]

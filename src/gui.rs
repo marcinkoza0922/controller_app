@@ -14,8 +14,9 @@ use iced::{
 
 use crate::{
     config::{
-        Analog, Button, ButtonAction, Combo, Config, GestureKind, GyroActivation, GyroConfig,
-        GyroHorizontal, GyroInput, GyroMode, MouseButton, Rule, RuleKind, WheelDirection, Zone, Profile, Stick, StickAction, StickConfig,
+        Analog, Button, ButtonAction, Combo, Config, Direction, GestureKind, GyroActivation, GyroConfig,
+        GyroHorizontal, GyroInput, GyroMode, Macro, MacroStep, MouseButton, Rule, RuleKind, WheelDirection,
+        Zone, Profile, Stick, StickAction, StickConfig,
         Trigger, TriggerAction,
     },
     ipc::{self, FocusBackend, InputSnapshot, Request, Response, Status, WindowInfo},
@@ -47,6 +48,9 @@ struct App {
     live: Option<InputSnapshot>,
     pad: svg::Handle,
     picker: Option<KeyPicker>,
+    tab: Tab,
+    /// Index into `config.macros` shown in the Macros tab.
+    editing_macro: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +60,187 @@ enum Target {
     Combo(usize),
     Gesture(Button, GestureKind),
     Zone(Analog, usize),
+    /// Step `.1` of macro `.0` (in `Config::macros`), not part of any profile.
+    MacroStep(usize, usize),
+    StickDir(Stick, Direction),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tab {
+    Profiles,
+    Macros,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StepKind {
+    Tap,
+    Press,
+    Release,
+    Wait,
+    Stick,
+}
+
+impl fmt::Display for StepKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            StepKind::Tap => "Tap",
+            StepKind::Press => "Hold down",
+            StepKind::Release => "Release",
+            StepKind::Wait => "Wait",
+            StepKind::Stick => "Move stick",
+        })
+    }
+}
+
+const STEP_KINDS: [StepKind; 5] = [StepKind::Tap, StepKind::Press, StepKind::Release, StepKind::Wait, StepKind::Stick];
+/// One frame at 60 fps: the usual gap between motion inputs in fighting games.
+const MOTION_FRAME_MS: u64 = 17;
+const DIAGONAL: f32 = std::f32::consts::FRAC_1_SQRT_2;
+
+/// Stick positions offered for "Move stick" steps (y positive is down).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StickPreset {
+    Center,
+    Up,
+    UpRight,
+    Right,
+    DownRight,
+    Down,
+    DownLeft,
+    Left,
+    UpLeft,
+    Custom,
+}
+
+impl StickPreset {
+    const ALL: [StickPreset; 10] = [
+        StickPreset::Center,
+        StickPreset::Up,
+        StickPreset::UpRight,
+        StickPreset::Right,
+        StickPreset::DownRight,
+        StickPreset::Down,
+        StickPreset::DownLeft,
+        StickPreset::Left,
+        StickPreset::UpLeft,
+        StickPreset::Custom,
+    ];
+
+    fn position(self) -> Option<(f32, f32)> {
+        let d = DIAGONAL;
+        Some(match self {
+            StickPreset::Center => (0.0, 0.0),
+            StickPreset::Up => (0.0, -1.0),
+            StickPreset::UpRight => (d, -d),
+            StickPreset::Right => (1.0, 0.0),
+            StickPreset::DownRight => (d, d),
+            StickPreset::Down => (0.0, 1.0),
+            StickPreset::DownLeft => (-d, d),
+            StickPreset::Left => (-1.0, 0.0),
+            StickPreset::UpLeft => (-d, -d),
+            StickPreset::Custom => return None,
+        })
+    }
+
+    fn of(x: f32, y: f32) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|p| p.position().is_some_and(|(px, py)| (px - x).abs() < 0.01 && (py - y).abs() < 0.01))
+            .unwrap_or(StickPreset::Custom)
+    }
+}
+
+impl fmt::Display for StickPreset {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            StickPreset::Center => "● Center",
+            StickPreset::Up => "↑ Up",
+            StickPreset::UpRight => "↗ Up-right",
+            StickPreset::Right => "→ Right",
+            StickPreset::DownRight => "↘ Down-right",
+            StickPreset::Down => "↓ Down",
+            StickPreset::DownLeft => "↙ Down-left",
+            StickPreset::Left => "← Left",
+            StickPreset::UpLeft => "↖ Up-left",
+            StickPreset::Custom => "Custom",
+        })
+    }
+}
+
+/// Fighting-game motions, written for a character facing right.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Motion {
+    QuarterCircleForward,
+    QuarterCircleBack,
+    DragonPunch,
+    HalfCircleForward,
+    HalfCircleBack,
+}
+
+impl Motion {
+    const ALL: [Motion; 5] = [
+        Motion::QuarterCircleForward,
+        Motion::QuarterCircleBack,
+        Motion::DragonPunch,
+        Motion::HalfCircleForward,
+        Motion::HalfCircleBack,
+    ];
+
+    fn directions(self) -> &'static [StickPreset] {
+        use StickPreset::*;
+        match self {
+            Motion::QuarterCircleForward => &[Down, DownRight, Right],
+            Motion::QuarterCircleBack => &[Down, DownLeft, Left],
+            Motion::DragonPunch => &[Right, Down, DownRight],
+            Motion::HalfCircleForward => &[Left, DownLeft, Down, DownRight, Right],
+            Motion::HalfCircleBack => &[Right, DownRight, Down, DownLeft, Left],
+        }
+    }
+
+    /// Steps moving the left stick through the motion, one frame per direction.
+    fn steps(self) -> Vec<MacroStep> {
+        self.directions()
+            .iter()
+            .filter_map(|p| p.position())
+            .flat_map(|(x, y)| [MacroStep::Stick { stick: Stick::Left, x, y }, MacroStep::Wait(MOTION_FRAME_MS)])
+            .collect()
+    }
+}
+
+impl fmt::Display for Motion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Motion::QuarterCircleForward => "Quarter circle forward (↓↘→)",
+            Motion::QuarterCircleBack => "Quarter circle back (↓↙←)",
+            Motion::DragonPunch => "Dragon punch (→↓↘)",
+            Motion::HalfCircleForward => "Half circle forward (←↙↓↘→)",
+            Motion::HalfCircleBack => "Half circle back (→↘↓↙←)",
+        })
+    }
+}
+const DEFAULT_TAP_MS: u64 = 50;
+const DEFAULT_WAIT_MS: u64 = 100;
+
+fn step_kind(step: &MacroStep) -> StepKind {
+    match step {
+        MacroStep::Tap { .. } => StepKind::Tap,
+        MacroStep::Press(_) => StepKind::Press,
+        MacroStep::Release(_) => StepKind::Release,
+        MacroStep::Wait(_) => StepKind::Wait,
+        MacroStep::Stick { .. } => StepKind::Stick,
+    }
+}
+
+/// A step of another kind, keeping the action (or timing) where it carries over.
+fn convert_step(step: &MacroStep, kind: StepKind) -> MacroStep {
+    let action = step.action().cloned().unwrap_or(ButtonAction::Keys(Vec::new()));
+    match kind {
+        StepKind::Tap => MacroStep::Tap { action, hold_ms: DEFAULT_TAP_MS },
+        StepKind::Press => MacroStep::Press(action),
+        StepKind::Release => MacroStep::Release(action),
+        StepKind::Wait => MacroStep::Wait(DEFAULT_WAIT_MS),
+        StepKind::Stick => MacroStep::Stick { stick: Stick::Left, x: 1.0, y: 0.0 },
+    }
 }
 
 /// Address of a key field, so the on-screen keyboard can write its result back.
@@ -131,6 +316,16 @@ enum Message {
     AddZone(Analog, ZonePreset),
     RemoveZone(Analog, usize),
     SetZoneRange(Analog, usize, f32, f32),
+    SelectTab(Tab),
+    EditMacro(String),
+    NewMacro,
+    DeleteMacro,
+    RenameMacro(String),
+    AddMacroStep(StepKind),
+    SetMacroStep(usize, MacroStep),
+    MoveMacroStep(usize, bool),
+    RemoveMacroStep(usize),
+    InsertMotion(Motion),
     OpenKeyPicker(KeyField, Vec<String>, bool),
     PickerKey(&'static str),
     PickerClear,
@@ -215,6 +410,8 @@ impl App {
             live: None,
             pad: pad_handle(None),
             picker: None,
+            tab: Tab::Profiles,
+            editing_macro: 0,
         };
         let load = Task::perform(
             async {
@@ -386,6 +583,11 @@ impl App {
                     self.editing = self.editing.min(self.config.profiles.len() - 1);
                 }
             }
+            Message::SetAction(Target::MacroStep(m, s), action) => {
+                if let Some(slot) = self.config.macros.get_mut(m).and_then(|m| m.steps.get_mut(s)).and_then(|s| s.action_mut()) {
+                    *slot = action;
+                }
+            }
             Message::SetAction(target, action) => {
                 if let Some(p) = self.profile_mut() {
                     match target {
@@ -408,6 +610,12 @@ impl App {
                                 z.action = action;
                             }
                         }
+                        Target::StickDir(s, d) => {
+                            if let Some(slot) = p.stick_mut(s).action.direction_mut(d) {
+                                *slot = action;
+                            }
+                        }
+                        Target::MacroStep(..) => {}
                     }
                 }
             }
@@ -452,6 +660,77 @@ impl App {
                 if let Some(z) = self.profile_mut().and_then(|p| p.zones_mut(a).get_mut(i)) {
                     z.min = min;
                     z.max = max;
+                }
+            }
+            Message::SelectTab(tab) => self.tab = tab,
+            Message::EditMacro(name) => {
+                if let Some(i) = self.config.macros.iter().position(|m| m.name == name) {
+                    self.editing_macro = i;
+                }
+            }
+            Message::NewMacro => {
+                let name = (1..)
+                    .map(|i| if i == 1 { "Macro".to_string() } else { format!("Macro {i}") })
+                    .find(|n| !self.config.macros.iter().any(|m| &m.name == n))
+                    .unwrap();
+                let tap = MacroStep::Tap { action: ButtonAction::Keys(Vec::new()), hold_ms: DEFAULT_TAP_MS };
+                self.config.macros.push(Macro { name, steps: vec![tap] });
+                self.editing_macro = self.config.macros.len() - 1;
+            }
+            Message::DeleteMacro => {
+                if self.editing_macro < self.config.macros.len() {
+                    self.config.macros.remove(self.editing_macro);
+                    self.editing_macro = self.editing_macro.min(self.config.macros.len().saturating_sub(1));
+                }
+            }
+            Message::RenameMacro(name) => {
+                let taken = self.config.macros.iter().enumerate().any(|(i, m)| i != self.editing_macro && m.name == name);
+                if let Some(m) = self.config.macros.get_mut(self.editing_macro)
+                    && !taken
+                {
+                    let old = std::mem::replace(&mut m.name, name.clone());
+                    // Keep every mapping of this macro pointing at it.
+                    for p in &mut self.config.profiles {
+                        for action in p.actions_mut() {
+                            action.walk_mut(&mut |a| {
+                                if let ButtonAction::Macro { name: n, .. } = a
+                                    && *n == old
+                                {
+                                    *n = name.clone();
+                                }
+                            });
+                        }
+                    }
+                }
+            }
+            Message::AddMacroStep(kind) => {
+                if let Some(m) = self.config.macros.get_mut(self.editing_macro) {
+                    m.steps.push(convert_step(&MacroStep::Wait(0), kind));
+                }
+            }
+            Message::SetMacroStep(i, step) => {
+                if let Some(s) = self.config.macros.get_mut(self.editing_macro).and_then(|m| m.steps.get_mut(i)) {
+                    *s = step;
+                }
+            }
+            Message::MoveMacroStep(i, up) => {
+                if let Some(m) = self.config.macros.get_mut(self.editing_macro) {
+                    let j = if up { i.checked_sub(1) } else { Some(i + 1).filter(|j| *j < m.steps.len()) };
+                    if let Some(j) = j {
+                        m.steps.swap(i, j);
+                    }
+                }
+            }
+            Message::InsertMotion(motion) => {
+                if let Some(m) = self.config.macros.get_mut(self.editing_macro) {
+                    m.steps.extend(motion.steps());
+                }
+            }
+            Message::RemoveMacroStep(i) => {
+                if let Some(m) = self.config.macros.get_mut(self.editing_macro)
+                    && i < m.steps.len()
+                {
+                    m.steps.remove(i);
                 }
             }
             Message::OpenKeyPicker(field, keys, single) => {
@@ -588,6 +867,13 @@ impl App {
 
     /// Writes keys chosen in the on-screen keyboard into the field it was opened for.
     fn apply_keys(&mut self, field: KeyField, keys: Vec<String>) {
+        if let KeyField::Action { target: Target::MacroStep(m, s), path } = &field {
+            let step = self.config.macros.get_mut(*m).and_then(|m| m.steps.get_mut(*s));
+            if let Some(action) = step.and_then(|s| s.action_mut()).and_then(|a| action_at(a, path)) {
+                *action = ButtonAction::Keys(keys);
+            }
+            return;
+        }
         let Some(p) = self.profile_mut() else { return };
         match field {
             KeyField::StickDir { stick, dir } => {
@@ -611,6 +897,9 @@ impl App {
                     Target::Combo(i) => p.combos.get_mut(i).map(|c| &mut c.action),
                     Target::Gesture(b, kind) => p.gestures.get_mut(&b).and_then(|g| g.slot(kind).as_mut()),
                     Target::Zone(a, i) => p.zones_mut(a).get_mut(i).map(|z| &mut z.action),
+                    Target::StickDir(s, d) => p.stick_mut(s).action.direction_mut(d),
+                    // Handled above, outside any profile.
+                    Target::MacroStep(..) => None,
                 };
                 if let Some(action) = root.and_then(|a| action_at(a, &path)) {
                     *action = ButtonAction::Keys(keys);
@@ -640,6 +929,34 @@ impl App {
     }
 
     fn validate(&self) -> Option<String> {
+        let macros = &self.config.macros;
+        for (i, m) in macros.iter().enumerate() {
+            if m.name.trim().is_empty() {
+                return Some("Macro names cannot be empty.".into());
+            }
+            if macros[..i].iter().any(|o| o.name == m.name) {
+                return Some(format!("Two macros are named {:?}.", m.name));
+            }
+            let keys = m.steps.iter().filter_map(MacroStep::action).flat_map(|a| a.key_names());
+            if let Some(bad) = keys.into_iter().find(|k| KeyCode::from_str(k).is_err()) {
+                return Some(format!("Macro {:?}: unknown key {:?}", m.name, short_key(bad)));
+            }
+        }
+        for p in &self.config.profiles {
+            let mut missing = None;
+            for action in p.actions() {
+                action.walk(&mut |a| {
+                    if let ButtonAction::Macro { name, .. } = a
+                        && !macros.iter().any(|m| &m.name == name)
+                    {
+                        missing.get_or_insert_with(|| name.clone());
+                    }
+                });
+            }
+            if let Some(name) = missing {
+                return Some(format!("Profile {:?} uses a missing macro {name:?}.", p.name));
+            }
+        }
         let auto = &self.config.auto_switch;
         let exists = |name: &str| self.config.profiles.iter().any(|p| p.name == name);
         if let Some(r) = auto.rules.iter().find(|r| r.value.trim().is_empty()) {
@@ -662,8 +979,6 @@ impl App {
                     c.buttons.len()
                 ));
             }
-            let mut actions: Vec<&ButtonAction> = p.buttons.values().collect();
-            actions.extend(p.combos.iter().map(|c| &c.action));
             let analogs = [
                 Analog::Stick(Stick::Left),
                 Analog::Stick(Stick::Right),
@@ -674,19 +989,8 @@ impl App {
                 if p.zones(a).iter().any(|z| z.min >= z.max) {
                     return Some(format!("Profile {:?}: a zone's range must start below where it ends.", p.name));
                 }
-                actions.extend(p.zones(a).iter().map(|z| &z.action));
             }
-            actions.extend(
-                p.gestures
-                    .values()
-                    .flat_map(|g| GestureKind::ALL.into_iter().filter_map(|k| g.get(k))),
-            );
-            for t in [Trigger::Left, Trigger::Right] {
-                if let TriggerAction::Button { action, .. } = p.trigger(t) {
-                    actions.push(action);
-                }
-            }
-            let mut keys: Vec<&String> = actions.into_iter().flat_map(|a| a.key_names()).collect();
+            let mut keys: Vec<&String> = p.actions().into_iter().flat_map(|a| a.key_names()).collect();
             for s in [Stick::Left, Stick::Right] {
                 if let StickAction::Keys { up, down, left, right } = &p.stick(s).action {
                     keys.extend([up, down, left, right]);
@@ -700,23 +1004,37 @@ impl App {
     }
 
     fn view(&self) -> Element<'_, Message> {
+        let tab = |label: &'static str, tab: Tab| {
+            button(text(label))
+                .style(if self.tab == tab { button::primary } else { button::secondary })
+                .on_press(Message::SelectTab(tab))
+        };
         let content = column![
             self.view_header(),
+            row![tab("Controllers & profiles", Tab::Profiles), tab("Macros", Tab::Macros)].spacing(6),
             rule::horizontal(1),
-            self.view_live(),
-            rule::horizontal(1),
-            self.view_devices(),
-            rule::horizontal(1),
-            self.view_auto_switch(),
-            rule::horizontal(1),
-            self.view_profile_bar(),
         ]
         .spacing(16)
         .padding(20);
 
-        let content = match self.profile() {
-            Some(p) => content.push(view_profile(p, self.analog_triggers(), self.any_gyro())),
-            None => content,
+        let content = match self.tab {
+            Tab::Profiles => {
+                let macro_names: Vec<String> = self.config.macros.iter().map(|m| m.name.clone()).collect();
+                let content = content.extend([
+                    self.view_live(),
+                    rule::horizontal(1).into(),
+                    self.view_devices(),
+                    rule::horizontal(1).into(),
+                    self.view_auto_switch(),
+                    rule::horizontal(1).into(),
+                    self.view_profile_bar(),
+                ]);
+                match self.profile() {
+                    Some(p) => content.push(view_profile(p, self.analog_triggers(), self.any_gyro(), &macro_names)),
+                    None => content,
+                }
+            }
+            Tab::Macros => content.push(self.view_macros()),
         };
 
         let base: Element<'_, Message> =
@@ -951,6 +1269,171 @@ impl App {
         col.into()
     }
 
+    fn view_macros(&self) -> Element<'_, Message> {
+        let names: Vec<String> = self.config.macros.iter().map(|m| m.name.clone()).collect();
+        let current = self.config.macros.get(self.editing_macro);
+        let col = column![
+            text("Macros").size(20),
+            text(
+                "A macro plays a sequence of inputs. Map it to any button, gesture, combo, trigger or \
+                 zone with the \"Macro…\" action in a profile.",
+            )
+            .size(13)
+            .color(MUTED_COLOR),
+            row![
+                pick_list(names, current.map(|m| m.name.clone()), Message::EditMacro)
+                    .placeholder("No macros")
+                    .width(200),
+                text_input("Macro name", current.map(|m| m.name.as_str()).unwrap_or(""))
+                    .on_input_maybe(current.is_some().then_some(Message::RenameMacro))
+                    .width(200),
+                space::horizontal(),
+                button(text("+ New macro")).style(button::secondary).on_press(Message::NewMacro),
+                button(text("Delete")).style(button::danger).on_press_maybe(current.is_some().then_some(Message::DeleteMacro)),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        ]
+        .spacing(10);
+
+        let Some(m) = current else {
+            return col.push(text("Create a macro to get started.").color(MUTED_COLOR)).into();
+        };
+        let mi = self.editing_macro;
+        let last = m.steps.len().saturating_sub(1);
+        let mut steps = column![].spacing(8);
+        for (i, step) in m.steps.iter().enumerate() {
+            let kind = pick_list(STEP_KINDS, Some(step_kind(step)), {
+                let step = step.clone();
+                move |k| Message::SetMacroStep(i, convert_step(&step, k))
+            })
+            .width(120);
+            let body: Element<'_, Message> = match step {
+                MacroStep::Wait(ms) => row![
+                    slider(10.0..=5000.0, *ms as f32, move |v| Message::SetMacroStep(i, MacroStep::Wait(v as u64)))
+                        .step(10.0_f32)
+                        .width(260),
+                    text(format!("{ms} ms")).size(13),
+                ]
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .into(),
+                MacroStep::Tap { action, hold_ms } => {
+                    let hold_ms = *hold_ms;
+                    let held = action.clone();
+                    column![
+                        action_editor(action, Button::South, MACRO_STEP_KINDS, set_action(Target::MacroStep(mi, i)), KeyField::root(Target::MacroStep(mi, i)), &[]),
+                        row![
+                            text("held for").size(13),
+                            slider(10.0..=1000.0, hold_ms as f32, move |v| {
+                                Message::SetMacroStep(i, MacroStep::Tap { action: held.clone(), hold_ms: v as u64 })
+                            })
+                            .step(10.0_f32)
+                            .width(200),
+                            text(format!("{hold_ms} ms")).size(13),
+                        ]
+                        .spacing(10)
+                        .align_y(Alignment::Center),
+                    ]
+                    .spacing(4)
+                    .into()
+                }
+                MacroStep::Stick { stick, x, y } => {
+                    let (stick, x, y) = (*stick, *x, *y);
+                    let preset = StickPreset::of(x, y);
+                    let mut body = column![row![
+                        pick_list([Stick::Left, Stick::Right], Some(stick), move |s| {
+                            Message::SetMacroStep(i, MacroStep::Stick { stick: s, x, y })
+                        })
+                        .width(140),
+                        pick_list(StickPreset::ALL, Some(preset), move |p: StickPreset| {
+                            let (x, y) = p.position().unwrap_or((x, y));
+                            Message::SetMacroStep(i, MacroStep::Stick { stick, x, y })
+                        })
+                        .width(170),
+                    ]
+                    .spacing(8)]
+                    .spacing(4);
+                    if preset == StickPreset::Custom {
+                        // Sliders show up as positive, matching how people think of a stick.
+                        body = body.push(
+                            row![
+                                text("Horizontal").size(12),
+                                slider(-1.0..=1.0, x, move |v| Message::SetMacroStep(i, MacroStep::Stick { stick, x: v, y }))
+                                    .step(0.05_f32)
+                                    .width(120),
+                                text("Vertical").size(12),
+                                slider(-1.0..=1.0, -y, move |v| Message::SetMacroStep(i, MacroStep::Stick { stick, x, y: -v }))
+                                    .step(0.05_f32)
+                                    .width(120),
+                                text(format!("{x:+.2}, {:+.2}", -y)).size(12),
+                            ]
+                            .spacing(8)
+                            .align_y(Alignment::Center),
+                        );
+                    }
+                    body.into()
+                }
+                MacroStep::Press(action) | MacroStep::Release(action) => action_editor(
+                    action,
+                    Button::South,
+                    MACRO_STEP_KINDS,
+                    set_action(Target::MacroStep(mi, i)),
+                    KeyField::root(Target::MacroStep(mi, i)),
+                    &[],
+                ),
+            };
+            let small = |label: &'static str, msg: Option<Message>| {
+                button(text(label).size(13)).style(button::secondary).on_press_maybe(msg)
+            };
+            steps = steps.push(
+                container(
+                    row![
+                        text(format!("{}.", i + 1)).width(28),
+                        kind,
+                        body,
+                        space::horizontal(),
+                        small("↑", (i > 0).then_some(Message::MoveMacroStep(i, true))),
+                        small("↓", (i < last).then_some(Message::MoveMacroStep(i, false))),
+                        small("✕", Some(Message::RemoveMacroStep(i))),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Start),
+                )
+                .padding(8)
+                .style(container::bordered_box),
+            );
+        }
+        let total: u64 = m.steps.iter().map(MacroStep::duration_ms).sum();
+        let unreleased = unreleased_holds(m);
+        let mut footer = column![
+            row![
+                text("Add step:").size(13),
+                button(text("Tap").size(13)).style(button::secondary).on_press(Message::AddMacroStep(StepKind::Tap)),
+                button(text("Hold down").size(13)).style(button::secondary).on_press(Message::AddMacroStep(StepKind::Press)),
+                button(text("Release").size(13)).style(button::secondary).on_press(Message::AddMacroStep(StepKind::Release)),
+                button(text("Wait").size(13)).style(button::secondary).on_press(Message::AddMacroStep(StepKind::Wait)),
+                button(text("Move stick").size(13)).style(button::secondary).on_press(Message::AddMacroStep(StepKind::Stick)),
+                pick_list(Motion::ALL, None::<Motion>, Message::InsertMotion).placeholder("Insert motion…").width(230),
+                space::horizontal(),
+                text(format!("Plays for {total} ms")).size(13).color(MUTED_COLOR),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        ]
+        .spacing(6);
+        if unreleased > 0 {
+            footer = footer.push(
+                text(format!(
+                    "{unreleased} held input(s) are never released by a step; they are released when the macro ends."
+                ))
+                .size(12)
+                .color(MUTED_COLOR),
+            );
+        }
+        col.push(section("Steps", vec![steps.into(), footer.into()])).into()
+    }
+
     fn view_profile_bar(&self) -> Element<'_, Message> {
         let names: Vec<String> = self.config.profiles.iter().map(|p| p.name.clone()).collect();
         let current = self.profile().map(|p| p.name.clone());
@@ -1077,6 +1560,23 @@ fn motion_rule_command() -> String {
     )
 }
 
+/// Number of "Hold down" steps with no later matching "Release".
+fn unreleased_holds(m: &Macro) -> usize {
+    let mut held: Vec<&ButtonAction> = Vec::new();
+    for step in &m.steps {
+        match step {
+            MacroStep::Press(a) => held.push(a),
+            MacroStep::Release(a) => {
+                if let Some(i) = held.iter().position(|h| *h == a) {
+                    held.remove(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    held.len()
+}
+
 /// Shown in the "Otherwise use" list for "don't change the profile".
 const KEEP_CURRENT: &str = "(keep current profile)";
 
@@ -1139,19 +1639,19 @@ fn labeled<'a>(label: impl text::IntoFragment<'a>, editor: Element<'a, Message>)
         .into()
 }
 
-fn view_profile(p: &Profile, analog_triggers: bool, any_gyro: bool) -> Element<'_, Message> {
-    let buttons = button_rows(p);
+fn view_profile<'a>(p: &'a Profile, analog_triggers: bool, any_gyro: bool, macros: &[String]) -> Element<'a, Message> {
+    let buttons = button_rows(p, macros);
     let sticks = [Stick::Left, Stick::Right]
         .into_iter()
-        .map(|s| stick_editor(s, p.stick(s)))
+        .map(|s| stick_editor(s, p.stick(s), macros))
         .collect();
     let triggers = [Trigger::Left, Trigger::Right]
         .into_iter()
-        .map(|t| trigger_editor(t, p.trigger(t), p.zones(Analog::Trigger(t)), analog_triggers))
+        .map(|t| trigger_editor(t, p.trigger(t), p.zones(Analog::Trigger(t)), analog_triggers, macros))
         .collect();
     column![
         section("Buttons", buttons),
-        section("Combos", combo_rows(p)),
+        section("Combos", combo_rows(p, macros)),
         section("Sticks", sticks),
         section("Triggers", triggers),
         section("Gyro", gyro_rows(&p.gyro, any_gyro)),
@@ -1354,8 +1854,8 @@ fn gyro_rows(cfg: &GyroConfig, any_gyro: bool) -> Vec<Element<'_, Message>> {
     rows
 }
 
-fn button_rows(p: &Profile) -> Vec<Element<'_, Message>> {
-    let mut rows: Vec<Element<'_, Message>> = vec![
+fn button_rows<'a>(p: &'a Profile, macros: &[String]) -> Vec<Element<'a, Message>> {
+    let mut rows: Vec<Element<'a, Message>> = vec![
         text(
             "Add a double tap, triple tap or long press to any button. Buttons with gestures act \
              once the gesture is decided: a single press fires after the tap window (or on \
@@ -1373,7 +1873,7 @@ fn button_rows(p: &Profile) -> Vec<Element<'_, Message>> {
             .into_iter()
             .filter(|k| gestures.and_then(|g| g.get(*k)).is_none())
             .collect();
-        let mut line = row![labeled(b.to_string(), action_editor(p.button(b), b, &ACTION_KINDS, set_action(Target::Button(b)), KeyField::root(Target::Button(b))))]
+        let mut line = row![labeled(b.to_string(), action_editor(p.button(b), b, &ACTION_KINDS, set_action(Target::Button(b)), KeyField::root(Target::Button(b)), macros))]
             .align_y(Alignment::Center);
         if !missing.is_empty() {
             line = line.push(space::horizontal()).push(
@@ -1389,7 +1889,7 @@ fn button_rows(p: &Profile) -> Vec<Element<'_, Message>> {
                 rows.push(labeled(
                     format!("    {kind}"),
                     row![
-                        action_editor(action, b, &ACTION_KINDS, set_action(Target::Gesture(b, kind)), KeyField::root(Target::Gesture(b, kind))),
+                        action_editor(action, b, &ACTION_KINDS, set_action(Target::Gesture(b, kind)), KeyField::root(Target::Gesture(b, kind)), macros),
                         button(text("✕").size(13))
                             .style(button::secondary)
                             .on_press(Message::RemoveGesture(b, kind)),
@@ -1404,8 +1904,8 @@ fn button_rows(p: &Profile) -> Vec<Element<'_, Message>> {
     rows
 }
 
-fn combo_rows(p: &Profile) -> Vec<Element<'_, Message>> {
-    let mut rows: Vec<Element<'_, Message>> = vec![
+fn combo_rows<'a>(p: &'a Profile, macros: &[String]) -> Vec<Element<'a, Message>> {
+    let mut rows: Vec<Element<'a, Message>> = vec![
         text(format!(
             "Buttons pressed within the window act as one input. Combo buttons wait up to {} ms \
              before acting alone; a combo button set to Disabled works as a modifier with no time limit.",
@@ -1446,7 +1946,7 @@ fn combo_rows(p: &Profile) -> Vec<Element<'_, Message>> {
                             .on_press(Message::RemoveCombo(i)),
                     ]
                     .align_y(Alignment::Center),
-                    labeled("    Action", action_editor(&combo.action, Button::South, &ACTION_KINDS, set_action(Target::Combo(i)), KeyField::root(Target::Combo(i)))),
+                    labeled("    Action", action_editor(&combo.action, Button::South, &ACTION_KINDS, set_action(Target::Combo(i)), KeyField::root(Target::Combo(i)), macros)),
                 ]
                 .spacing(8),
             )
@@ -1489,6 +1989,7 @@ enum ActionKind {
     NextProfile,
     Toggle,
     Turbo,
+    Macro,
     Multiple,
 }
 
@@ -1502,6 +2003,7 @@ impl fmt::Display for ActionKind {
             ActionKind::Wheel => "Scroll wheel",
             ActionKind::NextProfile => "Next profile",
             ActionKind::Toggle => "Toggle (press on / off)…",
+            ActionKind::Macro => "Macro…",
             ActionKind::Turbo => "Turbo (repeat while held)…",
             ActionKind::Multiple => "Multiple…",
         })
@@ -1509,7 +2011,7 @@ impl fmt::Display for ActionKind {
 }
 
 /// Every kind, for a top-level action.
-const ACTION_KINDS: [ActionKind; 9] = [
+const ACTION_KINDS: [ActionKind; 10] = [
     ActionKind::Disabled,
     ActionKind::Gamepad,
     ActionKind::Keys,
@@ -1518,8 +2020,12 @@ const ACTION_KINDS: [ActionKind; 9] = [
     ActionKind::NextProfile,
     ActionKind::Toggle,
     ActionKind::Turbo,
+    ActionKind::Macro,
     ActionKind::Multiple,
 ];
+/// What a macro step can press: plain outputs only.
+const MACRO_STEP_KINDS: &[ActionKind] =
+    &[ActionKind::Keys, ActionKind::Mouse, ActionKind::Wheel, ActionKind::Gamepad];
 /// Entries of a Multiple list.
 const MULTI_ENTRY_KINDS: &[ActionKind] = &[
     ActionKind::Disabled,
@@ -1537,6 +2043,8 @@ const TOGGLE_INNER_KINDS: &[ActionKind] = &[
     ActionKind::Mouse,
     ActionKind::Wheel,
     ActionKind::Turbo,
+    // A repeating macro toggled on loops until toggled off.
+    ActionKind::Macro,
     ActionKind::Multiple,
 ];
 /// What a Turbo can repeat.
@@ -1564,6 +2072,7 @@ fn action_editor<'a>(
     kinds: &'static [ActionKind],
     on_change: OnAction<'a>,
     field: KeyField,
+    macros: &[String],
 ) -> Element<'a, Message> {
     let kind = match action {
         ButtonAction::Disabled => ActionKind::Disabled,
@@ -1575,7 +2084,9 @@ fn action_editor<'a>(
         ButtonAction::Multi(_) => ActionKind::Multiple,
         ButtonAction::Toggle(_) => ActionKind::Toggle,
         ButtonAction::Turbo { .. } => ActionKind::Turbo,
+        ButtonAction::Macro { .. } => ActionKind::Macro,
     };
+    let first_macro = macros.first().cloned().unwrap_or_default();
     // When wrapping in Toggle/Turbo, keep a simple existing action as the thing wrapped.
     let wrappable = match action {
         ButtonAction::Gamepad(_) | ButtonAction::Keys(_) | ButtonAction::Mouse(_) | ButtonAction::Wheel(_) => {
@@ -1602,6 +2113,7 @@ fn action_editor<'a>(
                     action: Box::new(wrappable.clone().unwrap_or(ButtonAction::Mouse(MouseButton::Left))),
                     rate: DEFAULT_TURBO_RATE,
                 },
+                ActionKind::Macro => ButtonAction::Macro { name: first_macro.clone(), repeat: false },
             })
         })
         .width(170)
@@ -1629,13 +2141,13 @@ fn action_editor<'a>(
             move |s| on_change(ButtonAction::Keys(text_to_keys(&s))),
             Message::OpenKeyPicker(field, keys.clone(), false),
         ),
-        ButtonAction::Multi(list) => multi_editor(list, default_button, on_change, field),
+        ButtonAction::Multi(list) => multi_editor(list, default_button, on_change, field, macros),
         ButtonAction::Toggle(inner) => {
             let parent = on_change.clone();
             let wrap: OnAction<'a> = Rc::new(move |a| parent(ButtonAction::Toggle(Box::new(a))));
             column![
                 text("Each press turns this on or off:").size(12).color(MUTED_COLOR),
-                action_editor(inner, default_button, TOGGLE_INNER_KINDS, wrap, field.child(0)),
+                action_editor(inner, default_button, TOGGLE_INNER_KINDS, wrap, field.child(0), macros),
             ]
             .spacing(4)
             .into()
@@ -1650,7 +2162,7 @@ fn action_editor<'a>(
             };
             column![
                 text("Repeats while held:").size(12).color(MUTED_COLOR),
-                action_editor(inner, default_button, TURBO_INNER_KINDS, wrap, field.child(0)),
+                action_editor(inner, default_button, TURBO_INNER_KINDS, wrap, field.child(0), macros),
                 row![
                     slider(2.0..=30.0, rate, set_rate).step(1.0_f32).width(200),
                     text(format!("{rate:.0} presses/s")).size(13),
@@ -1660,6 +2172,31 @@ fn action_editor<'a>(
             ]
             .spacing(4)
             .into()
+        }
+        ButtonAction::Macro { .. } if macros.is_empty() => {
+            text("No macros yet: create one in the Macros tab.").size(12).color(MUTED_COLOR).into()
+        }
+        ButtonAction::Macro { name, repeat } => {
+            let repeat = *repeat;
+            let pick = {
+                let on_change = on_change.clone();
+                pick_list(macros.to_vec(), Some(name.clone()), move |n| on_change(ButtonAction::Macro { name: n, repeat }))
+                    .width(200)
+            };
+            let name = name.clone();
+            let missing = !macros.contains(&name);
+            let mut line = row![
+                pick,
+                checkbox(repeat)
+                    .label("Repeat while held")
+                    .on_toggle(move |r| on_change(ButtonAction::Macro { name: name.clone(), repeat: r })),
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center);
+            if missing {
+                line = line.push(text("missing macro").size(12).color(ERROR_COLOR));
+            }
+            line.into()
         }
         ButtonAction::Disabled | ButtonAction::NextProfile => space().into(),
     };
@@ -1672,6 +2209,7 @@ fn multi_editor<'a>(
     default_button: Button,
     on_change: OnAction<'a>,
     field: KeyField,
+    macros: &[String],
 ) -> Element<'a, Message> {
     let with = |f: &dyn Fn(&mut Vec<ButtonAction>)| {
         let mut v = list.to_vec();
@@ -1688,7 +2226,7 @@ fn multi_editor<'a>(
         });
         col = col.push(
             row![
-                action_editor(sub, default_button, MULTI_ENTRY_KINDS, entry, field.child(i)),
+                action_editor(sub, default_button, MULTI_ENTRY_KINDS, entry, field.child(i), macros),
                 button(text("✕").size(13)).style(button::secondary).on_press(with(&|v| {
                     v.remove(i);
                 })),
@@ -1751,6 +2289,7 @@ enum StickKind {
     Mouse,
     Scroll,
     Keys,
+    Directions,
 }
 
 impl fmt::Display for StickKind {
@@ -1761,24 +2300,46 @@ impl fmt::Display for StickKind {
             StickKind::Mouse => "Mouse pointer",
             StickKind::Scroll => "Scroll wheel",
             StickKind::Keys => "Direction keys",
+            StickKind::Directions => "Direction actions",
         })
     }
 }
 
-fn stick_editor(s: Stick, cfg: &StickConfig) -> Element<'_, Message> {
+fn stick_editor<'a>(s: Stick, cfg: &'a StickConfig, macros: &[String]) -> Element<'a, Message> {
     let kind = match cfg.action {
         StickAction::Disabled => StickKind::Disabled,
         StickAction::Gamepad { .. } => StickKind::Gamepad,
         StickAction::Mouse { .. } => StickKind::Mouse,
         StickAction::Scroll { .. } => StickKind::Scroll,
         StickAction::Keys { .. } => StickKind::Keys,
+        StickAction::Directions { .. } => StickKind::Directions,
+    };
+    // Switching from direction keys to direction actions keeps the keys.
+    let as_actions = match &cfg.action {
+        StickAction::Keys { up, down, left, right } => {
+            let key = |k: &String| if k.is_empty() { ButtonAction::Disabled } else { ButtonAction::Keys(vec![k.clone()]) };
+            StickAction::Directions { up: key(up), down: key(down), left: key(left), right: key(right) }
+        }
+        _ => StickAction::Directions {
+            up: ButtonAction::Disabled,
+            down: ButtonAction::Disabled,
+            left: ButtonAction::Disabled,
+            right: ButtonAction::Disabled,
+        },
     };
     let with = move |action: StickAction| {
         let mut c = cfg.clone();
         c.action = action;
         Message::SetStick(s, c)
     };
-    let kinds = [StickKind::Disabled, StickKind::Gamepad, StickKind::Mouse, StickKind::Scroll, StickKind::Keys];
+    let kinds = [
+        StickKind::Disabled,
+        StickKind::Gamepad,
+        StickKind::Mouse,
+        StickKind::Scroll,
+        StickKind::Keys,
+        StickKind::Directions,
+    ];
     let picker = pick_list(kinds, Some(kind), move |k| {
         with(match k {
             StickKind::Disabled => StickAction::Disabled,
@@ -1786,6 +2347,7 @@ fn stick_editor(s: Stick, cfg: &StickConfig) -> Element<'_, Message> {
             StickKind::Mouse => StickAction::Mouse { speed: 1200.0 },
             StickKind::Scroll => StickAction::Scroll { speed: 15.0 },
             StickKind::Keys => wasd(),
+            StickKind::Directions => as_actions.clone(),
         })
     })
     .width(170);
@@ -1793,6 +2355,16 @@ fn stick_editor(s: Stick, cfg: &StickConfig) -> Element<'_, Message> {
     let mut rows = column![labeled(s.to_string(), picker.into())].spacing(8);
 
     match &cfg.action {
+        StickAction::Directions { .. } => {
+            for d in Direction::ALL {
+                let action = cfg.action.direction(d).unwrap_or(&ButtonAction::Disabled);
+                let target = Target::StickDir(s, d);
+                rows = rows.push(labeled(
+                    format!("    {d}"),
+                    action_editor(action, Button::South, &ACTION_KINDS, set_action(target), KeyField::root(target), macros),
+                ));
+            }
+        }
         StickAction::Gamepad { stick, invert_y } => {
             let invert_y = *invert_y;
             let stick = *stick;
@@ -1870,18 +2442,18 @@ fn stick_editor(s: Stick, cfg: &StickConfig) -> Element<'_, Message> {
             Message::SetStick(s, c)
         }));
     }
-    if matches!(cfg.action, StickAction::Keys { .. }) {
-        rows = rows.push(value_slider("    Press keys at", 0.05..=0.95, cfg.key_threshold, 0.05, "", move |v| {
+    if matches!(cfg.action, StickAction::Keys { .. } | StickAction::Directions { .. }) {
+        rows = rows.push(value_slider("    Press at", 0.05..=0.95, cfg.key_threshold, 0.05, "", move |v| {
             let mut c = cfg.clone();
             c.key_threshold = v;
             Message::SetStick(s, c)
         }));
     }
-    rows.push(zone_editor(Analog::Stick(s), &cfg.zones)).into()
+    rows.push(zone_editor(Analog::Stick(s), &cfg.zones, macros)).into()
 }
 
 /// Extra actions held while the stick/trigger is within a range of travel.
-fn zone_editor(analog: Analog, zones: &[Zone]) -> Element<'_, Message> {
+fn zone_editor<'a>(analog: Analog, zones: &'a [Zone], macros: &[String]) -> Element<'a, Message> {
     let what = match analog {
         Analog::Stick(_) => "pushed",
         Analog::Trigger(_) => "pulled",
@@ -1909,7 +2481,7 @@ fn zone_editor(analog: Analog, zones: &[Zone]) -> Element<'_, Message> {
         .align_y(Alignment::Center);
         let mut body = column![
             range,
-            action_editor(&zone.action, Button::South, &ACTION_KINDS, set_action(Target::Zone(analog, i)), KeyField::root(Target::Zone(analog, i))),
+            action_editor(&zone.action, Button::South, &ACTION_KINDS, set_action(Target::Zone(analog, i)), KeyField::root(Target::Zone(analog, i)), macros),
         ]
         .spacing(8);
         if min >= max {
@@ -1990,6 +2562,7 @@ fn trigger_editor<'a>(
     action: &'a TriggerAction,
     zones: &'a [Zone],
     analog: bool,
+    macros: &[String],
 ) -> Element<'a, Message> {
     let kind = match action {
         TriggerAction::Disabled => TriggerKind::Disabled,
@@ -2027,7 +2600,7 @@ fn trigger_editor<'a>(
         TriggerAction::Button { action: inner, threshold } => {
             rows = rows.push(labeled(
                 "    Action",
-                action_editor(inner, Button::South, &ACTION_KINDS, set_action(Target::Trigger(t)), KeyField::root(Target::Trigger(t))),
+                action_editor(inner, Button::South, &ACTION_KINDS, set_action(Target::Trigger(t)), KeyField::root(Target::Trigger(t)), macros),
             ));
             if analog {
                 let inner = inner.clone();
@@ -2039,7 +2612,7 @@ fn trigger_editor<'a>(
         TriggerAction::Disabled => {}
     }
     if analog {
-        return rows.push(zone_editor(Analog::Trigger(t), zones)).into();
+        return rows.push(zone_editor(Analog::Trigger(t), zones, macros)).into();
     }
     rows = rows.push(labeled(
         "",
@@ -2058,7 +2631,7 @@ fn trigger_editor<'a>(
                     .color(ERROR_COLOR)
                     .into(),
             ))
-            .push(zone_editor(Analog::Trigger(t), zones));
+            .push(zone_editor(Analog::Trigger(t), zones, macros));
     }
     rows.into()
 }
@@ -2212,6 +2785,91 @@ mod tests {
         let quoted = cmd.split('\'').nth(1).unwrap();
         assert!(!quoted.is_empty() && !quoted.contains('#'), "comments are left out: {quoted}");
         assert_eq!(cmd.matches('\'').count(), 2, "{cmd}");
+    }
+
+    #[test]
+    fn macro_editing_steps_and_renames_follow_mappings() {
+        let mut app = app();
+        let _ = app.update(Message::NewMacro);
+        let _ = app.update(Message::AddMacroStep(StepKind::Wait));
+        let _ = app.update(Message::AddMacroStep(StepKind::Press));
+        let _ = app.update(Message::MoveMacroStep(2, true));
+        assert_eq!(
+            app.config.macros[0].steps.iter().map(step_kind).collect::<Vec<_>>(),
+            [StepKind::Tap, StepKind::Press, StepKind::Wait]
+        );
+        // The on-screen keyboard writes into a macro step.
+        pick(&mut app, KeyField::root(Target::MacroStep(0, 0)), false, &["KEY_SPACE"]);
+        assert_eq!(app.config.macros[0].steps[0].action(), Some(&ButtonAction::Keys(vec!["KEY_SPACE".into()])));
+
+        let mapped = ButtonAction::Toggle(Box::new(ButtonAction::Macro { name: "Macro".into(), repeat: true }));
+        app.config.profiles[1].set_button(Button::West, mapped);
+        let _ = app.update(Message::RenameMacro("Jump spam".into()));
+        assert_eq!(
+            app.config.profiles[1].button(Button::West),
+            &ButtonAction::Toggle(Box::new(ButtonAction::Macro { name: "Jump spam".into(), repeat: true }))
+        );
+        // Step 2 (Hold down) has no key yet, so saving is blocked until it gets one.
+        assert!(app.validate().is_none() || app.validate().unwrap().contains("unknown key"));
+
+        let _ = app.update(Message::DeleteMacro);
+        assert!(app.validate().unwrap().contains("missing macro"), "{:?}", app.validate());
+    }
+
+    #[test]
+    fn motions_and_stick_presets() {
+        let d = DIAGONAL;
+        let qcf = Motion::QuarterCircleForward.steps();
+        assert_eq!(
+            qcf,
+            vec![
+                MacroStep::Stick { stick: Stick::Left, x: 0.0, y: 1.0 },
+                MacroStep::Wait(MOTION_FRAME_MS),
+                MacroStep::Stick { stick: Stick::Left, x: d, y: d },
+                MacroStep::Wait(MOTION_FRAME_MS),
+                MacroStep::Stick { stick: Stick::Left, x: 1.0, y: 0.0 },
+                MacroStep::Wait(MOTION_FRAME_MS),
+            ]
+        );
+        for preset in StickPreset::ALL {
+            if let Some((x, y)) = preset.position() {
+                assert_eq!(StickPreset::of(x, y), preset);
+            }
+        }
+        assert_eq!(StickPreset::of(0.3, -0.2), StickPreset::Custom);
+    }
+
+    #[test]
+    fn direction_actions_are_editable_validated_and_follow_macro_renames() {
+        let mut app = app();
+        let _ = app.update(Message::NewMacro);
+        let target = Target::StickDir(Stick::Right, Direction::Up);
+        app.config.profiles[0].right_stick.action = StickAction::Directions {
+            up: ButtonAction::Disabled,
+            down: ButtonAction::Disabled,
+            left: ButtonAction::Disabled,
+            right: ButtonAction::Disabled,
+        };
+        let _ = app.update(Message::SetAction(target, ButtonAction::Macro { name: "Macro".into(), repeat: false }));
+        let _ = app.update(Message::RenameMacro("Hadouken".into()));
+        assert_eq!(
+            app.config.profiles[0].right_stick.action.direction(Direction::Up),
+            Some(&ButtonAction::Macro { name: "Hadouken".into(), repeat: false })
+        );
+        // The key picker writes into a direction, and validation sees direction keys.
+        let field = KeyField::root(Target::StickDir(Stick::Right, Direction::Down));
+        let _ = app.update(Message::SetAction(Target::StickDir(Stick::Right, Direction::Down), ButtonAction::Keys(vec![])));
+        pick(&mut app, field, false, &["KEY_C"]);
+        assert_eq!(
+            app.config.profiles[0].right_stick.action.direction(Direction::Down),
+            Some(&ButtonAction::Keys(vec!["KEY_C".into()]))
+        );
+        let _ = app.update(Message::SetAction(
+            Target::StickDir(Stick::Right, Direction::Left),
+            ButtonAction::Keys(vec!["KEY_NOPE".into()]),
+        ));
+        app.config.macros[0].steps = vec![MacroStep::Wait(10)];
+        assert!(app.validate().unwrap().contains("NOPE"), "{:?}", app.validate());
     }
 
     #[test]

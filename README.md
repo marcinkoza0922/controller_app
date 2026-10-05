@@ -30,7 +30,7 @@ sudo udevadm control --reload && sudo udevadm trigger
 Each profile maps:
 
 - **buttons**: to a gamepad button, a key or key combo (`LEFTCTRL+C`), a mouse button, the scroll wheel (one notch per press, continuous while held), *next profile*, or **several of these at once**.
-- **sticks**: to a gamepad stick, mouse pointer, scroll wheel, or direction keys (WASD/arrows), with a deadzone, a response curve, and an adjustable key threshold.
+- **sticks**: to a gamepad stick, mouse pointer, scroll wheel, direction keys (WASD/arrows), or **direction actions** (any action, even a macro, per direction), with a deadzone, a response curve, and an adjustable press threshold.
 - **triggers**: to an analog gamepad trigger, or to a button action past a threshold.
 
 On top of that:
@@ -47,6 +47,15 @@ More templates are available under "New from template…" in the GUI:
 - **PC action**: WASD on the left stick (Shift at full push to sprint), mouse look on the right stick, Mouse 1/2 on RT/LT, A = E (use), B = Space, X = R, Y = F, LB/RB = Q/G, L3/R3 = Ctrl/V, D-pad = 1–4, Start/Select = Esc/Tab.
 - **Strategy**: mouse pointer on the left stick, arrow-key camera on the right, A/B/X = left/right/middle click, RT = left click for drag-select, L3/R3 = zoom (wheel up/down), LB/RB = held Ctrl/Shift, D-pad = control groups 1–4.
 - **Retro / platformer**: arrows on the D-pad and left stick, A/B/X/Y = Z/X/C/V, for keyboard-only indie games and emulators.
+
+## Macros
+
+The Macros tab holds named input sequences shared by all profiles. Each step is a **tap** (press, hold for N ms, release), **hold down**, **release**, **wait** (N ms), or **move stick** (a virtual-pad stick to a direction or custom position, held until the next stick step and recentered when the macro ends). Steps can press a key or key combo, mouse button, scroll wheel or gamepad button. "Insert motion…" adds fighting-game motions one frame apart: quarter circles, dragon punch and half circles, written facing right. Map a macro with the "Macro…" action:
+
+- **Play once**: each press plays it through to the end, even if you let go early.
+- **Repeat while held**: it loops until you let go, then stops at once.
+
+Each pass of a macro ends by releasing anything it still holds. Wrap a repeating macro in a Toggle to loop it hands-off. Renaming a macro updates its mappings, and profile switches stop running macros.
 
 ## Gyro
 

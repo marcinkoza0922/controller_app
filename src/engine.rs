@@ -3,6 +3,7 @@
 use std::{
     collections::{HashMap, HashSet},
     str::FromStr,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -10,13 +11,15 @@ use evdev::KeyCode;
 
 use crate::{
     config::{
-        Analog, Button, ButtonAction, GyroActivation, GyroConfig, GyroHorizontal, GyroInput, GyroMode,
-        Profile, Stick, StickAction, Trigger, TriggerAction,
+        Analog, Button, ButtonAction, Direction, GyroActivation, GyroConfig, GyroHorizontal, GyroInput,
+        GyroMode, Macro, MacroStep, Profile, Stick, StickAction, Trigger, TriggerAction,
     },
     input::{Axis, InputEvent, MotionSample},
     output::OutEvent,
 };
 
+/// A stick direction action releases this far below its press threshold.
+const STICK_DIRECTION_HYSTERESIS: f32 = 0.05;
 /// A held zone stays active this far past its edges, so it doesn't flicker on a boundary.
 const ZONE_HYSTERESIS: f32 = 0.02;
 /// A trigger mapped to a button releases this far below its press threshold.
@@ -39,6 +42,8 @@ enum Source {
     Gesture(Button),
     /// An analog zone (index into the stick's or trigger's zone list) that is active.
     Zone(Analog, usize),
+    /// A stick direction in `StickAction::Directions` mode.
+    StickDir(Stick, Direction),
 }
 
 /// Gesture detection for a button acting alone that has gestures configured.
@@ -85,6 +90,52 @@ pub struct Engine {
     gyro: GyroState,
     /// What physical sticks currently send to each virtual-pad stick, so gyro can add to it.
     pad_sticks: HashMap<Stick, (f32, f32)>,
+    /// Macro definitions by name, compiled to operations (see [`Engine::set_macros`]).
+    macro_defs: HashMap<String, Arc<Vec<MacroOp>>>,
+    macros_running: HashMap<StateId, MacroRun>,
+    /// Virtual-pad stick positions set by macro steps, added to physical and gyro input.
+    macro_sticks: HashMap<Stick, (f32, f32)>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum MacroOp {
+    Press(ButtonAction),
+    Release(ButtonAction),
+    /// Seconds.
+    Wait(f32),
+    Stick(Stick, (f32, f32)),
+}
+
+struct MacroRun {
+    ops: Arc<Vec<MacroOp>>,
+    next: usize,
+    /// Seconds left in the current wait; may go negative to carry over into the next step.
+    wait: f32,
+    repeat: bool,
+    /// Actions the macro has pressed and not yet released.
+    held: Vec<ButtonAction>,
+    /// Sticks the macro has moved, recentered when a pass ends.
+    sticks: Vec<Stick>,
+}
+
+fn compile_macro(m: &Macro) -> Vec<MacroOp> {
+    let mut ops = Vec::new();
+    for step in &m.steps {
+        match step {
+            MacroStep::Tap { action, hold_ms } => ops.extend([
+                MacroOp::Press(action.clone()),
+                MacroOp::Wait(*hold_ms as f32 / 1000.0),
+                MacroOp::Release(action.clone()),
+            ]),
+            MacroStep::Press(action) => ops.push(MacroOp::Press(action.clone())),
+            MacroStep::Release(action) => ops.push(MacroOp::Release(action.clone())),
+            MacroStep::Wait(ms) => ops.push(MacroOp::Wait(*ms as f32 / 1000.0)),
+            MacroStep::Stick { stick, x, y } => {
+                ops.push(MacroOp::Stick(*stick, (x.clamp(-1.0, 1.0), y.clamp(-1.0, 1.0))))
+            }
+        }
+    }
+    ops
 }
 
 #[derive(Default)]
@@ -112,6 +163,81 @@ struct TurboState {
 }
 
 impl Engine {
+    /// Replaces the macro definitions `ButtonAction::Macro` refers to (from the config).
+    pub fn set_macros(&mut self, macros: &[Macro]) {
+        self.macro_defs = macros.iter().map(|m| (m.name.clone(), Arc::new(compile_macro(m)))).collect();
+    }
+
+    /// Runs a macro's operations until it has to wait or it ends. Each pass ends by releasing
+    /// whatever it still holds; a repeating macro then starts over seamlessly, except that a
+    /// macro with no waits at all runs one pass per tick instead of spinning in place.
+    fn advance_macro(&mut self, id: &StateId, dt: f32, out: &mut Vec<OutEvent>) {
+        let Some(mut run) = self.macros_running.remove(id) else { return };
+        run.wait -= dt;
+        let has_wait = run.ops.iter().any(|op| matches!(op, MacroOp::Wait(s) if *s > 0.0));
+        while run.wait <= 0.0 {
+            if run.next >= run.ops.len() {
+                self.end_pass(id, &mut run, out);
+                if !run.repeat {
+                    return;
+                }
+                run.next = 0;
+                if !has_wait {
+                    run.wait = 0.0;
+                    break;
+                }
+                continue;
+            }
+            match run.ops[run.next].clone() {
+                MacroOp::Press(action) => {
+                    self.emit(&id.0, &action, true, id.1 + 1, out);
+                    run.held.push(action);
+                }
+                MacroOp::Release(action) => {
+                    if let Some(i) = run.held.iter().position(|a| *a == action) {
+                        run.held.remove(i);
+                        self.emit(&id.0, &action, false, id.1 + 1, out);
+                    }
+                }
+                MacroOp::Wait(seconds) => run.wait += seconds,
+                MacroOp::Stick(stick, position) => {
+                    self.macro_sticks.insert(stick, position);
+                    if !run.sticks.contains(&stick) {
+                        run.sticks.push(stick);
+                    }
+                    self.emit_pad_stick(stick, out);
+                }
+            }
+            run.next += 1;
+        }
+        self.macros_running.insert(id.clone(), run);
+    }
+
+    /// Ends a pass: releases what the macro still holds (most recent first) and recenters the
+    /// sticks it moved.
+    fn end_pass(&mut self, id: &StateId, run: &mut MacroRun, out: &mut Vec<OutEvent>) {
+        for action in std::mem::take(&mut run.held).into_iter().rev() {
+            self.emit(&id.0, &action, false, id.1 + 1, out);
+        }
+        for stick in std::mem::take(&mut run.sticks) {
+            self.macro_sticks.remove(&stick);
+            self.emit_pad_stick(stick, out);
+        }
+    }
+
+    fn stop_macro(&mut self, id: &StateId, out: &mut Vec<OutEvent>) {
+        if let Some(mut run) = self.macros_running.remove(id) {
+            self.end_pass(id, &mut run, out);
+        }
+    }
+
+    fn tick_macros(&mut self, dt: f32, out: &mut Vec<OutEvent>) {
+        let ids: Vec<StateId> = self.macros_running.keys().cloned().collect();
+        for id in ids {
+            self.advance_macro(&id, dt, out);
+        }
+    }
+
     /// Processes one input. Returns true if the input requested switching to the next profile.
     pub fn handle(
         &mut self,
@@ -443,6 +569,26 @@ impl Engine {
                     self.emit(src, &state.action, false, slot + 1, out);
                 }
             }
+            // Play once per press (release doesn't stop it), or loop while held.
+            ButtonAction::Macro { name, repeat } => {
+                let id = (src.clone(), slot);
+                if !pressed {
+                    if *repeat {
+                        self.stop_macro(&id, out);
+                    }
+                    return false;
+                }
+                if self.macros_running.contains_key(&id) {
+                    return false;
+                }
+                let Some(ops) = self.macro_defs.get(name).cloned() else {
+                    crate::monitor::log!("no macro named {name:?}");
+                    return false;
+                };
+                let run = MacroRun { ops, next: 0, wait: 0.0, repeat: *repeat, held: Vec::new(), sticks: Vec::new() };
+                self.macros_running.insert(id.clone(), run);
+                self.advance_macro(&id, 0.0, out);
+            }
         }
         false
     }
@@ -523,6 +669,7 @@ impl Engine {
     fn stick(&mut self, profile: &Profile, s: Stick, out: &mut Vec<OutEvent>) -> bool {
         let cfg = profile.stick(s);
         let (x, y) = self.stick_pos(s, cfg.deadzone);
+        let mut switch = false;
         match &cfg.action {
             StickAction::Gamepad { stick, invert_y } => {
                 self.pad_sticks.insert(*stick, (x, if *invert_y { -y } else { y }));
@@ -545,22 +692,38 @@ impl Engine {
                 }
                 *held = want;
             }
+            StickAction::Directions { .. } => {
+                let t = cfg.key_threshold;
+                for (d, v) in [(Direction::Up, -y), (Direction::Down, y), (Direction::Left, -x), (Direction::Right, x)] {
+                    let src = Source::StickDir(s, d);
+                    let held = self.held.contains_key(&src);
+                    let action = cfg.action.direction(d).unwrap_or(&ButtonAction::Disabled);
+                    if !held && v >= t {
+                        switch |= self.digital(src, action, true, out);
+                    } else if held && v < t - STICK_DIRECTION_HYSTERESIS {
+                        self.digital(src, action, false, out);
+                    }
+                }
+            }
             // Mouse and scroll are continuous and driven by `tick`.
             StickAction::Mouse { .. } | StickAction::Scroll { .. } | StickAction::Disabled => {}
         }
-        self.zones(profile, Analog::Stick(s), x.hypot(y).min(1.0), out)
+        self.zones(profile, Analog::Stick(s), x.hypot(y).min(1.0), out) | switch
     }
 
     /// Sends a virtual-pad stick: the physical stick mapped to it plus any gyro deflection.
+    /// Sends a virtual-pad stick: the physical stick mapped to it plus any gyro and macro
+    /// deflection.
     fn emit_pad_stick(&self, target: Stick, out: &mut Vec<OutEvent>) {
         let (px, py) = self.pad_sticks.get(&target).copied().unwrap_or_default();
         let (gx, gy) = match self.gyro.stick {
             Some((s, v)) if s == target => v,
             _ => (0.0, 0.0),
         };
+        let (mx, my) = self.macro_sticks.get(&target).copied().unwrap_or_default();
         let (ax, ay) = stick_axes(target);
-        out.push(OutEvent::PadAxis(ax, (px + gx).clamp(-1.0, 1.0)));
-        out.push(OutEvent::PadAxis(ay, (py + gy).clamp(-1.0, 1.0)));
+        out.push(OutEvent::PadAxis(ax, (px + gx + mx).clamp(-1.0, 1.0)));
+        out.push(OutEvent::PadAxis(ay, (py + gy + my).clamp(-1.0, 1.0)));
     }
 
     /// Changes the gyro's stick deflection, re-sending affected sticks.
@@ -685,7 +848,10 @@ impl Engine {
             matches!(cfg.action, StickAction::Mouse { .. } | StickAction::Scroll { .. })
                 && self.stick_pos(s, cfg.deadzone) != (0.0, 0.0)
         });
-        sticks || !self.turbo.is_empty() || self.held.values().any(|a| !a.wheel_directions().is_empty())
+        sticks
+            || !self.turbo.is_empty()
+            || !self.macros_running.is_empty()
+            || self.held.values().any(|a| !a.wheel_directions().is_empty())
     }
 
     /// Advances continuous outputs (mouse motion, scrolling) by `dt` seconds.
@@ -719,6 +885,7 @@ impl Engine {
         }
         self.tick_wheel(dt, out);
         self.tick_turbo(dt, out);
+        self.tick_macros(dt, out);
     }
 
     /// Keeps scrolling for wheel actions held past the repeat delay.
@@ -758,6 +925,9 @@ impl Engine {
         let toggled: Vec<_> = self.toggled.drain().collect();
         for ((src, slot), inner) in toggled {
             self.emit(&src, &inner, false, slot + 1, out);
+        }
+        for id in self.macros_running.keys().cloned().collect::<Vec<_>>() {
+            self.stop_macro(&id, out);
         }
         // Anything still repeating (normally nothing by now) is stopped as well.
         for ((src, slot), state) in self.turbo.drain().collect::<Vec<_>>() {
@@ -808,6 +978,7 @@ fn angle_diff(a: f32, b: f32) -> f32 {
 fn stateful_nodes(action: &ButtonAction) -> usize {
     match action {
         ButtonAction::Toggle(inner) | ButtonAction::Turbo { action: inner, .. } => 1 + stateful_nodes(inner),
+        ButtonAction::Macro { .. } => 1,
         ButtonAction::Multi(actions) => actions.iter().map(stateful_nodes).sum(),
         _ => 0,
     }
@@ -1646,5 +1817,212 @@ mod tests {
     fn angle_difference_wraps() {
         assert!((angle_diff(170.0, -170.0) + 20.0).abs() < 1e-4);
         assert!((angle_diff(-170.0, 170.0) - 20.0).abs() < 1e-4);
+    }
+
+    use crate::config::{Macro, MacroStep};
+
+    fn key(k: &str) -> ButtonAction {
+        ButtonAction::Keys(vec![k.into()])
+    }
+
+    fn macro_engine(steps: Vec<MacroStep>) -> Engine {
+        let mut e = Engine::default();
+        e.set_macros(&[Macro { name: "m".into(), steps }]);
+        e
+    }
+
+    fn mapped(repeat: bool) -> Profile {
+        let mut p = Profile::passthrough("p");
+        p.set_button(Button::West, ButtonAction::Macro { name: "m".into(), repeat });
+        p
+    }
+
+    /// Key events with the time (ms since the press) they were sent.
+    fn timeline(e: &mut Engine, p: &Profile, seconds: f32, release_at: Option<f32>) -> Vec<(u32, OutEvent)> {
+        let mut events: Vec<(u32, OutEvent)> =
+            run(e, p, InputEvent::Button(Button::West, true)).into_iter().map(|ev| (0, ev)).collect();
+        let steps = (seconds / 0.004).round() as u32;
+        for i in 1..=steps {
+            let mut out = Vec::new();
+            if release_at.is_some_and(|r| (i as f32 * 0.004 - r).abs() < 0.002) {
+                out.extend(run(e, p, InputEvent::Button(Button::West, false)));
+            }
+            e.tick(p, 0.004, &mut out);
+            events.extend(out.into_iter().map(|ev| (i * 4, ev)));
+        }
+        events
+    }
+
+    #[test]
+    fn macro_plays_its_sequence_with_timing() {
+        let mut e = macro_engine(vec![
+            MacroStep::Tap { action: key("KEY_A"), hold_ms: 40 },
+            MacroStep::Wait(100),
+            MacroStep::Press(key("KEY_LEFTSHIFT")),
+            MacroStep::Tap { action: ButtonAction::Mouse(MouseButton::Left), hold_ms: 20 },
+            MacroStep::Release(key("KEY_LEFTSHIFT")),
+        ]);
+        let p = mapped(false);
+        let events = timeline(&mut e, &p, 0.5, Some(0.01));
+        let shift = KeyCode::KEY_LEFTSHIFT;
+        assert_eq!(
+            events,
+            vec![
+                (0, OutEvent::Key(KeyCode::KEY_A, true)),
+                (40, OutEvent::Key(KeyCode::KEY_A, false)),
+                (140, OutEvent::Key(shift, true)),
+                (140, OutEvent::MouseButton(MouseButton::Left, true)),
+                (160, OutEvent::MouseButton(MouseButton::Left, false)),
+                (160, OutEvent::Key(shift, false)),
+            ],
+            "releasing the button early must not cut a play-once macro short"
+        );
+        assert!(!e.needs_tick(&p), "finished macros stop ticking");
+    }
+
+    #[test]
+    fn repeating_macro_loops_while_held_and_cleans_up_on_release() {
+        let mut e = macro_engine(vec![
+            MacroStep::Press(key("KEY_LEFTSHIFT")),
+            MacroStep::Tap { action: key("KEY_A"), hold_ms: 50 },
+            MacroStep::Wait(50),
+        ]);
+        let p = mapped(true);
+        let events = timeline(&mut e, &p, 1.0, Some(0.32));
+        let a_presses: Vec<u32> = events
+            .iter()
+            .filter(|(_, ev)| *ev == OutEvent::Key(KeyCode::KEY_A, true))
+            .map(|(t, _)| *t)
+            .collect();
+        assert_eq!(a_presses, [0, 100, 200, 300], "loops every 100 ms until released at 320 ms");
+        // Shift is never released by a step, so each pass lets go of it at its end.
+        let shift_downs = events.iter().filter(|(_, ev)| *ev == OutEvent::Key(KeyCode::KEY_LEFTSHIFT, true)).count();
+        let shift_ups = events.iter().filter(|(_, ev)| *ev == OutEvent::Key(KeyCode::KEY_LEFTSHIFT, false)).count();
+        assert_eq!((shift_downs, shift_ups), (4, 4), "{events:?}");
+        // Releasing at 320 ms, mid-tap, lets go of A and Shift together, and nothing follows.
+        let after: Vec<&OutEvent> = events.iter().filter(|(t, _)| *t >= 320).map(|(_, ev)| ev).collect();
+        assert_eq!(after, [&OutEvent::Key(KeyCode::KEY_A, false), &OutEvent::Key(KeyCode::KEY_LEFTSHIFT, false)]);
+        assert!(!e.needs_tick(&p));
+    }
+
+    #[test]
+    fn toggled_repeating_macro_and_profile_switch_stop() {
+        let mut e = macro_engine(vec![MacroStep::Tap { action: key("KEY_A"), hold_ms: 10 }, MacroStep::Wait(40)]);
+        let mut p = Profile::passthrough("p");
+        p.set_button(Button::West, toggle(ButtonAction::Macro { name: "m".into(), repeat: true }));
+        run(&mut e, &p, InputEvent::Button(Button::West, true));
+        run(&mut e, &p, InputEvent::Button(Button::West, false));
+        let presses = |out: &[OutEvent]| out.iter().filter(|ev| **ev == OutEvent::Key(KeyCode::KEY_A, true)).count();
+        assert_eq!(presses(&hold_for(&mut e, &p, 0.5)), 10, "keeps looping hands-off");
+        let mut out = Vec::new();
+        e.release_all(&mut out);
+        assert!(!e.needs_tick(&p));
+        assert_eq!(presses(&hold_for(&mut e, &p, 0.5)), 0);
+    }
+
+    #[test]
+    fn repeating_macro_without_waits_cannot_hang() {
+        let mut e = macro_engine(vec![MacroStep::Press(key("KEY_A")), MacroStep::Release(key("KEY_A"))]);
+        let p = mapped(true);
+        run(&mut e, &p, InputEvent::Button(Button::West, true));
+        // One pass per tick rather than an infinite loop.
+        let out = hold_for(&mut e, &p, 0.04);
+        assert_eq!(out.iter().filter(|ev| **ev == OutEvent::Key(KeyCode::KEY_A, true)).count(), 10);
+    }
+
+    #[test]
+    fn unknown_macro_does_nothing() {
+        let mut e = Engine::default();
+        assert!(run(&mut e, &mapped(false), InputEvent::Button(Button::West, true)).is_empty());
+    }
+
+    fn directions(up: ButtonAction, down: ButtonAction, left: ButtonAction, right: ButtonAction) -> StickAction {
+        StickAction::Directions { up, down, left, right }
+    }
+
+    #[test]
+    fn stick_directions_press_any_action_with_hysteresis() {
+        let mut p = Profile::passthrough("p");
+        p.right_stick = StickConfig::new(
+            directions(
+                toggle(key("KEY_C")),
+                key("KEY_S"),
+                ButtonAction::Mouse(MouseButton::Left),
+                ButtonAction::Disabled,
+            ),
+            0.0,
+            1.0,
+        );
+        p.right_stick.key_threshold = 0.5;
+        let mut e = Engine::default();
+        let c_down = OutEvent::Key(KeyCode::KEY_C, true);
+
+        // Up is a toggle: flicking up and back turns it on, the next flick turns it off.
+        assert_eq!(axis(&mut e, &p, Axis::RightY, -0.9), vec![c_down.clone()]);
+        assert!(axis(&mut e, &p, Axis::RightY, -0.47).is_empty(), "inside the release margin");
+        assert!(axis(&mut e, &p, Axis::RightY, 0.0).is_empty());
+        assert_eq!(axis(&mut e, &p, Axis::RightY, -0.9), vec![OutEvent::Key(KeyCode::KEY_C, false)]);
+        axis(&mut e, &p, Axis::RightY, 0.0);
+
+        // A diagonal presses both directions; returning to center releases both.
+        axis(&mut e, &p, Axis::RightX, -0.7);
+        let out = axis(&mut e, &p, Axis::RightY, 0.7);
+        assert_eq!(out, vec![OutEvent::Key(KeyCode::KEY_S, true)]);
+        let mut out = axis(&mut e, &p, Axis::RightX, 0.0);
+        out.extend(axis(&mut e, &p, Axis::RightY, 0.0));
+        assert_eq!(out, vec![OutEvent::MouseButton(MouseButton::Left, false), OutEvent::Key(KeyCode::KEY_S, false)]);
+    }
+
+    #[test]
+    fn macro_stick_steps_trace_a_motion_and_recenter() {
+        let d = std::f32::consts::FRAC_1_SQRT_2;
+        let mut e = macro_engine(vec![
+            MacroStep::Stick { stick: Stick::Left, x: 0.0, y: 1.0 },
+            MacroStep::Wait(16),
+            MacroStep::Stick { stick: Stick::Left, x: d, y: d },
+            MacroStep::Wait(16),
+            MacroStep::Stick { stick: Stick::Left, x: 1.0, y: 0.0 },
+            MacroStep::Tap { action: ButtonAction::Gamepad(Button::West), hold_ms: 16 },
+        ]);
+        let mut p = mapped(false);
+        p.left_stick.deadzone = 0.0;
+        let events = timeline(&mut e, &p, 0.2, None);
+        let sticks: Vec<(u32, (Axis, f32))> = events
+            .iter()
+            .filter_map(|(t, ev)| match ev {
+                OutEvent::PadAxis(a @ (Axis::LeftX | Axis::LeftY), v) => Some((*t, (*a, (v * 100.0).round() / 100.0))),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            sticks,
+            vec![
+                (0, (Axis::LeftX, 0.0)),
+                (0, (Axis::LeftY, 1.0)),
+                (16, (Axis::LeftX, 0.71)),
+                (16, (Axis::LeftY, 0.71)),
+                (32, (Axis::LeftX, 1.0)),
+                (32, (Axis::LeftY, 0.0)),
+                // The pass ends 16 ms later and the stick recenters.
+                (48, (Axis::LeftX, 0.0)),
+                (48, (Axis::LeftY, 0.0)),
+            ]
+        );
+        let punch: Vec<u32> = events
+            .iter()
+            .filter(|(_, ev)| matches!(ev, OutEvent::PadButton(Button::West, _)))
+            .map(|(t, _)| *t)
+            .collect();
+        assert_eq!(punch, [32, 48], "pressed with the forward input, released 16 ms later");
+    }
+
+    #[test]
+    fn macro_stick_adds_to_the_physical_stick() {
+        let mut e = macro_engine(vec![MacroStep::Stick { stick: Stick::Left, x: 0.5, y: 0.0 }, MacroStep::Wait(100)]);
+        let mut p = mapped(false);
+        p.left_stick.deadzone = 0.0;
+        axis(&mut e, &p, Axis::LeftX, 0.25);
+        let out = run(&mut e, &p, InputEvent::Button(Button::West, true));
+        assert!(out.contains(&OutEvent::PadAxis(Axis::LeftX, 0.75)), "{out:?}");
     }
 }
