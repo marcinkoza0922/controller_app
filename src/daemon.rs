@@ -435,7 +435,11 @@ impl Daemon {
 
     fn overlay_view(&self) -> Option<OverlayView> {
         match &self.active {
-            Some(Active::Keyboard(k)) => Some(OverlayView::Keyboard(k.view(Instant::now()))),
+            Some(Active::Keyboard(k)) => {
+                let mut view = k.view(Instant::now());
+                view.style = self.config.keyboard_style.clone();
+                Some(OverlayView::Keyboard(view))
+            }
             Some(Active::Menu { session, .. }) => session.view(&self.config.menus).map(OverlayView::Menu),
             None => None,
         }
@@ -721,7 +725,8 @@ impl Daemon {
         match req {
             Request::Status => Response::Status(self.status()),
             Request::GetConfig => Response::Config(self.config.clone()),
-            Request::SetConfig(mut new) => {
+            Request::SetConfig(new) => {
+                let mut new = *new;
                 new.enabled = self.config.enabled;
                 if new.profiles.iter().any(|p| p.name == self.config.active_profile) {
                     new.active_profile = self.config.active_profile.clone();

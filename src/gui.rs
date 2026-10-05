@@ -16,10 +16,12 @@ use crate::{
     config::{
         Analog, Button, ButtonAction, CarouselControls, Cluster, Combo, Config, GestureKind, GyroActivation,
         GyroConfig, GyroHorizontal, GyroInput, GyroMode, Macro, MacroStep, Menu, MenuItem, MenuKind, MenuKindTag,
-        MouseButton, Rule, RuleKind, WheelDirection, Zone, Profile, Stick, StickAction, StickConfig,
+        MouseButton, OverlayStyle, Paint, Rule, RuleKind, ScreenPosition, WheelDirection, Zone, Profile, Stick, StickAction, StickConfig,
         Trigger, TriggerAction,
     },
+    engine::Opener,
     ipc::{self, FocusBackend, InputSnapshot, Request, Response, Status, WindowInfo},
+    menu::MenuSession,
     keyboard, pad_svg, style,
 };
 
@@ -56,8 +58,10 @@ struct App {
     found: Option<Button>,
     /// Index into `config.macros` shown in the Macros tab.
     editing_macro: usize,
-    /// Index into `config.menus` shown in the Overlays tab.
-    editing_menu: usize,
+    /// Menus (by index) whose card is open in the Overlays tab.
+    open_menus: HashSet<usize>,
+    /// Appearance editors that are open: a menu's, or the keyboard's (`None`).
+    open_appearance: HashSet<Option<usize>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -116,9 +120,171 @@ impl fmt::Display for QuickChoice {
     }
 }
 
-/// A cascade menu always has exactly four slots (up, right, down, left), some maybe empty.
+/// The "add a menu" card: one button per kind, kept apart from the menus themselves.
+fn view_new_menu_card<'a>() -> Element<'a, Message> {
+    let mut kinds = row![text("Add a menu:")].spacing(8).align_y(Alignment::Center);
+    for kind in MenuKindTag::ALL {
+        kinds = kinds.push(button(text(kind.short()).size(14)).style(button::secondary).on_press(Message::NewMenu(kind)));
+    }
+    container(row![kinds, space::horizontal(), help(MENUS_HELP.into())].align_y(Alignment::Center))
+        .padding(14)
+        .width(Length::Fill)
+        .style(style::card)
+        .into()
+}
+
+/// A "▸ Label" / "▾ Label" toggle for an optional section.
+fn disclosure<'a>(label: &str, open: bool, message: Message) -> Element<'a, Message> {
+    let chevron = if open { "▾" } else { "▸" };
+    button(text(format!("{chevron} {label}")).size(14)).style(button::text).padding([4, 0]).on_press(message).into()
+}
+
+type OnStyle<'a> = Rc<dyn Fn(OverlayStyle) -> Message + 'a>;
+
+/// Colors offered as swatches; any other color can be typed as #rrggbb.
+const SWATCHES: [&str; 12] = [
+    "#000000", "#16181c", "#30343c", "#5a606b", "#e6e8eb", "#ffffff", "#2f5db0", "#1f7a7a", "#2e7d46", "#6a3fb0",
+    "#a83232", "#c26a1d",
+];
+
+/// Position, size and colors of an overlay.
+fn style_editor<'a>(style: &OverlayStyle, on_change: OnStyle<'a>) -> Element<'a, Message> {
+    let with = |f: &dyn Fn(&mut OverlayStyle)| {
+        let mut s = style.clone();
+        f(&mut s);
+        on_change(s)
+    };
+    // A small "screen" of 3×3 spots to click.
+    let mut grid = column![].spacing(3);
+    for r in 0..3 {
+        let mut line = row![].spacing(3);
+        for c in 0..3 {
+            let pos = ScreenPosition::GRID[r * 3 + c];
+            let chosen = pos == style.position;
+            line = line.push(
+                tooltip(
+                    button(space().width(22).height(12))
+                        .padding(2)
+                        .style(if chosen { button::primary } else { button::secondary })
+                        .on_press(with(&|s| s.position = pos)),
+                    container(text(pos.to_string()).size(13)).padding(6).style(style::tooltip),
+                    tooltip::Position::Top,
+                ),
+            );
+        }
+        grid = grid.push(line);
+    }
+    let position = row![grid, text(style.position.to_string()).size(13).color(MUTED_COLOR)]
+        .spacing(12)
+        .align_y(Alignment::Center);
+
+    let scale = style.scale;
+    let size = row![
+        slider(50.0..=200.0, scale * 100.0, {
+            let on_change = on_change.clone();
+            let style = style.clone();
+            move |v| on_change(OverlayStyle { scale: (v / 100.0 * 20.0).round() / 20.0, ..style.clone() })
+        })
+        .step(5.0_f32)
+        .width(220),
+        text(format!("{:.0}%", scale * 100.0)).size(13),
+    ]
+    .spacing(10)
+    .align_y(Alignment::Center);
+
+    let paint_editor = |label: &'static str, paint: &Paint, set: fn(&mut OverlayStyle, Paint)| -> Element<'a, Message> {
+        let mut swatches = row![].spacing(4).align_y(Alignment::Center);
+        for hex in SWATCHES {
+            let [r, g, b] = crate::config::parse_hex(hex).unwrap_or_default();
+            let color = Color::from_rgb8(r, g, b);
+            let chosen = paint.color.eq_ignore_ascii_case(hex);
+            let pick = Paint { color: hex.into(), ..paint.clone() };
+            swatches = swatches.push(
+                button(space().width(16).height(16))
+                    .padding(0)
+                    .style(move |_, _| button::Style {
+                        background: Some(color.into()),
+                        border: iced::Border {
+                            width: if chosen { 3.0 } else { 1.0 },
+                            radius: 4.0.into(),
+                            color: if chosen { Color::from_rgb8(0x4e, 0xa1, 0xff) } else { Color::from_rgb(0.5, 0.5, 0.5) },
+                        },
+                        ..button::Style::default()
+                    })
+                    .on_press(with(&|s| set(s, pick.clone()))),
+            );
+        }
+        let typed = {
+            let on_change = on_change.clone();
+            let style = style.clone();
+            let opacity = paint.opacity;
+            move |hex: String| {
+                let mut s = style.clone();
+                set(&mut s, Paint { color: hex, opacity });
+                on_change(s)
+            }
+        };
+        let valid = paint.rgb().is_some();
+        let opacity = {
+            let on_change = on_change.clone();
+            let style = style.clone();
+            let color = paint.color.clone();
+            move |v: f32| {
+                let mut s = style.clone();
+                set(&mut s, Paint { color: color.clone(), opacity: (v / 100.0).clamp(0.0, 1.0) });
+                on_change(s)
+            }
+        };
+        let mut line = row![
+            swatches,
+            field("#rrggbb", &paint.color).on_input(typed).width(90),
+            slider(0.0..=100.0, paint.opacity * 100.0, opacity).step(5.0_f32).width(110),
+            text(format!("{:.0}%", paint.opacity * 100.0)).size(12),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
+        if !valid {
+            line = line.push(text("not a #rrggbb color").size(12).color(ERROR_COLOR));
+        }
+        labeled(format!("    {label}"), line.into())
+    };
+
+    column![
+        labeled("    Position", position.into()),
+        labeled("    Size", size.into()),
+        paint_editor("Background", &style.background, |s, p| s.background = p),
+        paint_editor("Items", &style.items, |s, p| s.items = p),
+        paint_editor("Selected item", &style.selected, |s, p| s.selected = p),
+    ]
+    .spacing(8)
+    .into()
+}
+
+/// The preview keeps the real colors but caps the size so it fits the window.
+fn preview_style(style: &OverlayStyle) -> OverlayStyle {
+    OverlayStyle { scale: style.scale.min(1.0), ..style.clone() }
+}
+
+/// A live preview on a dark "screen", so transparency shows.
+fn preview<'a>(panel: Element<'a, Message>) -> Element<'a, Message> {
+    column![
+        text("Preview").size(12).color(MUTED_COLOR),
+        container(container(panel).center_x(Length::Fill))
+            .padding(16)
+            .width(Length::Fill)
+            .style(|_: &iced::Theme| container::Style {
+                background: Some(Color::from_rgb8(0x3a, 0x4a, 0x5c).into()),
+                border: iced::Border { radius: 8.0.into(), ..iced::Border::default() },
+                ..container::Style::default()
+            }),
+    ]
+    .spacing(4)
+    .into()
+}
+
+/// A directional menu always has exactly four slots (up, right, down, left), some maybe empty.
 fn fit_items(menu: &mut Menu) {
-    if let MenuKind::Cascade { .. } = menu.kind {
+    if let MenuKind::Directional { .. } = menu.kind {
         menu.items.truncate(4);
         while menu.items.len() < 4 {
             menu.items.push(MenuItem { label: String::new(), action: ButtonAction::Disabled, button: None });
@@ -428,17 +594,20 @@ enum Message {
     MoveMacroStep(usize, bool),
     RemoveMacroStep(usize),
     InsertMotion(Motion),
-    EditMenu(String),
+    ToggleMenu(usize),
+    ToggleAppearance(Option<usize>),
     NewMenu(MenuKindTag),
-    DeleteMenu,
-    RenameMenu(String),
-    SetMenuKind(MenuKind),
-    SetMenuCancel(CancelChoice),
-    AddMenuItem,
-    RemoveMenuItem(usize),
-    MoveMenuItem(usize, bool),
-    SetMenuItemLabel(usize, String),
-    SetMenuItemButton(usize, QuickChoice),
+    DeleteMenu(usize),
+    RenameMenu(usize, String),
+    SetMenuKind(usize, MenuKind),
+    SetMenuCancel(usize, CancelChoice),
+    SetMenuStyle(usize, OverlayStyle),
+    SetKeyboardStyle(OverlayStyle),
+    AddMenuItem(usize),
+    RemoveMenuItem(usize, usize),
+    MoveMenuItem(usize, usize, bool),
+    SetMenuItemLabel(usize, usize, String),
+    SetMenuItemButton(usize, usize, QuickChoice),
     OpenKeyPicker(KeyField, Vec<String>, bool),
     PickerKey(&'static str),
     PickerClear,
@@ -528,7 +697,8 @@ impl App {
             finding: false,
             found: None,
             editing_macro: 0,
-            editing_menu: 0,
+            open_menus: HashSet::new(),
+            open_appearance: HashSet::new(),
         };
         let load = Task::perform(
             async {
@@ -883,9 +1053,14 @@ impl App {
                     }
                 }
             }
-            Message::EditMenu(name) => {
-                if let Some(i) = self.config.menus.iter().position(|m| m.name == name) {
-                    self.editing_menu = i;
+            Message::ToggleMenu(i) => {
+                if !self.open_menus.remove(&i) {
+                    self.open_menus.insert(i);
+                }
+            }
+            Message::ToggleAppearance(which) => {
+                if !self.open_appearance.remove(&which) {
+                    self.open_appearance.insert(which);
                 }
             }
             Message::NewMenu(kind) => {
@@ -894,23 +1069,34 @@ impl App {
                     .find(|n| !self.config.menus.iter().any(|m| &m.name == n))
                     .unwrap();
                 let kind = MenuKind::default_for(kind);
-                let mut menu = Menu { name, kind, items: Vec::new(), cancel: None };
+                let mut menu = Menu { name, kind, items: Vec::new(), cancel: None, style: OverlayStyle::default() };
                 fit_items(&mut menu);
                 if menu.items.is_empty() {
                     menu.items.push(MenuItem { label: "Item 1".into(), action: ButtonAction::Keys(Vec::new()), button: None });
                 }
                 self.config.menus.push(menu);
-                self.editing_menu = self.config.menus.len() - 1;
+                // The new menu gets its own open card.
+                self.open_menus.insert(self.config.menus.len() - 1);
             }
-            Message::DeleteMenu => {
-                if self.editing_menu < self.config.menus.len() {
-                    self.config.menus.remove(self.editing_menu);
-                    self.editing_menu = self.editing_menu.min(self.config.menus.len().saturating_sub(1));
+            Message::DeleteMenu(i) => {
+                if i < self.config.menus.len() {
+                    self.config.menus.remove(i);
+                    // Later menus move up one place, and so do their open cards.
+                    let shift = |set: &HashSet<usize>| -> HashSet<usize> {
+                        set.iter().filter(|j| **j != i).map(|j| if *j > i { j - 1 } else { *j }).collect()
+                    };
+                    self.open_menus = shift(&self.open_menus);
+                    let menus_open: HashSet<usize> = self.open_appearance.iter().filter_map(|a| *a).collect();
+                    let keyboard = self.open_appearance.contains(&None);
+                    self.open_appearance = shift(&menus_open).into_iter().map(Some).collect();
+                    if keyboard {
+                        self.open_appearance.insert(None);
+                    }
                 }
             }
-            Message::RenameMenu(name) => {
-                let taken = self.config.menus.iter().enumerate().any(|(i, m)| i != self.editing_menu && m.name == name);
-                if let Some(m) = self.config.menus.get_mut(self.editing_menu)
+            Message::RenameMenu(i, name) => {
+                let taken = self.config.menus.iter().enumerate().any(|(j, m)| j != i && m.name == name);
+                if let Some(m) = self.config.menus.get_mut(i)
                     && !taken
                 {
                     let old = std::mem::replace(&mut m.name, name.clone());
@@ -932,46 +1118,52 @@ impl App {
                     }
                 }
             }
-            Message::SetMenuKind(kind) => {
-                if let Some(m) = self.config.menus.get_mut(self.editing_menu) {
+            Message::SetMenuKind(i, kind) => {
+                if let Some(m) = self.config.menus.get_mut(i) {
                     m.kind = kind;
                     fit_items(m);
                 }
             }
-            Message::SetMenuCancel(choice) => {
-                if let Some(m) = self.config.menus.get_mut(self.editing_menu) {
+            Message::SetMenuCancel(i, choice) => {
+                if let Some(m) = self.config.menus.get_mut(i) {
                     m.cancel = choice.0;
                 }
             }
-            Message::AddMenuItem => {
-                if let Some(m) = self.config.menus.get_mut(self.editing_menu) {
+            Message::SetMenuStyle(i, style) => {
+                if let Some(m) = self.config.menus.get_mut(i) {
+                    m.style = style;
+                }
+            }
+            Message::SetKeyboardStyle(style) => self.config.keyboard_style = style,
+            Message::AddMenuItem(i) => {
+                if let Some(m) = self.config.menus.get_mut(i) {
                     let label = format!("Item {}", m.items.len() + 1);
                     m.items.push(MenuItem { label, action: ButtonAction::Keys(Vec::new()), button: None });
                 }
             }
-            Message::RemoveMenuItem(i) => {
-                if let Some(m) = self.config.menus.get_mut(self.editing_menu)
-                    && i < m.items.len()
+            Message::RemoveMenuItem(i, item) => {
+                if let Some(m) = self.config.menus.get_mut(i)
+                    && item < m.items.len()
                 {
-                    m.items.remove(i);
+                    m.items.remove(item);
                 }
             }
-            Message::MoveMenuItem(i, up) => {
-                if let Some(m) = self.config.menus.get_mut(self.editing_menu) {
-                    let j = if up { i.checked_sub(1) } else { Some(i + 1).filter(|j| *j < m.items.len()) };
+            Message::MoveMenuItem(i, item, up) => {
+                if let Some(m) = self.config.menus.get_mut(i) {
+                    let j = if up { item.checked_sub(1) } else { Some(item + 1).filter(|j| *j < m.items.len()) };
                     if let Some(j) = j {
-                        m.items.swap(i, j);
+                        m.items.swap(item, j);
                     }
                 }
             }
-            Message::SetMenuItemLabel(i, label) => {
-                if let Some(item) = self.config.menus.get_mut(self.editing_menu).and_then(|m| m.items.get_mut(i)) {
-                    item.label = label;
+            Message::SetMenuItemLabel(i, item, label) => {
+                if let Some(it) = self.config.menus.get_mut(i).and_then(|m| m.items.get_mut(item)) {
+                    it.label = label;
                 }
             }
-            Message::SetMenuItemButton(i, choice) => {
-                if let Some(item) = self.config.menus.get_mut(self.editing_menu).and_then(|m| m.items.get_mut(i)) {
-                    item.button = choice.0;
+            Message::SetMenuItemButton(i, item, choice) => {
+                if let Some(it) = self.config.menus.get_mut(i).and_then(|m| m.items.get_mut(item)) {
+                    it.button = choice.0;
                 }
             }
             Message::InsertMotion(motion) => {
@@ -1110,7 +1302,7 @@ impl App {
         Task::perform(
             async move {
                 if daemon_up {
-                    call(Request::SetConfig(config)).await.map(|_| ())
+                    call(Request::SetConfig(Box::new(config))).await.map(|_| ())
                 } else {
                     tokio::task::spawn_blocking(move || config.save())
                         .await
@@ -1792,8 +1984,40 @@ impl App {
     }
 
     fn view_overlays<'a>(&'a self, names: &Names) -> Element<'a, Message> {
+        let mut col = column![self.view_keyboard_card()].spacing(16);
+        for (i, menu) in self.config.menus.iter().enumerate() {
+            col = col.push(self.view_menu_card(i, menu, names));
+        }
+        col.push(view_new_menu_card()).into()
+    }
+
+    fn view_keyboard_card(&self) -> Element<'_, Message> {
         let keyboard_open = self.status.as_ref().is_some_and(|s| s.overlay_visible);
-        let keyboard = section(
+        let appearance_open = self.open_appearance.contains(&None);
+        let mut rows: Vec<Element<'_, Message>> = vec![
+            row![
+                button(text(if keyboard_open { "Close it" } else { "Open it now" }).size(14))
+                    .style(button::secondary)
+                    .on_press(Message::ToggleOverlay),
+                disclosure("Appearance", appearance_open, Message::ToggleAppearance(None)),
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center)
+            .into(),
+        ];
+        if appearance_open {
+            let style = &self.config.keyboard_style;
+            rows.push(style_editor(style, Rc::new(Message::SetKeyboardStyle)));
+            let sample = crate::overlay::KeyboardView {
+                style: preview_style(style),
+                cursor: crate::keyboard::find("KEY_H").unwrap_or_default(),
+                latched: vec!["KEY_LEFTSHIFT".into()],
+                pressed: None,
+                closing: 0.0,
+            };
+            rows.push(preview(crate::overlay::draw::keyboard_panel(&sample)));
+        }
+        section(
             "On-screen keyboard",
             Some(
                 "A keyboard over everything, typed with the controller: D-pad or stick to move, A to \
@@ -1801,60 +2025,66 @@ impl App {
                  to a button or gesture to open it from the controller."
                     .into(),
             ),
-            vec![
-                button(text(if keyboard_open { "Close it" } else { "Open it now" }).size(14))
-                    .style(button::secondary)
-                    .on_press(Message::ToggleOverlay)
-                    .into(),
-            ],
-        );
-        column![keyboard, self.view_menus(names)].spacing(16).into()
+            rows,
+        )
     }
 
-    fn view_menus<'a>(&'a self, names: &Names) -> Element<'a, Message> {
-        let current = self.config.menus.get(self.editing_menu);
-        let mut rows: Vec<Element<'a, Message>> = vec![
-            row![
-                dropdown(names.menus.clone(), current.map(|m| m.name.clone()), Message::EditMenu)
-                    .placeholder("No menus")
-                    .width(180),
-                field("Menu name", current.map(|m| m.name.as_str()).unwrap_or(""))
-                    .on_input_maybe(current.is_some().then_some(Message::RenameMenu))
-                    .width(180),
-                space::horizontal(),
-                dropdown(MenuKindTag::ALL, None::<MenuKindTag>, Message::NewMenu).placeholder("+ New menu…").width(220),
-                button(text("Delete")).style(button::danger).on_press_maybe(current.is_some().then_some(Message::DeleteMenu)),
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center)
-            .into(),
-        ];
-        let Some(menu) = current else {
-            rows.push(text("Create a menu, then open it from a profile with the \"Open menu…\" action.").color(MUTED_COLOR).into());
-            return section("Menus", Some(MENUS_HELP.into()), rows);
-        };
-        let mi = self.editing_menu;
+    /// A menu as its own collapsible card: a summary line, or the full editor when open.
+    fn view_menu_card<'a>(&'a self, mi: usize, menu: &'a Menu, names: &Names) -> Element<'a, Message> {
+        let open = self.open_menus.contains(&mi);
+        let problem = menu.items.iter().find_map(|item| action_problem(&item.action, names));
+        let chevron = if open { "▾" } else { "▸" };
+        let title = text(format!("{chevron}  {}", if menu.name.is_empty() { "(unnamed)" } else { &menu.name })).size(18);
+        let title = if problem.is_some() { title.color(ERROR_COLOR) } else { title };
+        let items = menu.items.iter().filter(|i| !i.label.is_empty() || !matches!(i.action, ButtonAction::Disabled)).count();
+        let mut header = row![
+            button(title).style(button::text).padding(0).on_press(Message::ToggleMenu(mi)),
+            text(format!("{} · {items} item{}", menu.kind.tag().short(), if items == 1 { "" } else { "s" }))
+                .size(13)
+                .color(MUTED_COLOR),
+            space::horizontal(),
+        ]
+        .spacing(12)
+        .align_y(Alignment::Center);
+        if let Some(problem) = &problem {
+            header = header.push(text(format!("⚠ {problem}")).size(12).color(ERROR_COLOR));
+        }
+        header = header.push(button(text("Delete").size(13)).style(button::danger).on_press(Message::DeleteMenu(mi)));
+        let mut col = column![header].spacing(12);
+        if open {
+            col = col.push(self.view_menu_editor(mi, menu, names));
+        }
+        container(col).padding(14).width(Length::Fill).style(style::card).into()
+    }
+
+    fn view_menu_editor<'a>(&'a self, mi: usize, menu: &'a Menu, names: &Names) -> Element<'a, Message> {
+        let mut rows: Vec<Element<'a, Message>> = vec![labeled(
+            "Name",
+            field("Menu name", &menu.name).on_input(move |n| Message::RenameMenu(mi, n)).width(240).into(),
+        )];
 
         // Kind and its settings.
-        let kind_tag = menu.kind.tag();
-        let mut kind_row = row![dropdown(MenuKindTag::ALL, Some(kind_tag), |t| Message::SetMenuKind(MenuKind::default_for(t))).width(260)]
+        let mut kind_row = row![dropdown(MenuKindTag::ALL, Some(menu.kind.tag()), move |t| Message::SetMenuKind(mi, MenuKind::default_for(t))).width(280)]
             .spacing(8)
             .align_y(Alignment::Center);
         match menu.kind {
             MenuKind::Radial { stick } => {
                 kind_row = kind_row.push(text("aim with")).push(
-                    dropdown([Stick::Left, Stick::Right], Some(stick), |s| Message::SetMenuKind(MenuKind::Radial { stick: s })).width(150),
+                    dropdown([Stick::Left, Stick::Right], Some(stick), move |s| Message::SetMenuKind(mi, MenuKind::Radial { stick: s })).width(150),
                 );
             }
-            MenuKind::Cascade { cluster } => {
-                kind_row = kind_row.push(text("slots on")).push(
-                    dropdown([Cluster::DPad, Cluster::FaceButtons], Some(cluster), |c| Message::SetMenuKind(MenuKind::Cascade { cluster: c }))
-                        .width(150),
+            MenuKind::Directional { cluster } => {
+                kind_row = kind_row.push(text("on the")).push(
+                    dropdown([Cluster::DPad, Cluster::FaceButtons], Some(cluster), move |c| {
+                        Message::SetMenuKind(mi, MenuKind::Directional { cluster: c })
+                    })
+                    .width(150),
                 );
             }
             MenuKind::Carousel { controls } => {
                 kind_row = kind_row.push(text("cycle with")).push(
-                    dropdown(CarouselControls::ALL, Some(controls), |c| Message::SetMenuKind(MenuKind::Carousel { controls: c })).width(200),
+                    dropdown(CarouselControls::ALL, Some(controls), move |c| Message::SetMenuKind(mi, MenuKind::Carousel { controls: c }))
+                        .width(200),
                 );
             }
             MenuKind::List | MenuKind::Buttons => {}
@@ -1862,60 +2092,70 @@ impl App {
         rows.push(labeled("Kind", kind_row.into()));
         let mut cancels = vec![CancelChoice(None)];
         cancels.extend(Button::ALL.into_iter().map(|b| CancelChoice(Some(b))));
+        let default_cancel = Menu { cancel: None, ..menu.clone() }.cancel_button();
         rows.push(labeled(
             "Back / close",
             row![
-                dropdown(cancels, Some(CancelChoice(menu.cancel)), Message::SetMenuCancel).width(200),
-                text(format!("(default: {})", crate::menu::button_badge(Menu { cancel: None, ..menu.clone() }.cancel_button())))
-                    .size(12)
-                    .color(MUTED_COLOR),
+                dropdown(cancels, Some(CancelChoice(menu.cancel)), move |c| Message::SetMenuCancel(mi, c)).width(200),
+                text(format!("(default: {})", crate::menu::button_badge(default_cancel))).size(12).color(MUTED_COLOR),
             ]
             .spacing(8)
             .align_y(Alignment::Center)
             .into(),
         ));
 
+        // Appearance, with a live preview.
+        let appearance_open = self.open_appearance.contains(&Some(mi));
+        rows.push(labeled("", disclosure("Appearance", appearance_open, Message::ToggleAppearance(Some(mi)))));
+        if appearance_open {
+            rows.push(style_editor(&menu.style, Rc::new(move |s| Message::SetMenuStyle(mi, s))));
+        }
+        if let Some(view) = MenuSession::open(std::slice::from_ref(menu), &menu.name, Opener::default())
+            .and_then(|s| s.view(std::slice::from_ref(menu)))
+        {
+            let view = crate::menu::MenuView { style: preview_style(&menu.style), ..view };
+            rows.push(preview(crate::overlay::draw::menu_panel(&view)));
+        }
+
         // Items.
-        let cascade_slots = match menu.kind {
-            MenuKind::Cascade { cluster } => Some(cluster.slots()),
+        let direction_slots = match menu.kind {
+            MenuKind::Directional { cluster } => Some(cluster.slots()),
             _ => None,
         };
         let quick = matches!(menu.kind, MenuKind::Buttons);
         let last = menu.items.len().saturating_sub(1);
-        let mut items = column![].spacing(8);
+        let mut items = column![text("Items").size(16)].spacing(8);
         for (i, item) in menu.items.iter().enumerate() {
             let target = Target::MenuItem(mi, i);
-            let name: String = match cascade_slots {
+            let name: String = match direction_slots {
                 Some(slots) => format!("{}  {}", crate::menu::button_badge(slots[i]), ["up", "right", "down", "left"][i]),
                 None => format!("{}.", i + 1),
             };
             let mut line = row![
-                text(name).width(70),
-                field("Label", &item.label).on_input(move |l| Message::SetMenuItemLabel(i, l)).width(150),
+                container(text(name)).width(70).padding(iced::Padding::ZERO.top(6)),
+                field("Label", &item.label).on_input(move |l| Message::SetMenuItemLabel(mi, i, l)).width(150),
             ]
             .spacing(8)
             .align_y(Alignment::Start);
             if quick {
                 let mut options = vec![QuickChoice(None)];
                 options.extend(Button::ALL.into_iter().map(|b| QuickChoice(Some(b))));
-                line = line.push(
-                    tooltip(
-                        dropdown(options, Some(QuickChoice(item.button)), move |c| Message::SetMenuItemButton(i, c)).width(90),
-                        container(text("Quick-select button").size(13)).padding(8).style(style::tooltip),
-                        tooltip::Position::Top,
-                    ),
-                );
+                line = line.push(tooltip(
+                    dropdown(options, Some(QuickChoice(item.button)), move |c| Message::SetMenuItemButton(mi, i, c)).width(90),
+                    container(text("Quick-select button").size(13)).padding(8).style(style::tooltip),
+                    tooltip::Position::Top,
+                ));
             }
             line = line.push(action_editor(&item.action, Button::South, MENU_ITEM_KINDS, set_action(target), KeyField::root(target), names));
-            if cascade_slots.is_none() {
+            if direction_slots.is_none() {
                 let small = |label: &'static str, msg: Option<Message>| {
                     button(text(label).size(13)).style(button::secondary).on_press_maybe(msg)
                 };
                 line = line
                     .push(space::horizontal())
-                    .push(small("↑", (i > 0).then_some(Message::MoveMenuItem(i, true))))
-                    .push(small("↓", (i < last).then_some(Message::MoveMenuItem(i, false))))
-                    .push(small("✕", Some(Message::RemoveMenuItem(i))));
+                    .push(small("↑", (i > 0).then_some(Message::MoveMenuItem(mi, i, true))))
+                    .push(small("↓", (i < last).then_some(Message::MoveMenuItem(mi, i, false))))
+                    .push(small("✕", Some(Message::RemoveMenuItem(mi, i))));
             }
             let mut boxed = column![line].spacing(4);
             if let Some(problem) = action_problem(&item.action, names) {
@@ -1923,11 +2163,15 @@ impl App {
             }
             items = items.push(container(boxed).padding(8).style(style::inset));
         }
-        rows.push(items.into());
-        if cascade_slots.is_none() {
-            rows.push(button(text("+ Add item").size(13)).style(button::secondary).on_press(Message::AddMenuItem).into());
+        if direction_slots.is_none() {
+            items = items.push(button(text("+ Add item").size(13)).style(button::secondary).on_press(Message::AddMenuItem(mi)));
+        } else {
+            items = items.push(
+                text("Give a direction \"Open menu…\" to make it open another menu.").size(12).color(MUTED_COLOR),
+            );
         }
-        section("Menus", Some(MENUS_HELP.into()), rows)
+        rows.push(items.into());
+        column(rows).spacing(10).into()
     }
 
     fn view_profile_bar(&self) -> Element<'_, Message> {
@@ -2072,6 +2316,7 @@ fn unreleased_holds(m: &Macro) -> usize {
     }
     held.len()
 }
+
 
 
 /// A dropdown in the app's style: stands out from cards, with a raised menu.
@@ -2882,8 +3127,8 @@ const MENU_ITEM_KINDS: &[ActionKind] = &[
 ];
 
 const MENUS_HELP: &str = "On-screen menus you open with the \"Open menu…\" action from any button, \
-    gesture or combo. Radial: hold the opening button, aim a stick, release to choose. Cascade: four \
-    slots on the D-pad or face buttons; a slot can open another menu. List: move with the D-pad or \
+    gesture or combo. Radial: hold the opening button, aim a stick, release to choose. Directional: four \
+    slots on the D-pad or face buttons; give a slot \"Open menu…\" to open another menu. List: move with the D-pad or \
     left stick, A chooses. Button menu: a list where items also have their own button. Carousel: cycle \
     with the chosen controls, A chooses. Choosing an item taps its action like a button press.";
 
@@ -3825,12 +4070,13 @@ mod tests {
     #[test]
     fn menu_editor_creates_fits_renames_and_validates() {
         let mut app = app();
-        let _ = app.update(Message::NewMenu(MenuKindTag::Cascade));
-        assert_eq!(app.config.menus[0].items.len(), 4, "a cascade has four slots");
-        let _ = app.update(Message::SetMenuKind(MenuKind::List));
-        let _ = app.update(Message::AddMenuItem);
+        let _ = app.update(Message::NewMenu(MenuKindTag::Directional));
+        assert_eq!(app.config.menus[0].items.len(), 4, "a directional menu has four slots");
+        assert!(app.open_menus.contains(&0), "a new menu opens as its own card");
+        let _ = app.update(Message::SetMenuKind(0, MenuKind::List));
+        let _ = app.update(Message::AddMenuItem(0));
         assert_eq!(app.config.menus[0].items.len(), 5);
-        let _ = app.update(Message::SetMenuKind(MenuKind::Cascade { cluster: Cluster::FaceButtons }));
+        let _ = app.update(Message::SetMenuKind(0, MenuKind::Directional { cluster: Cluster::FaceButtons }));
         assert_eq!(app.config.menus[0].items.len(), 4, "switching back trims to four slots");
 
         // Items take any action; the key picker writes into them.
@@ -3840,17 +4086,42 @@ mod tests {
 
         // A second menu opened from the first and from a profile follows a rename.
         let _ = app.update(Message::NewMenu(MenuKindTag::Radial));
-        let _ = app.update(Message::RenameMenu("Weapons".into()));
+        let _ = app.update(Message::RenameMenu(1, "Weapons".into()));
         app.config.menus[0].items[1].action = ButtonAction::OpenMenu("Weapons".into());
         app.config.profiles[0].set_button(Button::Select, ButtonAction::OpenMenu("Weapons".into()));
-        let _ = app.update(Message::RenameMenu("Wheel".into()));
+        let _ = app.update(Message::RenameMenu(1, "Wheel".into()));
         assert_eq!(app.config.menus[0].items[1].action, ButtonAction::OpenMenu("Wheel".into()));
         assert_eq!(app.config.profiles[0].button(Button::Select), &ButtonAction::OpenMenu("Wheel".into()));
         assert_eq!(app.validate(), None);
 
-        let _ = app.update(Message::DeleteMenu);
+        // Deleting the first menu shifts the open cards along with the menus.
+        let _ = app.update(Message::ToggleMenu(0));
+        let _ = app.update(Message::ToggleAppearance(Some(1)));
+        let _ = app.update(Message::DeleteMenu(0));
+        assert_eq!(app.config.menus[0].name, "Wheel");
+        assert!(app.open_menus.contains(&0) && app.open_appearance.contains(&Some(0)));
+        let _ = app.update(Message::DeleteMenu(0));
         let err = app.validate().unwrap();
         assert!(err.contains("missing menu"), "{err}");
+    }
+
+    #[test]
+    fn menu_and_keyboard_style_edits() {
+        let mut app = app();
+        let _ = app.update(Message::NewMenu(MenuKindTag::List));
+        let style = OverlayStyle {
+            position: ScreenPosition::BottomRight,
+            scale: 1.5,
+            background: Paint::new("#000000", 0.5),
+            ..OverlayStyle::default()
+        };
+        let _ = app.update(Message::SetMenuStyle(0, style.clone()));
+        assert_eq!(app.config.menus[0].style, style);
+        let _ = app.update(Message::SetKeyboardStyle(OverlayStyle::default()));
+        assert_eq!(app.config.keyboard_style.position, ScreenPosition::Center);
+        // Previews keep colors but never grow past 100% so they fit the window.
+        assert_eq!(preview_style(&style).scale, 1.0);
+        assert_eq!(preview_style(&style).background, style.background);
     }
 
     #[test]

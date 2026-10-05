@@ -17,7 +17,7 @@ pub enum Request {
     Status,
     GetConfig,
     /// Replace profiles/ignore list. The daemon keeps its current `enabled` and active profile.
-    SetConfig(Config),
+    SetConfig(Box<Config>),
     /// Re-read the config file from disk.
     Reload,
     SetEnabled(bool),

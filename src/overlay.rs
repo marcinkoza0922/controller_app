@@ -51,6 +51,9 @@ pub enum OverlayView {
 /// The on-screen keyboard's state.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KeyboardView {
+    /// Set by the daemon from the config.
+    #[serde(default = "crate::config::OverlayStyle::keyboard")]
+    pub style: crate::config::OverlayStyle,
     pub cursor: Cursor,
     /// Modifiers latched for the next key (evdev names).
     pub latched: Vec<String>,
@@ -108,6 +111,7 @@ impl OverlayController {
     pub fn view(&self, now: Instant) -> KeyboardView {
         let name = |k: KeyCode| format!("{k:?}");
         KeyboardView {
+            style: crate::config::OverlayStyle::keyboard(),
             cursor: self.cursor,
             latched: self.latched.iter().map(|k| name(*k)).collect(),
             pressed: self.pressed.map(name),
@@ -281,13 +285,12 @@ pub fn run() -> anyhow::Result<()> {
 }
 
 mod ui {
-    use std::{f32::consts::TAU, time::Duration};
+    use std::time::Duration;
 
     use iced::{
-        Alignment, Border, Color, Element, Length, Subscription, Task,
-        alignment::Vertical,
+        Color, Element, Subscription, Task,
         futures::{SinkExt, channel::mpsc},
-        widget::{column, container, pin, progress_bar, row, space, stack, text},
+        widget::space,
     };
     use iced_layershell::{
         reexport::{Anchor, KeyboardInteractivity, Layer},
@@ -296,22 +299,8 @@ mod ui {
     };
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-    use super::{KeyboardView, OverlayView};
-    use crate::{
-        config::MenuKind,
-        ipc::{self, Request},
-        keyboard,
-        menu::MenuView,
-    };
-
-    const UNIT: f32 = 46.0;
-    const GAP: f32 = 4.0;
-    const TEXT: Color = Color::WHITE;
-    const MUTED: Color = Color { r: 0.75, g: 0.78, b: 0.82, a: 1.0 };
-    const PANEL: Color = Color { r: 0.086, g: 0.094, b: 0.11, a: 0.92 };
-    const CELL: Color = Color { r: 0.19, g: 0.2, b: 0.235, a: 0.95 };
-    const SELECTED: Color = Color { r: 0.18, g: 0.36, b: 0.69, a: 1.0 };
-    const ACCENT: Color = Color { r: 0.31, g: 0.63, b: 1.0, a: 1.0 };
+    use super::{OverlayView, draw};
+    use crate::ipc::{self, Request};
 
     #[to_layer_message]
     #[derive(Debug, Clone)]
@@ -338,7 +327,7 @@ mod ui {
     pub fn run() -> anyhow::Result<()> {
         let (anchor, size) = idle();
         iced_layershell::application(boot, namespace, update, view)
-            .style(|_, _| iced::theme::Style { background_color: Color::TRANSPARENT, text_color: TEXT })
+            .style(|_, _| iced::theme::Style { background_color: Color::TRANSPARENT, text_color: Color::WHITE })
             .subscription(subscription)
             .settings(Settings {
                 layer_settings: LayerShellSettings {
@@ -408,100 +397,176 @@ mod ui {
         })
     }
 
+    fn view(state: &Overlay) -> Element<'_, Message> {
+        match &state.view {
+            None => space().into(),
+            Some(OverlayView::Keyboard(k)) => draw::place(draw::keyboard_panel(k), &k.style),
+            Some(OverlayView::Menu(m)) => draw::place(draw::menu_panel(m), &m.style),
+        }
+    }
+}
 
-    fn panel(bg: Color) -> impl Fn(&iced::Theme) -> container::Style {
+/// Drawing for overlays, generic over the message type so the settings GUI can show the
+/// same thing as a live preview.
+pub mod draw {
+    use std::f32::consts::TAU;
+
+    use iced::{
+        Alignment, Border, Color, Element, Length, Shadow, Vector,
+        alignment::{Horizontal, Vertical},
+        widget::{column, container, pin, progress_bar, row, space, stack, text},
+    };
+
+    use super::KeyboardView;
+    use crate::{
+        config::{MenuKind, OverlayStyle, Paint, ScreenPosition},
+        keyboard,
+        menu::MenuView,
+    };
+
+    const UNIT: f32 = 46.0;
+    const GAP: f32 = 4.0;
+    /// Distance from the screen edge for edge and corner positions.
+    const EDGE_MARGIN: f32 = 40.0;
+
+    /// Resolved colors for one overlay.
+    #[derive(Clone, Copy)]
+    struct Colors {
+        background: Color,
+        background_text: Color,
+        muted: Color,
+        item: Color,
+        item_text: Color,
+        selected: Color,
+        selected_text: Color,
+    }
+
+    fn paint(p: &Paint, fallback: [u8; 3]) -> Color {
+        let [r, g, b] = p.rgb().unwrap_or(fallback);
+        Color::from_rgba8(r, g, b, p.opacity.clamp(0.0, 1.0))
+    }
+
+    /// White on dark colors, black on light ones.
+    fn text_on(c: Color) -> Color {
+        let luminance = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+        if luminance > 0.6 { Color::from_rgb(0.08, 0.08, 0.1) } else { Color::WHITE }
+    }
+
+    fn colors(style: &OverlayStyle) -> Colors {
+        let background = paint(&style.background, [0x16, 0x18, 0x1c]);
+        let item = paint(&style.items, [0x30, 0x34, 0x3c]);
+        let selected = paint(&style.selected, [0x2f, 0x5d, 0xb0]);
+        let background_text = text_on(background);
+        Colors {
+            background,
+            background_text,
+            muted: Color { a: 0.75, ..background_text },
+            item,
+            item_text: text_on(item),
+            selected,
+            selected_text: text_on(selected),
+        }
+    }
+
+    /// Positions an overlay panel on the full-screen surface.
+    pub fn place<'a, M: 'a>(panel: Element<'a, M>, style: &OverlayStyle) -> Element<'a, M> {
+        let (col, row) = style.position.cell();
+        let horizontal = [Horizontal::Left, Horizontal::Center, Horizontal::Right][col];
+        let vertical = [Vertical::Top, Vertical::Center, Vertical::Bottom][row];
+        let margin = if style.position == ScreenPosition::Center { 0.0 } else { EDGE_MARGIN };
+        container(panel)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(horizontal)
+            .align_y(vertical)
+            .padding(margin)
+            .into()
+    }
+
+    fn panel_style(c: Colors) -> impl Fn(&iced::Theme) -> container::Style {
         move |_| container::Style {
-            background: Some(bg.into()),
-            border: Border { width: 1.0, radius: 14.0.into(), color: Color::from_rgba(1.0, 1.0, 1.0, 0.15) },
+            background: Some(c.background.into()),
+            border: Border { width: 1.0, radius: 14.0.into(), color: Color { a: 0.15, ..c.background_text } },
+            shadow: Shadow { color: Color { a: 0.35 * c.background.a, ..Color::BLACK }, offset: Vector::new(0.0, 6.0), blur_radius: 18.0 },
             ..container::Style::default()
         }
     }
 
-    fn cell(selected: bool) -> impl Fn(&iced::Theme) -> container::Style {
+    fn cell_style(c: Colors, selected: bool) -> impl Fn(&iced::Theme) -> container::Style {
         move |_| container::Style {
-            background: Some(if selected { SELECTED } else { CELL }.into()),
+            background: Some(if selected { c.selected } else { c.item }.into()),
             border: Border {
                 width: if selected { 2.0 } else { 1.0 },
                 radius: 9.0.into(),
-                color: if selected { Color::WHITE } else { Color::from_rgba(1.0, 1.0, 1.0, 0.12) },
+                color: if selected { c.selected_text } else { Color { a: 0.12, ..c.item_text } },
             },
             ..container::Style::default()
         }
     }
 
-    fn view(state: &Overlay) -> Element<'_, Message> {
-        match &state.view {
-            None => space().into(),
-            Some(OverlayView::Keyboard(k)) => container(keyboard_panel(k))
-                .center_x(Length::Fill)
-                .height(Length::Fill)
-                .align_y(Vertical::Bottom)
-                .padding(40)
-                .into(),
-            Some(OverlayView::Menu(m)) => container(menu_panel(m)).center(Length::Fill).into(),
-        }
-    }
-
-    fn keyboard_panel(v: &KeyboardView) -> Element<'_, Message> {
+    pub fn keyboard_panel<'a, M: 'a>(v: &KeyboardView) -> Element<'a, M> {
+        let c = colors(&v.style);
+        let s = v.style.scale.clamp(0.5, 2.0);
+        let unit = UNIT * s;
+        let gap = GAP * s;
         let cursor_code = keyboard::key_at(v.cursor).code;
-        let mut rows = column![].spacing(GAP);
+        let mut rows = column![].spacing(gap);
         for keys in keyboard::MAIN.iter() {
-            let mut line = row![].spacing(GAP);
+            let mut line = row![].spacing(gap);
             for key in keys.iter() {
-                let width = key.width * (UNIT + GAP) - GAP;
+                let width = key.width * (unit + gap) - gap;
                 if key.code.is_empty() {
-                    line = line.push(space().width(width).height(UNIT));
+                    line = line.push(space().width(width).height(unit));
                     continue;
                 }
-                let selected = key.code == cursor_code;
+                let selected = key.code == cursor_code || v.pressed.as_deref() == Some(key.code);
                 let latched = v.latched.iter().any(|l| l == key.code);
-                let held = v.pressed.as_deref() == Some(key.code);
-                let (bg, border) = if held {
-                    (ACCENT, Color::WHITE)
-                } else if selected {
-                    (SELECTED, Color::WHITE)
+                let (bg, fg, border) = if selected {
+                    (c.selected, c.selected_text, c.selected_text)
                 } else if latched {
-                    (Color::from_rgb8(0x2e, 0x7d, 0x46), Color::from_rgb8(0x3f, 0xb9, 0x50))
+                    let green = Color::from_rgb8(0x2e, 0x7d, 0x46);
+                    (green, Color::WHITE, Color::from_rgb8(0x3f, 0xb9, 0x50))
                 } else {
-                    (CELL, Color::from_rgba(1.0, 1.0, 1.0, 0.12))
+                    (c.item, c.item_text, Color { a: 0.12, ..c.item_text })
                 };
-                let cap = container(text(key.label).size(if selected { 16 } else { 14 }).color(TEXT))
+                let cap = container(text(key.label).size(if selected { 16.0 } else { 14.0 } * s).color(fg))
                     .center_x(width)
-                    .center_y(UNIT)
+                    .center_y(unit)
                     .style(move |_| container::Style {
                         background: Some(bg.into()),
-                        border: Border { width: if selected { 2.0 } else { 1.0 }, radius: 7.0.into(), color: border },
+                        border: Border { width: if selected { 2.0 } else { 1.0 }, radius: (7.0 * s).into(), color: border },
                         ..container::Style::default()
                     });
                 line = line.push(cap);
             }
             rows = rows.push(line);
         }
+        let hint = |t: &'static str| text(t).size(14.0 * s).color(c.background_text);
         let legend = row![
-            text("A  press").size(14),
-            text("X  backspace").size(14),
-            text("Y  space").size(14),
-            text("Start  enter").size(14),
-            text("Shift/Ctrl/Alt latch for the next key").size(14),
+            hint("A  press"),
+            hint("X  backspace"),
+            hint("Y  space"),
+            hint("Start  enter"),
+            hint("Shift/Ctrl/Alt latch for the next key"),
             space::horizontal(),
-            text("hold B to close").size(14),
+            hint("hold B to close"),
         ]
-        .spacing(18)
+        .spacing(18.0 * s)
         .align_y(Alignment::Center);
-        let mut body = column![rows, legend].spacing(12).width(15.0 * (UNIT + GAP));
+        let mut body = column![rows, legend].spacing(12.0 * s).width(15.0 * (unit + gap));
         if v.closing > 0.0 {
-            body = body.push(progress_bar(0.0..=1.0, v.closing).girth(4));
+            body = body.push(progress_bar(0.0..=1.0, v.closing).girth(4.0 * s));
         }
-        container(body).padding(16).style(panel(PANEL)).into()
+        container(body).padding(16.0 * s).style(panel_style(c)).into()
     }
 
     /// An item's label with its button badge and a ▸ for submenus.
-    fn item_text<'a>(label: &str, button: Option<&str>, submenu: bool, size: u32) -> Element<'a, Message> {
-        let mut line = row![].spacing(8).align_y(Alignment::Center);
+    fn item_text<'a, M: 'a>(label: &str, button: Option<&str>, submenu: bool, size: f32, fg: Color) -> Element<'a, M> {
+        let mut line = row![].spacing(size * 0.5).align_y(Alignment::Center);
         if let Some(b) = button.filter(|b| !b.is_empty()) {
             line = line.push(
-                container(text(b.to_string()).size(size - 2).color(Color::BLACK))
-                    .padding([1, 6])
+                container(text(b.to_string()).size(size - 2.0).color(Color::BLACK))
+                    .padding([1.0, size * 0.4])
                     .style(|_| container::Style {
                         background: Some(Color::from_rgb(0.85, 0.87, 0.9).into()),
                         border: Border { radius: 5.0.into(), ..Border::default() },
@@ -509,111 +574,115 @@ mod ui {
                     }),
             );
         }
-        line = line.push(text(label.to_string()).size(size).color(TEXT));
+        line = line.push(text(label.to_string()).size(size).color(fg));
         if submenu {
-            line = line.push(text("▸").size(size).color(MUTED));
+            line = line.push(text("▸").size(size).color(Color { a: 0.7, ..fg }));
         }
         line.into()
     }
 
-    fn menu_panel(m: &MenuView) -> Element<'_, Message> {
-        let body: Element<'_, Message> = match m.kind {
-            MenuKind::Radial { .. } => radial(m),
-            MenuKind::Cascade { .. } => cascade(m),
-            MenuKind::List | MenuKind::Buttons => list(m),
-            MenuKind::Carousel { .. } => carousel(m),
+    pub fn menu_panel<'a, M: 'a>(m: &MenuView) -> Element<'a, M> {
+        let c = colors(&m.style);
+        let s = m.style.scale.clamp(0.5, 2.0);
+        let body: Element<'a, M> = match m.kind {
+            MenuKind::Radial { .. } => radial(m, c, s),
+            MenuKind::Directional { .. } => directional(m, c, s),
+            MenuKind::List | MenuKind::Buttons => list(m, c, s),
+            MenuKind::Carousel { .. } => carousel(m, c, s),
         };
         let depth = if m.depth > 0 { format!("  ({} deep)", m.depth + 1) } else { String::new() };
         container(
             column![
-                text(format!("{}{depth}", m.title)).size(20).color(TEXT),
+                text(format!("{}{depth}", m.title)).size(20.0 * s).color(c.background_text),
                 body,
-                text(m.hint.clone()).size(13).color(MUTED),
+                text(m.hint.clone()).size(13.0 * s).color(c.muted),
             ]
-            .spacing(14)
+            .spacing(14.0 * s)
             .align_x(Alignment::Center),
         )
-        .padding(22)
-        .style(panel(PANEL))
+        .padding(22.0 * s)
+        .style(panel_style(c))
         .into()
     }
 
-    fn radial(m: &MenuView) -> Element<'_, Message> {
-        const SIZE: f32 = 420.0;
-        const RADIUS: f32 = 150.0;
-        const CELL_W: f32 = 120.0;
-        const CELL_H: f32 = 44.0;
-        let n = m.items.len().max(1) as f32;
-        let mut layers: Vec<Element<'_, Message>> = vec![space().width(SIZE).height(SIZE).into()];
-        for (i, item) in m.items.iter().enumerate() {
-            // First item at the top, then clockwise.
-            let angle = i as f32 / n * TAU;
-            let (x, y) = (SIZE / 2.0 + RADIUS * angle.sin(), SIZE / 2.0 - RADIUS * angle.cos());
-            let selected = m.selected == Some(i);
-            let content = container(item_text(&item.label, None, item.submenu, 15))
-                .center_x(CELL_W)
-                .center_y(CELL_H)
-                .style(cell(selected));
-            layers.push(pin(content).x(x - CELL_W / 2.0).y(y - CELL_H / 2.0).into());
-        }
-        let center = container(text("●").size(18).color(MUTED)).center_x(30).center_y(30);
-        layers.push(pin(center).x(SIZE / 2.0 - 15.0).y(SIZE / 2.0 - 15.0).into());
-        stack(layers).width(SIZE).height(SIZE).into()
+    fn item_cell<'a, M: 'a>(m: &MenuView, i: usize, c: Colors, size: f32) -> (Element<'a, M>, bool) {
+        let item = &m.items[i];
+        let selected = m.selected == Some(i);
+        let fg = if selected { c.selected_text } else { c.item_text };
+        (item_text(&item.label, item.button.as_deref(), item.submenu, size, fg), selected)
     }
 
-    fn cascade(m: &MenuView) -> Element<'_, Message> {
-        let slot = |i: usize| -> Element<'_, Message> {
+    fn radial<'a, M: 'a>(m: &MenuView, c: Colors, s: f32) -> Element<'a, M> {
+        let size = 420.0 * s;
+        let radius = 150.0 * s;
+        let (cell_w, cell_h) = (120.0 * s, 44.0 * s);
+        let n = m.items.len().max(1) as f32;
+        let mut layers: Vec<Element<'a, M>> = vec![space().width(size).height(size).into()];
+        for i in 0..m.items.len() {
+            // First item at the top, then clockwise.
+            let angle = i as f32 / n * TAU;
+            let (x, y) = (size / 2.0 + radius * angle.sin(), size / 2.0 - radius * angle.cos());
+            let (label, selected) = item_cell(m, i, c, 15.0 * s);
+            let content = container(label).center_x(cell_w).center_y(cell_h).style(cell_style(c, selected));
+            layers.push(pin(content).x(x - cell_w / 2.0).y(y - cell_h / 2.0).into());
+        }
+        let dot = 30.0 * s;
+        let center = container(text("●").size(18.0 * s).color(c.muted)).center_x(dot).center_y(dot);
+        layers.push(pin(center).x(size / 2.0 - dot / 2.0).y(size / 2.0 - dot / 2.0).into());
+        stack(layers).width(size).height(size).into()
+    }
+
+    fn directional<'a, M: 'a>(m: &MenuView, c: Colors, s: f32) -> Element<'a, M> {
+        let (w, h) = (190.0 * s, 52.0 * s);
+        let slot = |i: usize| -> Element<'a, M> {
             match m.items.get(i).filter(|item| !item.label.is_empty()) {
-                Some(item) => container(item_text(&item.label, item.button.as_deref(), item.submenu, 16))
-                    .center_x(190)
-                    .center_y(52)
-                    .style(cell(false))
+                Some(item) => container(item_text(&item.label, item.button.as_deref(), item.submenu, 16.0 * s, c.item_text))
+                    .center_x(w)
+                    .center_y(h)
+                    .style(cell_style(c, false))
                     .into(),
-                None => space().width(190).height(52).into(),
+                None => space().width(w).height(h).into(),
             }
         };
         column![
             slot(0),
-            row![slot(3), space().width(40), slot(1)].align_y(Alignment::Center),
+            row![slot(3), space().width(40.0 * s), slot(1)].align_y(Alignment::Center),
             slot(2),
         ]
-        .spacing(10)
+        .spacing(10.0 * s)
         .align_x(Alignment::Center)
         .into()
     }
 
-    fn list(m: &MenuView) -> Element<'_, Message> {
-        let mut col = column![].spacing(6).width(360);
-        for (i, item) in m.items.iter().enumerate() {
-            let selected = m.selected == Some(i);
-            col = col.push(
-                container(item_text(&item.label, item.button.as_deref(), item.submenu, 17))
-                    .padding([10, 14])
-                    .width(Length::Fill)
-                    .style(cell(selected)),
-            );
+    fn list<'a, M: 'a>(m: &MenuView, c: Colors, s: f32) -> Element<'a, M> {
+        let mut col = column![].spacing(6.0 * s).width(360.0 * s);
+        for i in 0..m.items.len() {
+            let (label, selected) = item_cell(m, i, c, 17.0 * s);
+            col = col.push(container(label).padding([10.0 * s, 14.0 * s]).width(Length::Fill).style(cell_style(c, selected)));
         }
         col.into()
     }
 
-    fn carousel(m: &MenuView) -> Element<'_, Message> {
+    fn carousel<'a, M: 'a>(m: &MenuView, c: Colors, s: f32) -> Element<'a, M> {
         let n = m.items.len();
         let selected = m.selected.unwrap_or(0);
-        let mut line = row![text("◀").size(22).color(MUTED)].spacing(12).align_y(Alignment::Center);
+        let arrow = |t: &'static str| text(t).size(22.0 * s).color(c.muted);
+        let mut line = row![arrow("◀")].spacing(12.0 * s).align_y(Alignment::Center);
         // The selected item in the middle, with up to two neighbors on each side.
         let shown = n.min(5) as i32;
         for offset in -(shown / 2)..=(shown - 1 - shown / 2) {
             let i = (selected as i32 + offset).rem_euclid(n as i32) as usize;
-            let item = &m.items[i];
             let big = offset == 0;
+            let fg = if big { c.selected_text } else { c.item_text };
+            let item = &m.items[i];
             line = line.push(
-                container(item_text(&item.label, None, item.submenu, if big { 19 } else { 14 }))
-                    .center_x(if big { 170 } else { 120 })
-                    .center_y(if big { 80 } else { 60 })
-                    .style(cell(big)),
+                container(item_text(&item.label, None, item.submenu, if big { 19.0 } else { 14.0 } * s, fg))
+                    .center_x(if big { 170.0 } else { 120.0 } * s)
+                    .center_y(if big { 80.0 } else { 60.0 } * s)
+                    .style(cell_style(c, big)),
             );
         }
-        line.push(text("▶").size(22).color(MUTED)).into()
+        line.push(arrow("▶")).into()
     }
 }
 

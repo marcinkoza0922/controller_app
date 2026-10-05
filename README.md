@@ -76,12 +76,14 @@ New Desktop profiles open it with a long press of Guide. It needs a compositor w
 The Overlays tab also holds on-screen **action menus**, shared by all profiles. Open one from any button, gesture or combo with the "Open menu…" action (or `controller_app menu <name>`). Choosing an item taps its action like a button press, so items can be keys, macros, toggles, the keyboard, or another menu.
 
 - **Radial**: hold the opening button, aim a stick at an item, release to choose it.
-- **Cascade**: four slots on the D-pad or face buttons. A slot fires its action or opens another menu.
+- **Directional**: four slots on the D-pad or face buttons. Give a slot the "Open menu…" action to chain menus into a cascade.
 - **List**: move with the D-pad or left stick; A chooses.
 - **Button menu**: a list whose items can also be chosen directly with their own button.
 - **Carousel**: cycle with the bumpers, triggers, D-pad or a stick; A chooses.
 
-B (or the menu's chosen back button) backs out of a submenu or closes the menu. Face-button cascades default to Select, since B is one of their slots. While a menu is open the controller drives it, and anything the mappings were holding is released. The overlay window stays running invisibly between uses, so menus appear instantly.
+B (or the menu's chosen back button) backs out of a submenu or closes the menu. Face-button directional menus default to Select, since B is one of their slots. While a menu is open the controller drives it, and anything the mappings were holding is released. The overlay window stays running invisibly between uses, so menus appear instantly.
+
+Each menu is a collapsible card on the Overlays tab, with a live preview; "Add a menu" at the bottom adds another. Under **Appearance**, each menu (and the keyboard) has its own screen position (a 3×3 grid of corners, edges and center, so it fits any monitor size or aspect ratio), size (50–200%), and color and opacity for the background, items and selected item. Text switches between light and dark to stay readable. Older configs with `cascade` menus still load.
 
 ## Gyro
 

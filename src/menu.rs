@@ -9,7 +9,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    config::{Button, ButtonAction, CarouselControls, Menu, MenuKind, Stick, Trigger},
+    config::{Button, ButtonAction, CarouselControls, Menu, MenuKind, OverlayStyle, Stick, Trigger},
     engine::Opener,
     input::{Axis, InputEvent},
 };
@@ -35,6 +35,8 @@ pub struct MenuView {
     pub depth: usize,
     /// Short reminder of the controls.
     pub hint: String,
+    #[serde(default)]
+    pub style: OverlayStyle,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -120,7 +122,7 @@ impl MenuSession {
 
     fn push(&mut self, menus: &[Menu], menu: usize) {
         let cursor = match menus[menu].kind {
-            MenuKind::Radial { .. } | MenuKind::Cascade { .. } => None,
+            MenuKind::Radial { .. } | MenuKind::Directional { .. } => None,
             MenuKind::List | MenuKind::Buttons | MenuKind::Carousel { .. } => Some(0),
         };
         self.stack.push(Frame { menu, cursor });
@@ -135,7 +137,7 @@ impl MenuSession {
         let frame = self.stack.last()?;
         let menu = menus.get(frame.menu)?;
         let slots = match menu.kind {
-            MenuKind::Cascade { cluster } => Some(cluster.slots()),
+            MenuKind::Directional { cluster } => Some(cluster.slots()),
             _ => None,
         };
         let items = menu
@@ -159,7 +161,7 @@ impl MenuSession {
                 let stick = if stick == Stick::Left { "left stick" } else { "right stick" };
                 format!("Aim the {stick}, release to choose · {cancel} {back}")
             }
-            MenuKind::Cascade { cluster } => format!("Press a {} direction · {cancel} {back}", cluster.to_string().to_lowercase()),
+            MenuKind::Directional { cluster } => format!("Press a {} direction · {cancel} {back}", cluster.to_string().to_lowercase()),
             MenuKind::List => format!("↑↓ move · A choose · {cancel} {back}"),
             MenuKind::Buttons => format!("Press an item's button, or ↑↓ and A · {cancel} {back}"),
             MenuKind::Carousel { controls } => format!("{controls} to cycle · A choose · {cancel} {back}"),
@@ -171,6 +173,7 @@ impl MenuSession {
             selected: frame.cursor,
             depth: self.stack.len() - 1,
             hint,
+            style: menu.style.clone(),
         })
     }
 
@@ -206,7 +209,7 @@ impl MenuSession {
             return self.back();
         }
         match menu.kind {
-            MenuKind::Cascade { cluster } => {
+            MenuKind::Directional { cluster } => {
                 let slot = cluster.slots().iter().position(|s| *s == b)?;
                 self.choose(menus, slot)
             }
@@ -288,7 +291,7 @@ impl MenuSession {
                 }
                 None
             }
-            MenuKind::Cascade { .. } => None,
+            MenuKind::Directional { .. } => None,
         }
     }
 
@@ -422,7 +425,7 @@ mod tests {
     }
 
     fn menu(name: &str, kind: MenuKind, items: Vec<MenuItem>) -> Menu {
-        Menu { name: name.into(), kind, items, cancel: None }
+        Menu { name: name.into(), kind, items, cancel: None, style: OverlayStyle::default() }
     }
 
     fn numbers(n: usize) -> Vec<MenuItem> {
@@ -486,10 +489,10 @@ mod tests {
         let menus = [
             menu(
                 "Root",
-                MenuKind::Cascade { cluster: Cluster::DPad },
+                MenuKind::Directional { cluster: Cluster::DPad },
                 vec![item("Up", key("KEY_U")), item("More", ButtonAction::OpenMenu("Sub".into()))],
             ),
-            menu("Sub", MenuKind::Cascade { cluster: Cluster::DPad }, vec![item("Deep", key("KEY_D"))]),
+            menu("Sub", MenuKind::Directional { cluster: Cluster::DPad }, vec![item("Deep", key("KEY_D"))]),
         ];
         let mut s = MenuSession::open(&menus, "Root", Opener::default()).unwrap();
         assert_eq!(press(&mut s, &menus, Button::DpadDown), None, "an empty slot does nothing");
@@ -503,7 +506,7 @@ mod tests {
 
     #[test]
     fn face_button_cascade_cancels_with_select() {
-        let menus = [menu("F", MenuKind::Cascade { cluster: Cluster::FaceButtons }, numbers(4))];
+        let menus = [menu("F", MenuKind::Directional { cluster: Cluster::FaceButtons }, numbers(4))];
         let mut s = MenuSession::open(&menus, "F", Opener::default()).unwrap();
         assert_eq!(chose(press(&mut s, &menus, Button::East)).as_deref(), Some("KEY_2"), "East is slot 2 (right)");
         let mut s = MenuSession::open(&menus, "F", Opener::default()).unwrap();

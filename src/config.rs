@@ -224,15 +224,17 @@ pub struct Menu {
     pub kind: MenuKind,
     pub items: Vec<MenuItem>,
     /// Button that backs out of the menu (one level for submenus). Defaults to East, or to
-    /// Select for a face-button cascade, where East is one of the slots.
+    /// Select for a face-button directional menu, where East is one of the slots.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cancel: Option<Button>,
+    #[serde(default)]
+    pub style: OverlayStyle,
 }
 
 impl Menu {
     pub fn cancel_button(&self) -> Button {
         self.cancel.unwrap_or(match self.kind {
-            MenuKind::Cascade { cluster: Cluster::FaceButtons } => Button::Select,
+            MenuKind::Directional { cluster: Cluster::FaceButtons } => Button::Select,
             _ => Button::East,
         })
     }
@@ -252,9 +254,10 @@ pub struct MenuItem {
 pub enum MenuKind {
     /// Shown while the opening input is held: aim `stick` at an item, release to choose it.
     Radial { stick: Stick },
-    /// Four slots (up, right, down, left) on the D-pad or face buttons; a slot fires its action
-    /// or, with "Open menu", cascades into another menu.
-    Cascade { cluster: Cluster },
+    /// Four slots (up, right, down, left) on the D-pad or face buttons. A slot fires its
+    /// action; give it "Open menu" to make it a submenu.
+    #[serde(alias = "cascade")]
+    Directional { cluster: Cluster },
     /// A list moved through with the D-pad or left stick; A chooses.
     List,
     /// A list whose items can also be chosen directly with their quick-select button.
@@ -267,7 +270,7 @@ impl MenuKind {
     pub fn default_for(kind: MenuKindTag) -> Self {
         match kind {
             MenuKindTag::Radial => MenuKind::Radial { stick: Stick::Right },
-            MenuKindTag::Cascade => MenuKind::Cascade { cluster: Cluster::DPad },
+            MenuKindTag::Directional => MenuKind::Directional { cluster: Cluster::DPad },
             MenuKindTag::List => MenuKind::List,
             MenuKindTag::Buttons => MenuKind::Buttons,
             MenuKindTag::Carousel => MenuKind::Carousel { controls: CarouselControls::Bumpers },
@@ -277,7 +280,7 @@ impl MenuKind {
     pub fn tag(self) -> MenuKindTag {
         match self {
             MenuKind::Radial { .. } => MenuKindTag::Radial,
-            MenuKind::Cascade { .. } => MenuKindTag::Cascade,
+            MenuKind::Directional { .. } => MenuKindTag::Directional,
             MenuKind::List => MenuKindTag::List,
             MenuKind::Buttons => MenuKindTag::Buttons,
             MenuKind::Carousel { .. } => MenuKindTag::Carousel,
@@ -289,7 +292,7 @@ impl MenuKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuKindTag {
     Radial,
-    Cascade,
+    Directional,
     List,
     Buttons,
     Carousel,
@@ -297,19 +300,167 @@ pub enum MenuKindTag {
 
 impl MenuKindTag {
     pub const ALL: [MenuKindTag; 5] =
-        [MenuKindTag::Radial, MenuKindTag::Cascade, MenuKindTag::List, MenuKindTag::Buttons, MenuKindTag::Carousel];
+        [MenuKindTag::Radial, MenuKindTag::Directional, MenuKindTag::List, MenuKindTag::Buttons, MenuKindTag::Carousel];
+}
+
+impl MenuKindTag {
+    /// A one-word name, for summaries.
+    pub fn short(self) -> &'static str {
+        match self {
+            MenuKindTag::Radial => "Radial",
+            MenuKindTag::Directional => "Directional",
+            MenuKindTag::List => "List",
+            MenuKindTag::Buttons => "Button menu",
+            MenuKindTag::Carousel => "Carousel",
+        }
+    }
 }
 
 impl fmt::Display for MenuKindTag {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             MenuKindTag::Radial => "Radial (hold, aim, release)",
-            MenuKindTag::Cascade => "Cascade (D-pad / face buttons)",
+            MenuKindTag::Directional => "Directional (D-pad / face buttons)",
             MenuKindTag::List => "List",
             MenuKindTag::Buttons => "Button menu (list + quick buttons)",
             MenuKindTag::Carousel => "Carousel",
         })
     }
+}
+
+/// Where on screen an overlay sits, relative to the screen so it suits any size or shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScreenPosition {
+    TopLeft,
+    TopCenter,
+    TopRight,
+    CenterLeft,
+    #[default]
+    Center,
+    CenterRight,
+    BottomLeft,
+    BottomCenter,
+    BottomRight,
+}
+
+impl ScreenPosition {
+    /// In reading order, for a 3×3 picker.
+    pub const GRID: [ScreenPosition; 9] = [
+        ScreenPosition::TopLeft,
+        ScreenPosition::TopCenter,
+        ScreenPosition::TopRight,
+        ScreenPosition::CenterLeft,
+        ScreenPosition::Center,
+        ScreenPosition::CenterRight,
+        ScreenPosition::BottomLeft,
+        ScreenPosition::BottomCenter,
+        ScreenPosition::BottomRight,
+    ];
+
+    /// Column and row in the 3×3 grid: 0 = left/top, 1 = center, 2 = right/bottom.
+    pub fn cell(self) -> (usize, usize) {
+        let i = Self::GRID.iter().position(|p| *p == self).unwrap_or(4);
+        (i % 3, i / 3)
+    }
+}
+
+impl fmt::Display for ScreenPosition {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            ScreenPosition::TopLeft => "Top left",
+            ScreenPosition::TopCenter => "Top center",
+            ScreenPosition::TopRight => "Top right",
+            ScreenPosition::CenterLeft => "Center left",
+            ScreenPosition::Center => "Center",
+            ScreenPosition::CenterRight => "Center right",
+            ScreenPosition::BottomLeft => "Bottom left",
+            ScreenPosition::BottomCenter => "Bottom center",
+            ScreenPosition::BottomRight => "Bottom right",
+        })
+    }
+}
+
+/// A color (`#rrggbb`) with an opacity (0..1).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Paint {
+    pub color: String,
+    pub opacity: f32,
+}
+
+impl Paint {
+    pub fn new(color: &str, opacity: f32) -> Self {
+        Paint { color: color.into(), opacity }
+    }
+
+    /// The color as RGB, if `color` is a valid `#rrggbb`.
+    pub fn rgb(&self) -> Option<[u8; 3]> {
+        parse_hex(&self.color)
+    }
+}
+
+pub fn parse_hex(s: &str) -> Option<[u8; 3]> {
+    let hex = s.trim().strip_prefix('#')?;
+    if hex.len() != 6 {
+        return None;
+    }
+    let byte = |i: usize| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok();
+    Some([byte(0)?, byte(2)?, byte(4)?])
+}
+
+/// How an overlay (a menu, or the on-screen keyboard) looks and where it sits.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OverlayStyle {
+    #[serde(default)]
+    pub position: ScreenPosition,
+    /// Size relative to the default, 0.5..2.
+    #[serde(default = "default_scale")]
+    pub scale: f32,
+    #[serde(default = "default_background")]
+    pub background: Paint,
+    #[serde(default = "default_items")]
+    pub items: Paint,
+    #[serde(default = "default_selected")]
+    pub selected: Paint,
+}
+
+fn default_scale() -> f32 {
+    1.0
+}
+
+fn default_background() -> Paint {
+    Paint::new("#16181c", 0.92)
+}
+
+fn default_items() -> Paint {
+    Paint::new("#30343c", 0.95)
+}
+
+fn default_selected() -> Paint {
+    Paint::new("#2f5db0", 1.0)
+}
+
+impl Default for OverlayStyle {
+    fn default() -> Self {
+        OverlayStyle {
+            position: ScreenPosition::Center,
+            scale: default_scale(),
+            background: default_background(),
+            items: default_items(),
+            selected: default_selected(),
+        }
+    }
+}
+
+impl OverlayStyle {
+    /// The on-screen keyboard's default: along the bottom of the screen.
+    pub fn keyboard() -> Self {
+        OverlayStyle { position: ScreenPosition::BottomCenter, ..OverlayStyle::default() }
+    }
+}
+
+fn default_keyboard_style() -> OverlayStyle {
+    OverlayStyle::keyboard()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1198,6 +1349,8 @@ pub struct Config {
     /// On-screen action menus, shared by all profiles; opened with `ButtonAction::OpenMenu`.
     #[serde(default)]
     pub menus: Vec<Menu>,
+    #[serde(default = "default_keyboard_style")]
+    pub keyboard_style: OverlayStyle,
     pub profiles: Vec<Profile>,
 }
 
@@ -1211,6 +1364,7 @@ impl Default for Config {
             gyro_calibration: BTreeMap::new(),
             macros: Vec::new(),
             menus: Vec::new(),
+            keyboard_style: OverlayStyle::keyboard(),
             profiles: vec![Profile::passthrough("Gamepad"), Profile::desktop("Desktop")],
         }
     }
@@ -1502,18 +1656,21 @@ mod tests {
                 kind: MenuKind::Radial { stick: Stick::Right },
                 items: (1..=4).map(|n| item(&format!("Slot {n}"), ButtonAction::Keys(vec![format!("KEY_{n}")]))).collect(),
                 cancel: None,
+                style: OverlayStyle::default(),
             },
             Menu {
                 name: "Pause".into(),
                 kind: MenuKind::Buttons,
                 items: vec![MenuItem { button: Some(Button::LeftBumper), ..item("Map", ButtonAction::Keys(vec!["KEY_M".into()])) }],
                 cancel: Some(Button::Start),
+                style: OverlayStyle { position: ScreenPosition::TopRight, scale: 1.5, ..OverlayStyle::default() },
             },
             Menu {
                 name: "Faces".into(),
-                kind: MenuKind::Cascade { cluster: Cluster::FaceButtons },
+                kind: MenuKind::Directional { cluster: Cluster::FaceButtons },
                 items: vec![item("More", ButtonAction::OpenMenu("Pause".into()))],
                 cancel: None,
+                style: OverlayStyle::default(),
             },
             ],
             ..Config::default()
@@ -1523,7 +1680,30 @@ mod tests {
         assert_eq!(config, back);
         assert_eq!(config.menus[0].cancel_button(), Button::East);
         assert_eq!(config.menus[1].cancel_button(), Button::Start);
-        assert_eq!(config.menus[2].cancel_button(), Button::Select, "East is a slot in a face-button cascade");
+        assert_eq!(config.menus[2].cancel_button(), Button::Select, "East is a slot in a face-button directional menu");
+    }
+
+    #[test]
+    fn old_cascade_menus_and_unstyled_menus_still_load() {
+        let text = r#"
+            name = "Old"
+            items = []
+            [kind.cascade]
+            cluster = "DPad"
+        "#;
+        let menu: Menu = toml::from_str(text).unwrap();
+        assert_eq!(menu.kind, MenuKind::Directional { cluster: Cluster::DPad });
+        assert_eq!(menu.style, OverlayStyle::default());
+        assert_eq!(Config::default().keyboard_style.position, ScreenPosition::BottomCenter);
+    }
+
+    #[test]
+    fn hex_colors_parse_strictly() {
+        assert_eq!(parse_hex("#2f5db0"), Some([0x2f, 0x5d, 0xb0]));
+        assert_eq!(parse_hex(" #FFFFFF "), Some([255, 255, 255]));
+        for bad in ["2f5db0", "#2f5db", "#2f5dbz", "", "#"] {
+            assert_eq!(parse_hex(bad), None, "{bad}");
+        }
     }
 
     #[test]
