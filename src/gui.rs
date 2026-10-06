@@ -17,9 +17,10 @@ use crate::{
         Analog, Button, ButtonAction, CarouselControls, Cluster, Combo, Config, GestureKind, GyroActivation,
         GyroConfig, GyroHorizontal, GyroInput, GyroMode, Macro, MacroStep, Menu, MenuItem, MenuKind, MenuKindTag,
         MouseButton, OverlayStyle, Paint, Rule, RuleKind, ScreenPosition, WheelDirection, Zone, Profile, Stick, StickAction, StickConfig,
-        Trigger, TriggerAction,
+        InfoOverlay, Trigger, TriggerAction, in_scope,
     },
     engine::Opener,
+    info::PadFamily,
     ipc::{self, FocusBackend, InputSnapshot, Request, Response, Status, WindowInfo},
     menu::MenuSession,
     keyboard::{self, Layout},
@@ -57,7 +58,6 @@ struct App {
     /// Waiting for a controller button press to jump to its row.
     finding: bool,
     found: Option<Button>,
-    /// Index into `config.macros` shown in the Macros tab.
     /// Macros whose cards are open, by index in `Config::macros`.
     open_macros: HashSet<usize>,
     /// Menus (by index) whose card is open in the Overlays tab.
@@ -66,6 +66,70 @@ struct App {
     open_appearance: HashSet<Option<usize>>,
     /// The numpad card's Appearance section is open.
     numpad_appearance: bool,
+    /// Info overlays (by index) whose card, or Appearance section, is open.
+    open_infos: HashSet<usize>,
+    open_info_appearance: HashSet<usize>,
+    /// Which profile's macros and overlays the Macros and Overlays tabs list.
+    filter: ScopeFilter,
+    /// Whose button glyphs info overlay previews use.
+    preview_family: PadFamily,
+}
+
+/// Which macros, menus and info overlays the Macros and Overlays tabs list.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+enum ScopeFilter {
+    #[default]
+    All,
+    /// Only those shared by all profiles.
+    Shared,
+    /// What this profile can use: its own and shared ones.
+    Profile(String),
+}
+
+impl fmt::Display for ScopeFilter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ScopeFilter::All => f.write_str("Everything"),
+            ScopeFilter::Shared => f.write_str("Shared by all profiles"),
+            ScopeFilter::Profile(p) => write!(f, "Usable in “{p}”"),
+        }
+    }
+}
+
+impl ScopeFilter {
+    fn shows(&self, scope: &Option<Vec<String>>) -> bool {
+        match self {
+            ScopeFilter::All => true,
+            ScopeFilter::Shared => scope.is_none(),
+            ScopeFilter::Profile(p) => in_scope(scope, p),
+        }
+    }
+
+    /// The scope new items get: the filtered profile's, so a game's things go with it.
+    fn new_scope(&self) -> Option<Vec<String>> {
+        match self {
+            ScopeFilter::Profile(p) => Some(vec![p.clone()]),
+            _ => None,
+        }
+    }
+}
+
+/// Something with a "Used by" profile list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScopeTarget {
+    Macro(usize),
+    Menu(usize),
+    Info(usize),
+}
+
+/// A token in an info cell's "Insert…" list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TokenChoice(&'static str, &'static str);
+
+impl fmt::Display for TokenChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{{{}}}  {}", self.0, self.1)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -114,6 +178,74 @@ impl fmt::Display for QuickChoice {
 /// Open-card indices after item `i` is removed: later items move up one place.
 fn shift_removed(set: &HashSet<usize>, i: usize) -> HashSet<usize> {
     set.iter().filter(|j| **j != i).map(|j| if *j > i { j - 1 } else { *j }).collect()
+}
+
+/// "Used by": all profiles, or only those chosen (click a profile to add or remove it).
+fn scope_editor<'a>(target: ScopeTarget, scope: &Option<Vec<String>>, profiles: &[String]) -> Element<'a, Message> {
+    let mut line = row![
+        button(text("All profiles").size(13))
+            .style(if scope.is_none() { button::primary } else { button::secondary })
+            .on_press(Message::SetScope(target, None)),
+        text("or only:").size(13).color(MUTED_COLOR),
+    ]
+    .spacing(6)
+    .align_y(Alignment::Center);
+    for p in profiles {
+        let chosen = scope.as_ref().is_some_and(|list| list.contains(p));
+        let mut list = scope.clone().unwrap_or_default();
+        if chosen {
+            list.retain(|x| x != p);
+        } else {
+            list.push(p.clone());
+        }
+        // Taking the last one off goes back to all profiles.
+        let next = (!list.is_empty()).then_some(list);
+        line = line.push(
+            button(text(p.clone()).size(13))
+                .style(if chosen { button::primary } else { button::secondary })
+                .on_press(Message::SetScope(target, next)),
+        );
+    }
+    let mut col = column![line.wrap().vertical_spacing(6)].spacing(4);
+    if scope.as_ref().is_some_and(|list| !list.iter().any(|p| profiles.contains(p))) {
+        col = col.push(text("None of its profiles exist any more, so nothing can use it.").size(12).color(ERROR_COLOR));
+    }
+    labeled("Used by", col.into())
+}
+
+/// A short "for Elden Ring" note for card headers; nothing for shared items.
+fn scope_note(scope: &Option<Vec<String>>) -> Option<String> {
+    let list = scope.as_ref()?;
+    Some(match list.as_slice() {
+        [] => "no profile".into(),
+        [one] => format!("for {one}"),
+        [one, two] => format!("for {one}, {two}"),
+        [one, rest @ ..] => format!("for {one} +{}", rest.len()),
+    })
+}
+
+/// The "add an info overlay" card.
+fn view_new_info_card<'a>() -> Element<'a, Message> {
+    container(
+        row![
+            button(text("+ New info overlay")).style(button::secondary).on_press(Message::NewInfo),
+            text("Text and button glyphs on screen, e.g. a game's controls.").size(13).color(MUTED_COLOR),
+            space::horizontal(),
+            help(
+                "An info overlay shows a grid of text on screen without taking the controller: a \
+                 game's controls with glyphs that match the controller in use, the time, CPU load and \
+                 more. Show it always while its profiles are active, or with the \"Show info \
+                 overlay…\" action."
+                    .into(),
+            ),
+        ]
+        .spacing(12)
+        .align_y(Alignment::Center),
+    )
+    .padding(14)
+    .width(Length::Fill)
+    .style(style::card)
+    .into()
 }
 
 /// The "add a menu" card: one button per kind, kept apart from the menus themselves.
@@ -310,6 +442,10 @@ fn item_problem(menu: &Menu, action: &ButtonAction, menus: &[Menu], names: &Name
     })
 }
 
+fn info_has_problem(info: &[InfoOverlay]) -> bool {
+    info.iter().enumerate().any(|(i, o)| o.name.trim().is_empty() || info[..i].iter().any(|other| other.name == o.name))
+}
+
 fn menus_have_problem(menus: &[Menu], names: &Names) -> bool {
     menus.iter().enumerate().any(|(i, m)| {
         m.name.trim().is_empty()
@@ -318,18 +454,51 @@ fn menus_have_problem(menus: &[Menu], names: &Names) -> bool {
     })
 }
 
-/// Macro and menu names, for "Macro…"/"Open menu…" pickers and for checking references.
+/// Macro, menu and info overlay names, for the "Macro…"/"Open menu…"/"Show info overlay…"
+/// pickers and for checking references.
 #[derive(Debug, Clone, Default)]
 struct Names {
     macros: Vec<String>,
     menus: Vec<String>,
+    infos: Vec<String>,
+    /// Names that exist but belong to other profiles.
+    elsewhere: Vec<String>,
 }
 
 impl Names {
+    /// Everything, whichever profiles it belongs to.
     fn of(config: &Config) -> Self {
         Names {
             macros: config.macros.iter().map(|m| m.name.clone()).collect(),
             menus: config.menus.iter().map(|m| m.name.clone()).collect(),
+            infos: config.info.iter().map(|m| m.name.clone()).collect(),
+            elsewhere: Vec::new(),
+        }
+    }
+
+    /// What the profile named `profile` can use: shared items and its own.
+    fn for_profile(config: &Config, profile: &str) -> Self {
+        let mut names = Names::default();
+        let mut sort = |name: &String, scope: &Option<Vec<String>>, list: &mut Vec<String>| {
+            if in_scope(scope, profile) {
+                list.push(name.clone());
+            } else {
+                names.elsewhere.push(name.clone());
+            }
+        };
+        let (mut macros, mut menus, mut infos) = (Vec::new(), Vec::new(), Vec::new());
+        config.macros.iter().for_each(|m| sort(&m.name, &m.profiles, &mut macros));
+        config.menus.iter().for_each(|m| sort(&m.name, &m.profiles, &mut menus));
+        config.info.iter().for_each(|m| sort(&m.name, &m.profiles, &mut infos));
+        Names { macros, menus, infos, ..names }
+    }
+
+    /// Why `name` (a `kind` such as "macro") can't be used here.
+    fn why_missing(&self, kind: &str, name: &str) -> String {
+        if self.elsewhere.iter().any(|n| n == name) {
+            format!("{kind} {name:?} belongs to other profiles")
+        } else {
+            format!("missing {kind} {name:?}")
         }
     }
 }
@@ -607,6 +776,25 @@ enum Message {
     StartFind,
     CancelFind,
     ToggleMacro(usize),
+    SetScope(ScopeTarget, Option<Vec<String>>),
+    SetFilter(ScopeFilter),
+    NewInfo,
+    ToggleInfo(usize),
+    DeleteInfo(usize),
+    RenameInfo(usize, String),
+    SetInfoAlways(usize, bool),
+    SetInfoStyle(usize, OverlayStyle),
+    ToggleInfoAppearance(usize),
+    AddInfoRow(usize),
+    /// Row `.1` of info overlay `.0`, moved up if `.2`.
+    MoveInfoRow(usize, usize, bool),
+    RemoveInfoRow(usize, usize),
+    AddInfoCell(usize, usize),
+    /// Cell `.2` of row `.1` of info overlay `.0`.
+    SetInfoCell(usize, usize, usize, String),
+    InsertInfoToken(usize, usize, usize, TokenChoice),
+    RemoveInfoCell(usize, usize, usize),
+    SetPreviewFamily(PadFamily),
     NewMacro,
     DeleteMacro(usize),
     RenameMacro(usize, String),
@@ -721,6 +909,10 @@ impl App {
             open_menus: HashSet::new(),
             open_appearance: HashSet::new(),
             numpad_appearance: false,
+            open_infos: HashSet::new(),
+            open_info_appearance: HashSet::new(),
+            filter: ScopeFilter::All,
+            preview_family: PadFamily::Xbox,
         };
         let load = Task::perform(
             async {
@@ -834,6 +1026,10 @@ impl App {
                     .any(|(i, p)| i != self.editing && p.name == name);
                 if !taken && let Some(p) = self.profile_mut() {
                     let old = std::mem::replace(&mut p.name, name.clone());
+                    self.config.profile_renamed(&old, &name);
+                    if self.filter == ScopeFilter::Profile(old.clone()) {
+                        self.filter = ScopeFilter::Profile(name.clone());
+                    }
                     // Keep per-game rules pointing at the renamed profile.
                     let auto = &mut self.config.auto_switch;
                     for rule in auto.rules.iter_mut().filter(|r| r.profile == old) {
@@ -886,7 +1082,8 @@ impl App {
                     Template::Platformer => Profile::platformer(&name),
                     Template::Duplicate => {
                         let mut p = self.profile().cloned().unwrap_or_else(|| Profile::passthrough(""));
-                        p.name = name;
+                        let from = std::mem::replace(&mut p.name, name.clone());
+                        self.config.profile_copied(&from, &name);
                         p
                     }
                 };
@@ -895,7 +1092,11 @@ impl App {
             }
             Message::DeleteProfile => {
                 if self.config.profiles.len() > 1 {
-                    self.config.profiles.remove(self.editing);
+                    let removed = self.config.profiles.remove(self.editing);
+                    self.config.profile_removed(&removed.name);
+                    if self.filter == ScopeFilter::Profile(removed.name) {
+                        self.filter = ScopeFilter::All;
+                    }
                     self.editing = self.editing.min(self.config.profiles.len() - 1);
                 }
             }
@@ -1021,6 +1222,140 @@ impl App {
                 self.found = None;
             }
             Message::CancelFind => self.finding = false,
+            Message::SetScope(target, scope) => match target {
+                ScopeTarget::Macro(i) => {
+                    if let Some(m) = self.config.macros.get_mut(i) {
+                        m.profiles = scope;
+                    }
+                }
+                ScopeTarget::Menu(i) => {
+                    if let Some(m) = self.config.menus.get_mut(i) {
+                        m.profiles = scope;
+                    }
+                }
+                ScopeTarget::Info(i) => {
+                    if let Some(o) = self.config.info.get_mut(i) {
+                        o.profiles = scope;
+                    }
+                }
+            },
+            Message::SetFilter(filter) => self.filter = filter,
+            Message::SetPreviewFamily(family) => self.preview_family = family,
+            Message::NewInfo => {
+                let name = (1..)
+                    .map(|i| if i == 1 { "Info".to_string() } else { format!("Info {i}") })
+                    .find(|n| !self.config.info.iter().any(|o| &o.name == n))
+                    .unwrap();
+                let cells = |a: &str, b: &str| vec![a.to_string(), b.to_string()];
+                let overlay = InfoOverlay {
+                    name,
+                    profiles: self.filter.new_scope(),
+                    always: true,
+                    style: OverlayStyle::info(),
+                    rows: vec![cells("{south}", "Jump"), cells("{west}", "Reload")],
+                };
+                // New ones go first, right under the button that made them, already open.
+                self.config.info.insert(0, overlay);
+                self.open_infos = self.open_infos.iter().map(|j| j + 1).collect();
+                self.open_infos.insert(0);
+                self.open_info_appearance = self.open_info_appearance.iter().map(|j| j + 1).collect();
+            }
+            Message::ToggleInfo(i) => {
+                if !self.open_infos.remove(&i) {
+                    self.open_infos.insert(i);
+                }
+            }
+            Message::ToggleInfoAppearance(i) => {
+                if !self.open_info_appearance.remove(&i) {
+                    self.open_info_appearance.insert(i);
+                }
+            }
+            Message::DeleteInfo(i) => {
+                if i < self.config.info.len() {
+                    self.config.info.remove(i);
+                    self.open_infos = shift_removed(&self.open_infos, i);
+                    self.open_info_appearance = shift_removed(&self.open_info_appearance, i);
+                }
+            }
+            Message::RenameInfo(i, name) => {
+                let taken = self.config.info.iter().enumerate().any(|(j, o)| j != i && o.name == name);
+                if let Some(o) = self.config.info.get_mut(i)
+                    && !taken
+                {
+                    let old = std::mem::replace(&mut o.name, name.clone());
+                    // Keep every "Show info overlay" (in profiles and menus) pointing at it.
+                    let mut follow = |a: &mut ButtonAction| {
+                        a.walk_mut(&mut |a| {
+                            if let ButtonAction::ShowInfo(n) = a
+                                && *n == old
+                            {
+                                *n = name.clone();
+                            }
+                        })
+                    };
+                    for p in &mut self.config.profiles {
+                        p.actions_mut().into_iter().for_each(&mut follow);
+                    }
+                    for menu in &mut self.config.menus {
+                        menu.items.iter_mut().for_each(|item| follow(&mut item.action));
+                    }
+                }
+            }
+            Message::SetInfoAlways(i, always) => {
+                if let Some(o) = self.config.info.get_mut(i) {
+                    o.always = always;
+                }
+            }
+            Message::SetInfoStyle(i, style) => {
+                if let Some(o) = self.config.info.get_mut(i) {
+                    o.style = style;
+                }
+            }
+            Message::AddInfoRow(i) => {
+                if let Some(o) = self.config.info.get_mut(i) {
+                    o.rows.push(vec![String::new()]);
+                }
+            }
+            Message::MoveInfoRow(i, r, up) => {
+                if let Some(o) = self.config.info.get_mut(i) {
+                    let j = if up { r.checked_sub(1) } else { Some(r + 1).filter(|j| *j < o.rows.len()) };
+                    if let Some(j) = j {
+                        o.rows.swap(r, j);
+                    }
+                }
+            }
+            Message::RemoveInfoRow(i, r) => {
+                if let Some(o) = self.config.info.get_mut(i)
+                    && r < o.rows.len()
+                {
+                    o.rows.remove(r);
+                }
+            }
+            Message::AddInfoCell(i, r) => {
+                if let Some(row) = self.config.info.get_mut(i).and_then(|o| o.rows.get_mut(r)) {
+                    row.push(String::new());
+                }
+            }
+            Message::SetInfoCell(i, r, c, value) => {
+                if let Some(cell) = self.config.info.get_mut(i).and_then(|o| o.rows.get_mut(r)).and_then(|row| row.get_mut(c)) {
+                    *cell = value;
+                }
+            }
+            Message::InsertInfoToken(i, r, c, token) => {
+                if let Some(cell) = self.config.info.get_mut(i).and_then(|o| o.rows.get_mut(r)).and_then(|row| row.get_mut(c)) {
+                    if !cell.is_empty() && !cell.ends_with(' ') {
+                        cell.push(' ');
+                    }
+                    cell.push_str(&format!("{{{}}}", token.0));
+                }
+            }
+            Message::RemoveInfoCell(i, r, c) => {
+                if let Some(row) = self.config.info.get_mut(i).and_then(|o| o.rows.get_mut(r))
+                    && c < row.len()
+                {
+                    row.remove(c);
+                }
+            }
             Message::ToggleMacro(i) => {
                 if !self.open_macros.remove(&i) {
                     self.open_macros.insert(i);
@@ -1033,7 +1368,7 @@ impl App {
                     .unwrap();
                 let tap = MacroStep::Tap { action: ButtonAction::Keys(Vec::new()), hold_ms: DEFAULT_TAP_MS };
                 // New macros go first, right under the button that made them, already open.
-                self.config.macros.insert(0, Macro { name, steps: vec![tap] });
+                self.config.macros.insert(0, Macro { name, profiles: self.filter.new_scope(), steps: vec![tap] });
                 self.open_macros = self.open_macros.iter().map(|j| j + 1).collect();
                 self.open_macros.insert(0);
             }
@@ -1097,7 +1432,7 @@ impl App {
                     .find(|n| !self.config.menus.iter().any(|m| &m.name == n))
                     .unwrap();
                 let kind = MenuKind::default_for(kind);
-                let mut menu = Menu { name, kind, items: Vec::new(), cancel: None, style: OverlayStyle::default() };
+                let mut menu = Menu { name, profiles: self.filter.new_scope(), kind, items: Vec::new(), cancel: None, style: OverlayStyle::default() };
                 fit_items(&mut menu);
                 if menu.items.is_empty() {
                     menu.items.push(MenuItem { label: "Item 1".into(), action: ButtonAction::Keys(Vec::new()), button: None });
@@ -1447,26 +1782,21 @@ impl App {
                 return Some(format!("Menu {:?}: {problem}", m.name));
             }
         }
-        for p in &self.config.profiles {
-            if let Some(problem) = p.actions().into_iter().find_map(|a| {
-                action_problem(a, &names).filter(|problem| problem.starts_with("missing menu"))
-            }) {
-                return Some(format!("Profile {:?} uses a {problem}.", p.name));
+        for (i, o) in self.config.info.iter().enumerate() {
+            if o.name.trim().is_empty() {
+                return Some("Info overlay names cannot be empty.".into());
+            }
+            if self.config.info[..i].iter().any(|other| other.name == o.name) {
+                return Some(format!("Two info overlays are named {:?}.", o.name));
             }
         }
+        // Each profile may only use what is shared or its own.
         for p in &self.config.profiles {
-            let mut missing = None;
-            for action in p.actions() {
-                action.walk(&mut |a| {
-                    if let ButtonAction::Macro { name, .. } = a
-                        && !macros.iter().any(|m| &m.name == name)
-                    {
-                        missing.get_or_insert_with(|| name.clone());
-                    }
-                });
-            }
-            if let Some(name) = missing {
-                return Some(format!("Profile {:?} uses a missing macro {name:?}.", p.name));
+            let available = Names::for_profile(&self.config, &p.name);
+            if let Some(problem) = p.actions().into_iter().find_map(|a| {
+                action_problem(a, &available).filter(|problem| !problem.starts_with("unknown key"))
+            }) {
+                return Some(format!("Profile {:?}: {problem}.", p.name));
             }
         }
         let auto = &self.config.auto_switch;
@@ -1517,7 +1847,10 @@ impl App {
 
     fn view(&self) -> Element<'_, Message> {
         let names = Names::of(&self.config);
-        let profile_issue = self.profile().is_some_and(|p| ProfileTab::ALL.iter().any(|t| section_has_problem(p, *t, &names)));
+        // The profile editor offers only what the profile can use.
+        let profile_names = self.profile().map(|p| Names::for_profile(&self.config, &p.name)).unwrap_or_default();
+        let profile_issue =
+            self.profile().is_some_and(|p| ProfileTab::ALL.iter().any(|t| section_has_problem(p, *t, &profile_names)));
         let tab = |label: &'static str, tab: Tab, issue: bool| -> Element<'_, Message> {
             let label = if issue { format!("{label}  ⚠") } else { label.to_string() };
             let selected = self.tab == tab;
@@ -1535,7 +1868,7 @@ impl App {
                     tab("Overview", Tab::Overview, false),
                     tab("Profile", Tab::Profile, profile_issue),
                     tab("Macros", Tab::Macros, macros_have_problem(&self.config.macros)),
-                    tab("Overlays", Tab::Overlays, menus_have_problem(&self.config.menus, &names)),
+                    tab("Overlays", Tab::Overlays, menus_have_problem(&self.config.menus, &names) || info_has_problem(&self.config.info)),
                 ]
                 .spacing(4),
                 rule::horizontal(1),
@@ -1552,7 +1885,7 @@ impl App {
                 rule::horizontal(1).into(),
                 self.view_auto_switch(),
             ]),
-            Tab::Profile => content.push(self.view_profile_tab(&names)),
+            Tab::Profile => content.push(self.view_profile_tab(&profile_names)),
             Tab::Macros => content.push(self.view_macros()),
             Tab::Overlays => content.push(self.view_overlays(&names)),
         };
@@ -1861,11 +2194,34 @@ impl App {
         .padding(14)
         .width(Length::Fill)
         .style(style::card);
-        let mut col = column![add].spacing(16);
-        for (i, m) in self.config.macros.iter().enumerate() {
+        let mut col = column![self.view_filter_bar(), add].spacing(16);
+        for (i, m) in self.config.macros.iter().enumerate().filter(|(_, m)| self.filter.shows(&m.profiles)) {
             col = col.push(self.view_macro_card(i, m));
         }
         col.into()
+    }
+
+    fn profile_names(&self) -> Vec<String> {
+        self.config.profiles.iter().map(|p| p.name.clone()).collect()
+    }
+
+    /// "Show: …" for the Macros and Overlays tabs, to work on one game's things at a time.
+    fn view_filter_bar(&self) -> Element<'_, Message> {
+        let mut options = vec![ScopeFilter::All, ScopeFilter::Shared];
+        options.extend(self.config.profiles.iter().map(|p| ScopeFilter::Profile(p.name.clone())));
+        row![
+            text("Show:"),
+            dropdown(options, Some(self.filter.clone()), Message::SetFilter).width(280),
+            help(
+                "Macros, menus and info overlays can be shared by all profiles or belong to some \
+                 (\"Used by\" on each card); a profile can only use its own and shared ones. Pick a \
+                 profile here to see what it can use. New ones you add then belong to it."
+                    .into(),
+            ),
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .into()
     }
 
     /// A macro as its own collapsible card: a summary line, or its steps when open.
@@ -1885,7 +2241,13 @@ impl App {
         let n = m.steps.len();
         let mut header = row![
             button(title).style(button::text).padding(0).on_press(Message::ToggleMacro(mi)),
-            text(format!("{n} step{} · {total} ms", if n == 1 { "" } else { "s" })).size(13).color(MUTED_COLOR),
+            text(format!(
+                "{n} step{} · {total} ms{}",
+                if n == 1 { "" } else { "s" },
+                scope_note(&m.profiles).map(|s| format!(" · {s}")).unwrap_or_default()
+            ))
+            .size(13)
+            .color(MUTED_COLOR),
             space::horizontal(),
         ]
         .spacing(12)
@@ -2041,6 +2403,7 @@ impl App {
                 "Name",
                 field("Macro name", &m.name).on_input(move |n| Message::RenameMacro(mi, n)).width(220).into(),
             ),
+            scope_editor(ScopeTarget::Macro(mi), &m.profiles, &self.profile_names()),
             text("Steps").size(16),
             steps,
             footer,
@@ -2050,13 +2413,153 @@ impl App {
     }
 
     fn view_overlays<'a>(&'a self, names: &Names) -> Element<'a, Message> {
-        // The keyboard and numpad are always there, so they stay on top; new menus are added
-        // just below them.
-        let mut col = column![self.view_keyboard_card(), self.view_numpad_card(), view_new_menu_card()].spacing(16);
-        for (i, menu) in self.config.menus.iter().enumerate() {
+        // The keyboard and numpad are always there, so they stay on top. Menus and info
+        // overlays each get a section, with the add button above the list.
+        let mut col = column![
+            self.view_keyboard_card(),
+            self.view_numpad_card(),
+            self.view_filter_bar(),
+            text("Menus").size(20),
+            view_new_menu_card(),
+        ]
+        .spacing(16);
+        for (i, menu) in self.config.menus.iter().enumerate().filter(|(_, m)| self.filter.shows(&m.profiles)) {
             col = col.push(self.view_menu_card(i, menu, names));
         }
+        col = col.push(text("Info overlays").size(20)).push(view_new_info_card());
+        for (i, o) in self.config.info.iter().enumerate().filter(|(_, o)| self.filter.shows(&o.profiles)) {
+            col = col.push(self.view_info_card(i, o));
+        }
         col.into()
+    }
+
+    /// An info overlay as its own collapsible card.
+    fn view_info_card<'a>(&'a self, i: usize, o: &'a InfoOverlay) -> Element<'a, Message> {
+        let open = self.open_infos.contains(&i);
+        let problem = if o.name.trim().is_empty() {
+            Some("needs a name")
+        } else if self.config.info.iter().enumerate().any(|(j, other)| j != i && other.name == o.name) {
+            Some("name used twice")
+        } else {
+            None
+        };
+        let chevron = if open { "▾" } else { "▸" };
+        let title = text(format!("{chevron}  {}", if o.name.is_empty() { "(unnamed)" } else { &o.name })).size(18);
+        let title = if problem.is_some() { title.color(ERROR_COLOR) } else { title };
+        let rows = o.rows.len();
+        let summary = format!(
+            "{rows} row{} · {}{}",
+            if rows == 1 { "" } else { "s" },
+            if o.always { "always shown" } else { "shown by an action" },
+            scope_note(&o.profiles).map(|s| format!(" · {s}")).unwrap_or_default()
+        );
+        let mut header = row![
+            button(title).style(button::text).padding(0).on_press(Message::ToggleInfo(i)),
+            text(summary).size(13).color(MUTED_COLOR),
+            space::horizontal(),
+        ]
+        .spacing(12)
+        .align_y(Alignment::Center);
+        if let Some(problem) = problem {
+            header = header.push(text(format!("⚠ {problem}")).size(12).color(ERROR_COLOR));
+        }
+        header = header.push(button(text("Delete").size(13)).style(button::danger).on_press(Message::DeleteInfo(i)));
+        let mut col = column![header].spacing(12);
+        if open {
+            col = col.push(self.view_info_editor(i, o));
+        }
+        container(col).padding(14).width(Length::Fill).style(style::card).into()
+    }
+
+    fn view_info_editor<'a>(&'a self, i: usize, o: &'a InfoOverlay) -> Element<'a, Message> {
+        let mut rows: Vec<Element<'a, Message>> = vec![
+            labeled("Name", field("Info overlay name", &o.name).on_input(move |n| Message::RenameInfo(i, n)).width(240).into()),
+            scope_editor(ScopeTarget::Info(i), &o.profiles, &self.profile_names()),
+            labeled(
+                "Shown",
+                column![
+                    checkbox(o.always).label("Always, while one of its profiles is active").on_toggle(move |a| Message::SetInfoAlways(i, a)),
+                    text(
+                        "Or map \"Show info overlay…\" to a button: shown while held, or until pressed again \
+                         if wrapped in Toggle."
+                    )
+                    .size(12)
+                    .color(MUTED_COLOR),
+                ]
+                .spacing(4)
+                .into(),
+            ),
+        ];
+
+        // Appearance, and a live preview with glyphs for the chosen kind of controller.
+        let appearance_open = self.open_info_appearance.contains(&i);
+        rows.push(labeled("", disclosure("Appearance", appearance_open, Message::ToggleInfoAppearance(i))));
+        if appearance_open {
+            rows.push(style_editor(&o.style, Rc::new(move |s| Message::SetInfoStyle(i, s))));
+        }
+        let sample = InfoOverlay { style: preview_style(&o.style), ..o.clone() };
+        let view = crate::info::resolve(&sample, &crate::info::Live::sample(self.preview_family));
+        rows.push(labeled(
+            "Glyphs as",
+            dropdown(PadFamily::ALL, Some(self.preview_family), Message::SetPreviewFamily).width(170).into(),
+        ));
+        rows.push(preview(crate::overlay::draw::info_panel(&view)));
+
+        // The grid: rows of cells, which line up in columns on screen.
+        let small = |label: &'static str, msg: Option<Message>| button(text(label).size(13)).style(button::secondary).on_press_maybe(msg);
+        let tokens: Vec<TokenChoice> = crate::info::TOKENS.iter().map(|(t, d)| TokenChoice(t, d)).collect();
+        let mut grid = column![
+            row![
+                text("Cells").size(16),
+                help(
+                    "Each row's cells line up in columns. Type text, and insert {tokens}: button tokens \
+                     ({south}, {lb}, {lt}, {start}, …) draw that button as the controller in use labels \
+                     it (A, ✕ or B for {south}); others show live values such as {time}, {cpu} or {app}."
+                        .into(),
+                ),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center)
+        ]
+        .spacing(8);
+        let last = o.rows.len().saturating_sub(1);
+        for (r, cells) in o.rows.iter().enumerate() {
+            let mut line = row![].spacing(10);
+            for (c, cell) in cells.iter().enumerate() {
+                line = line.push(
+                    row![
+                        field("Text or {token}", cell).on_input(move |v| Message::SetInfoCell(i, r, c, v)).width(170),
+                        dropdown(tokens.clone(), None::<TokenChoice>, move |t| Message::InsertInfoToken(i, r, c, t))
+                            .placeholder("Insert…")
+                            .menu_height(320)
+                            .width(110),
+                        small("✕", Some(Message::RemoveInfoCell(i, r, c))),
+                    ]
+                    .spacing(4)
+                    .align_y(Alignment::Center),
+                );
+            }
+            line = line.push(small("+ Cell", Some(Message::AddInfoCell(i, r))));
+            grid = grid.push(
+                container(
+                    row![
+                        container(text(format!("{}.", r + 1))).width(28).padding(iced::Padding::ZERO.top(6)),
+                        line.wrap().vertical_spacing(6),
+                        space::horizontal(),
+                        small("↑", (r > 0).then_some(Message::MoveInfoRow(i, r, true))),
+                        small("↓", (r < last).then_some(Message::MoveInfoRow(i, r, false))),
+                        small("✕", Some(Message::RemoveInfoRow(i, r))),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Start),
+                )
+                .padding(8)
+                .style(style::inset),
+            );
+        }
+        grid = grid.push(button(text("+ Add row").size(13)).style(button::secondary).on_press(Message::AddInfoRow(i)));
+        rows.push(grid.into());
+        column(rows).spacing(10).into()
     }
 
     fn view_keyboard_card(&self) -> Element<'_, Message> {
@@ -2146,7 +2649,12 @@ impl App {
         let items = menu.items.iter().filter(|i| !i.label.is_empty() || !matches!(i.action, ButtonAction::Disabled)).count();
         let mut header = row![
             button(title).style(button::text).padding(0).on_press(Message::ToggleMenu(mi)),
-            text(format!("{} · {items} item{}", menu.kind.tag().short(), if items == 1 { "" } else { "s" }))
+            text(format!(
+                "{} · {items} item{}{}",
+                menu.kind.tag().short(),
+                if items == 1 { "" } else { "s" },
+                scope_note(&menu.profiles).map(|s| format!(" · {s}")).unwrap_or_default()
+            ))
                 .size(13)
                 .color(MUTED_COLOR),
             space::horizontal(),
@@ -2169,6 +2677,7 @@ impl App {
             "Name",
             field("Menu name", &menu.name).on_input(move |n| Message::RenameMenu(mi, n)).width(240).into(),
         )];
+        rows.push(scope_editor(ScopeTarget::Menu(mi), &menu.profiles, &self.profile_names()));
 
         // Kind and its settings.
         let mut kind_row = row![dropdown(MenuKindTag::ALL, Some(menu.kind.tag()), move |t| Message::SetMenuKind(mi, MenuKind::default_for(t))).width(280)]
@@ -2229,6 +2738,7 @@ impl App {
                 .filter(|m| m.name != menu.name && m.kind.tag() == menu.kind.tag())
                 .map(|m| m.name.clone())
                 .collect(),
+            ..names.clone()
         };
         let last = menu.items.len().saturating_sub(1);
         let mut items = column![text("Items").size(16)].spacing(8);
@@ -2689,6 +3199,7 @@ fn summarize(action: &ButtonAction) -> String {
         ButtonAction::ToggleOverlay => "On-screen keyboard".into(),
         ButtonAction::ToggleNumpad => "On-screen numpad".into(),
         ButtonAction::OpenMenu(name) => format!("Menu “{name}”"),
+        ButtonAction::ShowInfo(name) => format!("Info “{name}”"),
         ButtonAction::Multi(list) if list.is_empty() => "(nothing)".into(),
         ButtonAction::Multi(list) => list.iter().map(summarize).collect::<Vec<_>>().join(" & "),
         ButtonAction::Toggle(inner) => format!("Toggle {}", summarize(inner)),
@@ -2712,10 +3223,13 @@ fn action_problem(action: &ButtonAction, names: &Names) -> Option<String> {
                 }
             }
             ButtonAction::Macro { name, .. } if !names.macros.contains(name) => {
-                problem = Some(format!("missing macro {name:?}"));
+                problem = Some(names.why_missing("macro", name));
             }
             ButtonAction::OpenMenu(name) if !names.menus.contains(name) => {
-                problem = Some(format!("missing menu {name:?}"));
+                problem = Some(names.why_missing("menu", name));
+            }
+            ButtonAction::ShowInfo(name) if !names.infos.contains(name) => {
+                problem = Some(names.why_missing("info overlay", name));
             }
             _ => {}
         }
@@ -3186,6 +3700,7 @@ enum ActionKind {
     Turbo,
     Macro,
     Menu,
+    Info,
     Multiple,
 }
 
@@ -3203,6 +3718,7 @@ impl fmt::Display for ActionKind {
             ActionKind::Toggle => "Toggle (press on / off)…",
             ActionKind::Macro => "Macro…",
             ActionKind::Menu => "Open menu…",
+            ActionKind::Info => "Show info overlay…",
             ActionKind::Turbo => "Turbo (repeat while held)…",
             ActionKind::Multiple => "Multiple…",
         })
@@ -3210,7 +3726,7 @@ impl fmt::Display for ActionKind {
 }
 
 /// Every kind, for a top-level action.
-const ACTION_KINDS: [ActionKind; 13] = [
+const ACTION_KINDS: [ActionKind; 14] = [
     ActionKind::Disabled,
     ActionKind::Gamepad,
     ActionKind::Keys,
@@ -3223,6 +3739,7 @@ const ACTION_KINDS: [ActionKind; 13] = [
     ActionKind::Turbo,
     ActionKind::Macro,
     ActionKind::Menu,
+    ActionKind::Info,
     ActionKind::Multiple,
 ];
 /// Radial menu items: everything but opening another menu.
@@ -3285,6 +3802,8 @@ const TOGGLE_INNER_KINDS: &[ActionKind] = &[
     ActionKind::Turbo,
     // A repeating macro toggled on loops until toggled off.
     ActionKind::Macro,
+    // Shown until toggled off.
+    ActionKind::Info,
     ActionKind::Multiple,
 ];
 /// What a Turbo can repeat.
@@ -3339,6 +3858,7 @@ fn action_kind(action: &ButtonAction) -> ActionKind {
         ButtonAction::Turbo { .. } => ActionKind::Turbo,
         ButtonAction::Macro { .. } => ActionKind::Macro,
         ButtonAction::OpenMenu(_) => ActionKind::Menu,
+        ButtonAction::ShowInfo(_) => ActionKind::Info,
     }
 }
 
@@ -3369,6 +3889,7 @@ fn new_action(k: ActionKind, default_button: Button, current: &ButtonAction, nam
         },
         ActionKind::Macro => ButtonAction::Macro { name: names.macros.first().cloned().unwrap_or_default(), repeat: false },
         ActionKind::Menu => ButtonAction::OpenMenu(names.menus.first().cloned().unwrap_or_default()),
+        ActionKind::Info => ButtonAction::ShowInfo(names.infos.first().cloned().unwrap_or_default()),
     }
 }
 
@@ -3462,6 +3983,21 @@ fn action_value<'a>(
         ButtonAction::Disabled | ButtonAction::NextProfile => space().into(),
         ButtonAction::ToggleOverlay | ButtonAction::ToggleNumpad => {
             text("Hold B on the controller to close it.").size(12).color(MUTED_COLOR).into()
+        }
+        ButtonAction::ShowInfo(_) if names.infos.is_empty() => {
+            text("No info overlays yet: create one in the Overlays tab.").size(12).color(MUTED_COLOR).into()
+        }
+        ButtonAction::ShowInfo(name) => {
+            let mut line = row![
+                dropdown(names.infos.clone(), Some(name.clone()), move |n| on_change(ButtonAction::ShowInfo(n))).width(200),
+                text("shown while held").size(12).color(MUTED_COLOR),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center);
+            if !names.infos.contains(name) {
+                line = line.push(text("not available").size(12).color(ERROR_COLOR));
+            }
+            line.into()
         }
         ButtonAction::OpenMenu(_) if names.menus.is_empty() => {
             text("No menus to open: create one in the Overlays tab.").size(12).color(MUTED_COLOR).into()
@@ -4265,6 +4801,63 @@ mod tests {
         let _ = app.update(Message::DeleteMenu(0));
         let err = app.validate().unwrap();
         assert!(err.contains("missing menu"), "{err}");
+    }
+
+    #[test]
+    fn scoped_items_follow_profiles_and_are_checked_per_profile() {
+        let mut app = app();
+        let gamepad = app.config.profiles[0].name.clone();
+        let desktop = app.config.profiles[1].name.clone();
+        // With a profile picked in the filter, new things belong to it.
+        let _ = app.update(Message::SetFilter(ScopeFilter::Profile(gamepad.clone())));
+        let _ = app.update(Message::NewMacro);
+        assert_eq!(app.config.macros[0].profiles, Some(vec![gamepad.clone()]));
+        assert_eq!(Names::for_profile(&app.config, &gamepad).macros, ["Macro"]);
+        assert!(Names::for_profile(&app.config, &desktop).macros.is_empty());
+
+        // Another profile using it can't be saved.
+        app.config.profiles[1].set_button(Button::West, ButtonAction::Macro { name: "Macro".into(), repeat: false });
+        let err = app.validate().unwrap();
+        assert!(err.contains("belongs to other profiles"), "{err}");
+        let _ = app.update(Message::SetScope(ScopeTarget::Macro(0), None));
+        assert_eq!(app.validate(), None, "shared again");
+
+        // Renaming and duplicating the profile carry its things along.
+        let _ = app.update(Message::SetScope(ScopeTarget::Macro(0), Some(vec![gamepad.clone()])));
+        let _ = app.update(Message::RenameProfile("Pad".into()));
+        assert_eq!(app.config.macros[0].profiles, Some(vec!["Pad".to_string()]));
+        assert_eq!(app.filter, ScopeFilter::Profile("Pad".into()));
+        let _ = app.update(Message::AddProfile(Template::Duplicate));
+        let copy = app.config.profiles.last().unwrap().name.clone();
+        assert_eq!(app.config.macros[0].profiles, Some(vec!["Pad".to_string(), copy.clone()]));
+        let _ = app.update(Message::DeleteProfile);
+        assert_eq!(app.config.macros[0].profiles, Some(vec!["Pad".to_string()]));
+        assert!(ScopeFilter::Shared.shows(&None) && !ScopeFilter::Shared.shows(&Some(vec!["Pad".into()])));
+    }
+
+    #[test]
+    fn info_overlay_editing() {
+        let mut app = app();
+        let _ = app.update(Message::NewInfo);
+        assert!(app.open_infos.contains(&0));
+        let _ = app.update(Message::AddInfoRow(0));
+        let _ = app.update(Message::SetInfoCell(0, 2, 0, "Time".into()));
+        let _ = app.update(Message::InsertInfoToken(0, 2, 0, TokenChoice("time", "")));
+        let _ = app.update(Message::AddInfoCell(0, 2));
+        assert_eq!(app.config.info[0].rows[2], ["Time {time}", ""]);
+        let _ = app.update(Message::MoveInfoRow(0, 2, true));
+        assert_eq!(app.config.info[0].rows[1][0], "Time {time}");
+        let _ = app.update(Message::RemoveInfoCell(0, 1, 1));
+        assert_eq!(app.config.info[0].rows[1].len(), 1);
+
+        // "Show info overlay" mappings follow a rename; a missing one blocks saving.
+        app.config.profiles[0].set_button(Button::Select, ButtonAction::ShowInfo("Info".into()));
+        let _ = app.update(Message::RenameInfo(0, "Controls".into()));
+        assert_eq!(app.config.profiles[0].button(Button::Select), &ButtonAction::ShowInfo("Controls".into()));
+        assert_eq!(app.validate(), None);
+        let _ = app.update(Message::DeleteInfo(0));
+        assert!(app.validate().unwrap().contains("missing info overlay"));
+        assert!(app.open_infos.is_empty());
     }
 
     #[test]

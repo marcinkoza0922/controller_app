@@ -51,6 +51,19 @@ pub enum OverlayView {
     Menu(crate::menu::MenuView),
 }
 
+/// Everything the overlay window shows at once: info overlays, plus the keyboard or a menu.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct OverlayFrame {
+    pub info: Vec<crate::info::InfoView>,
+    pub active: Option<OverlayView>,
+}
+
+impl OverlayFrame {
+    pub fn is_empty(&self) -> bool {
+        self.info.is_empty() && self.active.is_none()
+    }
+}
+
 /// The on-screen keyboard's (or numpad's) state.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KeyboardView {
@@ -330,7 +343,7 @@ mod ui {
     use iced::{
         Color, Element, Subscription, Task,
         futures::{SinkExt, channel::mpsc},
-        widget::space,
+        widget::{column, space, stack},
     };
     use iced_layershell::{
         reexport::{Anchor, KeyboardInteractivity, Layer},
@@ -339,19 +352,19 @@ mod ui {
     };
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-    use super::{OverlayView, draw};
+    use super::{OverlayFrame, OverlayView, draw};
     use crate::ipc::{self, Request};
 
     #[to_layer_message]
     #[derive(Debug, Clone)]
     enum Message {
-        State(Option<OverlayView>),
+        State(OverlayFrame),
         /// The daemon went away: nothing left to draw for.
         Disconnected,
     }
 
     struct Overlay {
-        view: Option<OverlayView>,
+        frame: OverlayFrame,
     }
 
     /// Idle: a 1×1 invisible surface in a corner. Showing: the whole screen, transparent
@@ -388,7 +401,7 @@ mod ui {
     }
 
     fn boot() -> (Overlay, Task<Message>) {
-        (Overlay { view: None }, Task::none())
+        (Overlay { frame: OverlayFrame::default() }, Task::none())
     }
 
     fn namespace() -> String {
@@ -397,10 +410,10 @@ mod ui {
 
     fn update(state: &mut Overlay, message: Message) -> Task<Message> {
         match message {
-            Message::State(view) => {
-                let was_shown = state.view.is_some();
-                state.view = view;
-                let (anchor, size) = match (was_shown, state.view.is_some()) {
+            Message::State(frame) => {
+                let was_shown = !state.frame.is_empty();
+                state.frame = frame;
+                let (anchor, size) = match (was_shown, !state.frame.is_empty()) {
                     (false, true) => full_screen(),
                     (true, false) => idle(),
                     _ => return Task::none(),
@@ -426,7 +439,7 @@ mod ui {
             {
                 let mut lines = BufReader::new(stream).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
-                    if let Ok(state) = serde_json::from_str::<Option<OverlayView>>(&line) {
+                    if let Ok(state) = serde_json::from_str::<OverlayFrame>(&line) {
                         let _ = output.send(Message::State(state)).await;
                     }
                 }
@@ -438,11 +451,24 @@ mod ui {
     }
 
     fn view(state: &Overlay) -> Element<'_, Message> {
-        match &state.view {
-            None => space().into(),
-            Some(OverlayView::Keyboard(k)) => draw::place(draw::keyboard_panel(k), &k.style),
-            Some(OverlayView::Menu(m)) => draw::place(draw::menu_panel(m), &m.style),
+        if state.frame.is_empty() {
+            return space().into();
         }
+        // Info overlays sharing a spot stack up there; the keyboard or a menu goes on top.
+        let mut layers: Vec<Element<'_, Message>> = Vec::new();
+        for spot in crate::config::ScreenPosition::GRID {
+            let here: Vec<_> = state.frame.info.iter().filter(|v| v.style.position == spot).collect();
+            if let Some(first) = here.first() {
+                let panels = column(here.iter().map(|v| draw::info_panel(v))).spacing(12);
+                layers.push(draw::place(panels.into(), &first.style));
+            }
+        }
+        match &state.frame.active {
+            Some(OverlayView::Keyboard(k)) => layers.push(draw::place(draw::keyboard_panel(k), &k.style)),
+            Some(OverlayView::Menu(m)) => layers.push(draw::place(draw::menu_panel(m), &m.style)),
+            None => {}
+        }
+        stack(layers).into()
     }
 }
 
@@ -460,6 +486,7 @@ pub mod draw {
     use super::KeyboardView;
     use crate::{
         config::{MenuKind, OverlayStyle, Paint, ScreenPosition},
+        info::{InfoView, Segment},
         keyboard,
         menu::MenuView,
     };
@@ -471,7 +498,7 @@ pub mod draw {
 
     /// Resolved colors for one overlay.
     #[derive(Clone, Copy)]
-    struct Colors {
+    pub struct Colors {
         background: Color,
         background_text: Color,
         muted: Color,
@@ -542,6 +569,64 @@ pub mod draw {
             },
             ..container::Style::default()
         }
+    }
+
+    /// An info overlay: its cells in a grid, columns as wide as their widest cell.
+    pub fn info_panel<'a, M: 'a>(v: &InfoView) -> Element<'a, M> {
+        let c = colors(&v.style);
+        let s = v.style.scale.clamp(0.5, 2.0);
+        let line = 30.0 * s;
+        let columns = v.rows.iter().map(Vec::len).max().unwrap_or(0);
+        let mut grid = row![].spacing(20.0 * s);
+        for j in 0..columns {
+            let mut col = column![].spacing(4.0 * s);
+            for r in &v.rows {
+                let cell: Element<'a, M> = match r.get(j) {
+                    Some(segments) => info_cell(segments, c, s),
+                    None => space().into(),
+                };
+                col = col.push(container(cell).height(line).align_y(Vertical::Center));
+            }
+            grid = grid.push(col);
+        }
+        container(grid).padding([12.0 * s, 16.0 * s]).style(panel_style(c)).into()
+    }
+
+    fn info_cell<'a, M: 'a>(segments: &[Segment], c: Colors, s: f32) -> Element<'a, M> {
+        let mut line = row![].spacing(2.0 * s).align_y(Alignment::Center);
+        for segment in segments {
+            line = line.push(match segment {
+                Segment::Text(t) => Element::from(text(t.clone()).size(16.0 * s).color(c.background_text)),
+                Segment::Glyph { label, fill, round } => glyph(label, *fill, *round, c, s),
+            });
+        }
+        line.into()
+    }
+
+    /// A button glyph: a colored disc for face buttons, a rounded tag for the rest.
+    fn glyph<'a, M: 'a>(label: &str, fill: Option<[u8; 3]>, round: bool, c: Colors, s: f32) -> Element<'a, M> {
+        let (bg, fg) = match fill {
+            Some([r, g, b]) => (Color::from_rgb8(r, g, b), Color::WHITE),
+            None => (c.item, c.item_text),
+        };
+        let size = 24.0 * s;
+        let disc = round && label.chars().count() <= 2;
+        let body = container(text(label.to_string()).size(13.0 * s).color(fg));
+        let body = if disc {
+            body.center_x(size).center_y(size)
+        } else {
+            body.padding([0.0, 7.0 * s]).height(size).center_y(size)
+        };
+        body.style(move |_: &iced::Theme| container::Style {
+            background: Some(bg.into()),
+            border: Border {
+                width: 1.0,
+                radius: if disc { size / 2.0 } else { 6.0 * s }.into(),
+                color: Color { a: 0.2, ..fg },
+            },
+            ..container::Style::default()
+        })
+        .into()
     }
 
     pub fn keyboard_panel<'a, M: 'a>(v: &KeyboardView) -> Element<'a, M> {

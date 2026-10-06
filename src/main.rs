@@ -3,6 +3,7 @@ mod daemon;
 mod engine;
 mod focus;
 mod gui;
+mod info;
 mod input;
 mod ipc;
 mod keyboard;

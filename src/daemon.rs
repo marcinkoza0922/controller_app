@@ -33,11 +33,13 @@ use crate::{
     monitor::{self, InputView, OutputView, log},
     output::{FfCaps, OutEvent, VIRTUAL_PREFIX, VirtualKbm, VirtualPad},
     menu::{MenuOutcome, MenuSession},
-    overlay::{OverlayAction, OverlayController, OverlayView},
+    overlay::{OverlayAction, OverlayController, OverlayFrame, OverlayView},
     rumble,
 };
 
 const TICK: Duration = Duration::from_millis(4);
+/// How often info overlays with live values (time, CPU, …) update.
+const INFO_REFRESH: Duration = Duration::from_secs(1);
 const SCAN_INTERVAL: Duration = Duration::from_secs(2);
 const POLL_TIMEOUT_MS: i32 = 200;
 /// Minimum gap between snapshots streamed to one watcher (~60 fps).
@@ -57,12 +59,14 @@ enum Msg {
     Focus(FocusEvent),
     Motion { id: u64, sample: MotionSample },
     MotionGone { id: u64 },
-    WatchOverlay(Sender<Option<OverlayView>>),
+    WatchOverlay(Sender<OverlayFrame>),
 }
 
 struct Managed {
     path: PathBuf,
     name: String,
+    /// Whose button names glyphs use.
+    family: crate::info::PadFamily,
     engine: Engine,
     pad: VirtualPad,
     stop: Arc<AtomicBool>,
@@ -162,7 +166,15 @@ struct Daemon {
     /// Where the overlay keyboard's cursor was, for the next time it opens.
     /// Where each on-screen layout's cursor was left, to pick up there next time.
     overlay_cursors: HashMap<Layout, crate::keyboard::Cursor>,
-    overlay_watchers: Vec<Sender<Option<OverlayView>>>,
+    overlay_watchers: Vec<Sender<OverlayFrame>>,
+    /// The frame last sent to the overlay window, to skip sending it again unchanged.
+    last_frame: Option<OverlayFrame>,
+    /// When shown info overlays with live values next refresh.
+    info_refresh: Option<Instant>,
+    sampler: crate::info::Sampler,
+    /// When the overlay window was last started, so a window that can't start (no
+    /// layer-shell) isn't restarted every second for info overlays.
+    overlay_started: Option<Instant>,
     overlay_process: Option<std::process::Child>,
     tx: Sender<Msg>,
 }
@@ -198,6 +210,10 @@ pub fn run() -> Result<()> {
         active: None,
         overlay_cursors: HashMap::new(),
         overlay_watchers: Vec::new(),
+        last_frame: None,
+        info_refresh: None,
+        sampler: crate::info::Sampler::default(),
+        overlay_started: None,
         overlay_process: None,
         tx,
     };
@@ -276,12 +292,16 @@ impl Daemon {
             Some(Active::Menu { session, .. }) => session.next_deadline(),
             None => None,
         };
-        self.devices.values().filter_map(|d| d.engine.next_deadline()).chain(overlay).min()
+        self.devices.values().filter_map(|d| d.engine.next_deadline()).chain(overlay).chain(self.info_refresh).min()
     }
 
     /// Fires combo members whose combo window has expired.
     fn run_timers(&mut self) {
         let now = Instant::now();
+        if self.info_refresh.is_some_and(|t| t <= now) {
+            self.sampler.sample();
+            self.broadcast_overlay();
+        }
         let (mut keyboard_actions, mut changed) = (Vec::new(), false);
         match &mut self.active {
             Some(Active::Keyboard(k)) if k.next_deadline().is_some_and(|d| d <= now) => {
@@ -322,6 +342,7 @@ impl Daemon {
         if let Some((id, (name, opener))) = menu_request {
             self.open_menu(id, name, opener);
         }
+        self.check_info_changes();
     }
 
     /// Opens or closes the on-screen keyboard or numpad (one replaces the other).
@@ -377,6 +398,7 @@ impl Daemon {
         match std::env::current_exe().and_then(|exe| std::process::Command::new(exe).arg("overlay").spawn()) {
             Ok(child) => {
                 self.overlay_process = Some(child);
+                self.overlay_started = Some(Instant::now());
                 true
             }
             Err(e) => {
@@ -468,8 +490,69 @@ impl Daemon {
     }
 
     fn broadcast_overlay(&mut self) {
-        let view = self.overlay_view();
-        self.overlay_watchers.retain(|w| w.send(view.clone()).is_ok());
+        let frame = self.overlay_frame();
+        if !frame.info.is_empty()
+            && self.overlay_process.is_none()
+            && self.overlay_started.is_none_or(|t| t.elapsed() > Duration::from_secs(10))
+        {
+            self.ensure_overlay_process();
+        }
+        if self.last_frame.as_ref() == Some(&frame) {
+            return;
+        }
+        self.overlay_watchers.retain(|w| w.send(frame.clone()).is_ok());
+        self.last_frame = Some(frame);
+    }
+
+    fn overlay_frame(&mut self) -> OverlayFrame {
+        let shown = self.visible_info();
+        // Live values (clock, CPU, …) refresh every second while shown.
+        let live = shown.iter().any(crate::info::is_live);
+        self.info_refresh = live.then(|| Instant::now() + INFO_REFRESH);
+        if live && self.sampler.sampled_at.is_none() {
+            self.sampler.sample();
+        }
+        let values = self.live_values();
+        let info = shown.iter().map(|o| crate::info::resolve(o, &values)).collect();
+        OverlayFrame { info, active: self.overlay_view() }
+    }
+
+    /// Info overlays to show now: those of the active profile set to always show, and any
+    /// a ShowInfo action holds up.
+    fn visible_info(&self) -> Vec<crate::config::InfoOverlay> {
+        let Some(profile) = self.config.active() else { return Vec::new() };
+        let held: HashSet<&String> = self.devices.values().flat_map(|d| d.engine.shown_info()).collect();
+        self.config
+            .info
+            .iter()
+            .filter(|o| crate::config::in_scope(&o.profiles, &profile.name) && (o.always || held.contains(&o.name)))
+            .cloned()
+            .collect()
+    }
+
+    fn live_values(&self) -> crate::info::Live {
+        let window = self.focused.clone().unwrap_or_default();
+        let pad = self.last_active.and_then(|id| self.devices.get(&id)).or_else(|| self.devices.values().next());
+        crate::info::Live {
+            profile: self.config.active().map(|p| p.name.clone()).unwrap_or_default(),
+            app: window.exe,
+            title: window.title,
+            pid: window.pid,
+            controller: pad.map(|d| d.name.clone()).unwrap_or_default(),
+            family: pad.map(|d| d.family).unwrap_or_default(),
+            system: self.sampler.stats.clone(),
+        }
+    }
+
+    /// Redraws info overlays if a ShowInfo action changed what is held up.
+    fn check_info_changes(&mut self) {
+        let mut changed = false;
+        for dev in self.devices.values_mut() {
+            changed |= dev.engine.take_info_changed();
+        }
+        if changed {
+            self.broadcast_overlay();
+        }
     }
 
     /// If the overlay window died (crashed, or no compositor yet), leave overlay mode so the
@@ -530,7 +613,7 @@ impl Daemon {
             Msg::Focus(FocusEvent::Focused(window)) => self.window_focused(window),
             Msg::Motion { id, sample } => self.motion(id, sample),
             Msg::WatchOverlay(watcher) => {
-                if watcher.send(self.overlay_view()).is_ok() {
+                if watcher.send(self.overlay_frame()).is_ok() {
                     self.overlay_watchers.push(watcher);
                 }
             }
@@ -623,6 +706,9 @@ impl Daemon {
         self.recent_windows.insert(0, window.clone());
         self.recent_windows.truncate(RECENT_WINDOWS);
         self.focused = Some(window.clone());
+        if self.info_refresh.is_some() {
+            self.broadcast_overlay();
+        }
 
         if !self.config.auto_switch.enabled {
             return;
@@ -708,6 +794,7 @@ impl Daemon {
         if let Some((name, opener)) = menu_request {
             self.open_menu(id, name, opener);
         }
+        self.check_info_changes();
     }
 
     /// While the overlay shows something, controller input drives it instead of the mappings.
@@ -852,6 +939,7 @@ impl Daemon {
         let enabled = self.config.enabled;
         self.release_devices(|d| !enabled || ignored.contains(&d.name));
         self.resync_all();
+        self.broadcast_overlay();
         self.save_and_rescan()
     }
 
@@ -871,6 +959,8 @@ impl Daemon {
         self.release_all();
         self.config.active_profile = name;
         self.resync_all();
+        // Other info overlays may belong to the new profile.
+        self.broadcast_overlay();
         if let Err(e) = self.config.save() {
             log!("saving config: {e:#}");
         }
@@ -1000,6 +1090,7 @@ impl Daemon {
 
     fn manage(&mut self, path: PathBuf, name: String, mut dev: Device) {
         let parent = hid_parent(&path);
+        let family = crate::info::PadFamily::detect(dev.input_id().vendor(), &name);
         let uniq = dev.unique_name().map(str::to_string);
         if let Err(e) = dev.grab() {
             log!("cannot grab {name} ({}): {e}", path.display());
@@ -1034,6 +1125,7 @@ impl Daemon {
         let mut managed = Managed {
             path,
             name,
+            family,
             engine: {
                 let mut engine = Engine::default();
                 engine.set_macros(&self.config.macros);
@@ -1203,10 +1295,10 @@ fn serve_client(conn: UnixStream, tx: &Sender<Msg>) -> Result<()> {
     Ok(())
 }
 
-/// Streams overlay state to the (resident) overlay window until it goes away. `None` means
-/// nothing is shown; the window idles and keeps listening.
+/// Streams overlay state to the (resident) overlay window until it goes away. An empty frame
+/// means nothing is shown; the window idles and keeps listening.
 fn watch_overlay(conn: UnixStream, tx: &Sender<Msg>) -> Result<()> {
-    let (view_tx, view_rx) = mpsc::channel::<Option<OverlayView>>();
+    let (view_tx, view_rx) = mpsc::channel::<OverlayFrame>();
     tx.send(Msg::WatchOverlay(view_tx))?;
     while let Ok(mut view) = view_rx.recv() {
         while let Ok(newer) = view_rx.try_recv() {

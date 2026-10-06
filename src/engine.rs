@@ -131,6 +131,10 @@ pub struct Engine {
     menu_request: Option<(String, Opener)>,
     /// Set while a Toggle turns its inner action on.
     toggling: bool,
+    /// Info overlays shown by held (or toggled) ShowInfo actions, with how many hold each.
+    info_holds: HashMap<String, u32>,
+    /// Set when `info_holds` changes; the daemon takes it.
+    info_changed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -216,6 +220,16 @@ impl Engine {
         let switch = self.digital(src.clone(), action, true, out);
         self.digital(src, action, false, out);
         switch
+    }
+
+    /// Whether the shown info overlays changed since the last call.
+    pub fn take_info_changed(&mut self) -> bool {
+        std::mem::take(&mut self.info_changed)
+    }
+
+    /// Info overlays held up by ShowInfo actions right now.
+    pub fn shown_info(&self) -> impl Iterator<Item = &String> {
+        self.info_holds.keys()
     }
 
     /// Which on-screen keyboard (or numpad) a toggle action asked for since the last call.
@@ -651,6 +665,17 @@ impl Engine {
             if pressed {
                 self.overlay_toggled = Some(crate::keyboard::Layout::Numpad);
             }
+        }
+        ButtonAction::ShowInfo(name) => {
+            if pressed {
+                *self.info_holds.entry(name.clone()).or_insert(0) += 1;
+            } else if let Some(n) = self.info_holds.get_mut(name) {
+                *n -= 1;
+                if *n == 0 {
+                    self.info_holds.remove(name);
+                }
+            }
+            self.info_changed = true;
         }
         ButtonAction::OpenMenu(name) => {
             if pressed {
@@ -2011,7 +2036,7 @@ mod tests {
 
     fn macro_engine(steps: Vec<MacroStep>) -> Engine {
         let mut e = Engine::default();
-        e.set_macros(&[Macro { name: "m".into(), steps }]);
+        e.set_macros(&[Macro { name: "m".into(), profiles: None, steps }]);
         e
     }
 
@@ -2245,6 +2270,24 @@ mod tests {
         axis(&mut e, &p, Axis::LeftX, 0.25);
         let out = run(&mut e, &p, InputEvent::Button(Button::West, true));
         assert!(out.contains(&OutEvent::PadAxis(Axis::LeftX, 0.75)), "{out:?}");
+    }
+
+    #[test]
+    fn show_info_holds_while_pressed_and_toggles() {
+        let mut p = Profile::passthrough("p");
+        p.set_button(Button::Select, ButtonAction::ShowInfo("Keys".into()));
+        p.set_button(Button::North, toggle(ButtonAction::ShowInfo("Stats".into())));
+        let mut e = Engine::default();
+        run(&mut e, &p, InputEvent::Button(Button::Select, true));
+        assert!(e.take_info_changed());
+        assert_eq!(e.shown_info().collect::<Vec<_>>(), ["Keys"]);
+        run(&mut e, &p, InputEvent::Button(Button::Select, false));
+        assert_eq!(e.shown_info().count(), 0);
+        run(&mut e, &p, InputEvent::Button(Button::North, true));
+        run(&mut e, &p, InputEvent::Button(Button::North, false));
+        assert_eq!(e.shown_info().collect::<Vec<_>>(), ["Stats"], "toggled on stays up");
+        run(&mut e, &p, InputEvent::Button(Button::North, true));
+        assert_eq!(e.shown_info().count(), 0);
     }
 
     #[test]

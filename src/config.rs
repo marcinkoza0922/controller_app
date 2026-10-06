@@ -215,6 +215,8 @@ pub enum ButtonAction {
     ToggleOverlay,
     /// Opens or closes the on-screen numpad (works like the keyboard).
     ToggleNumpad,
+    /// Shows the info overlay named here while held (wrap in Toggle to keep it up).
+    ShowInfo(String),
     /// Shows the menu named here. As a menu item's action it opens a submenu.
     OpenMenu(String),
 }
@@ -223,6 +225,9 @@ pub enum ButtonAction {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Menu {
     pub name: String,
+    /// Profiles that can use it; `None` means all of them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profiles: Option<Vec<String>>,
     pub kind: MenuKind,
     pub items: Vec<MenuItem>,
     /// Button that backs out of the menu (one level for submenus). Defaults to East, or to
@@ -466,6 +471,16 @@ impl OverlayStyle {
     pub fn numpad() -> Self {
         OverlayStyle { position: ScreenPosition::BottomRight, ..OverlayStyle::default() }
     }
+
+    /// Info overlays: top right, smaller and see-through so they can stay up during play.
+    pub fn info() -> Self {
+        OverlayStyle {
+            position: ScreenPosition::TopRight,
+            scale: 0.8,
+            background: Paint::new("#16181c", 0.7),
+            ..OverlayStyle::default()
+        }
+    }
 }
 
 fn default_keyboard_style() -> OverlayStyle {
@@ -536,7 +551,33 @@ impl fmt::Display for CarouselControls {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Macro {
     pub name: String,
+    /// Profiles that can use it; `None` means all of them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profiles: Option<Vec<String>>,
     pub steps: Vec<MacroStep>,
+}
+
+/// Whether something scoped to `profiles` (`None`: all) is available to `profile`.
+pub fn in_scope(profiles: &Option<Vec<String>>, profile: &str) -> bool {
+    profiles.as_ref().is_none_or(|list| list.iter().any(|p| p == profile))
+}
+
+/// An on-screen panel of text laid out in a grid, e.g. a game's button mappings. Cells may
+/// hold `{tokens}` for controller glyphs and live values (see `crate::info`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InfoOverlay {
+    pub name: String,
+    /// Profiles that can use it; `None` means all of them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profiles: Option<Vec<String>>,
+    /// Shown whenever one of its profiles is active, rather than only by `ShowInfo`.
+    #[serde(default)]
+    pub always: bool,
+    #[serde(default = "OverlayStyle::info")]
+    pub style: OverlayStyle,
+    /// Rows of cells; cells line up in columns.
+    #[serde(default)]
+    pub rows: Vec<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1366,6 +1407,9 @@ pub struct Config {
     pub keyboard_style: OverlayStyle,
     #[serde(default = "default_numpad_style")]
     pub numpad_style: OverlayStyle,
+    /// Info overlays, shown by `ButtonAction::ShowInfo` or always for their profiles.
+    #[serde(default, rename = "info_overlays")]
+    pub info: Vec<InfoOverlay>,
     pub profiles: Vec<Profile>,
 }
 
@@ -1381,12 +1425,47 @@ impl Default for Config {
             menus: Vec::new(),
             keyboard_style: OverlayStyle::keyboard(),
             numpad_style: OverlayStyle::numpad(),
+            info: Vec::new(),
             profiles: vec![Profile::passthrough("Gamepad"), Profile::desktop("Desktop")],
         }
     }
 }
 
 impl Config {
+    /// Profile-scope lists that name a profile, for following renames and deletes.
+    fn scopes_mut(&mut self) -> impl Iterator<Item = &mut Vec<String>> {
+        let macros = self.macros.iter_mut().filter_map(|m| m.profiles.as_mut());
+        let menus = self.menus.iter_mut().filter_map(|m| m.profiles.as_mut());
+        let info = self.info.iter_mut().filter_map(|m| m.profiles.as_mut());
+        macros.chain(menus).chain(info)
+    }
+
+    /// Keeps macros, menus and info overlays scoped to a renamed profile with it.
+    pub fn profile_renamed(&mut self, old: &str, new: &str) {
+        for list in self.scopes_mut() {
+            for p in list.iter_mut().filter(|p| *p == old) {
+                *p = new.to_string();
+            }
+        }
+    }
+
+    /// Drops a deleted profile from scope lists. Items scoped only to it stay, unused, rather
+    /// than turning into shared ones.
+    pub fn profile_removed(&mut self, name: &str) {
+        for list in self.scopes_mut() {
+            list.retain(|p| p != name);
+        }
+    }
+
+    /// A copy of a profile can use everything the original could.
+    pub fn profile_copied(&mut self, from: &str, to: &str) {
+        for list in self.scopes_mut() {
+            if list.iter().any(|p| p == from) {
+                list.push(to.to_string());
+            }
+        }
+    }
+
     pub fn path() -> PathBuf {
         dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
@@ -1608,6 +1687,7 @@ mod tests {
         let key = |k: &str| ButtonAction::Keys(vec![k.into()]);
         config.macros.push(Macro {
             name: "Combo".into(),
+            profiles: None,
             steps: vec![
                 MacroStep::Tap { action: key("KEY_A"), hold_ms: 40 },
                 MacroStep::Wait(100),
@@ -1644,6 +1724,7 @@ mod tests {
         });
         config.macros.push(Macro {
             name: "Jump".into(),
+            profiles: None,
             steps: vec![MacroStep::Stick { stick: Stick::Left, x: 0.0, y: -1.0 }, MacroStep::Wait(17)],
         });
         let back: Config = toml::from_str(&toml::to_string_pretty(&config).unwrap()).unwrap();
@@ -1669,6 +1750,7 @@ mod tests {
             menus: vec![
             Menu {
                 name: "Weapons".into(),
+                profiles: None,
                 kind: MenuKind::Radial { stick: Stick::Right },
                 items: (1..=4).map(|n| item(&format!("Slot {n}"), ButtonAction::Keys(vec![format!("KEY_{n}")]))).collect(),
                 cancel: None,
@@ -1676,6 +1758,7 @@ mod tests {
             },
             Menu {
                 name: "Pause".into(),
+                profiles: None,
                 kind: MenuKind::Buttons,
                 items: vec![MenuItem { button: Some(Button::LeftBumper), ..item("Map", ButtonAction::Keys(vec!["KEY_M".into()])) }],
                 cancel: Some(Button::Start),
@@ -1683,6 +1766,7 @@ mod tests {
             },
             Menu {
                 name: "Faces".into(),
+                profiles: None,
                 kind: MenuKind::Directional { cluster: Cluster::FaceButtons },
                 items: vec![item("More", ButtonAction::OpenMenu("Pause".into()))],
                 cancel: None,

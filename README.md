@@ -50,7 +50,7 @@ More templates are available under "New from template…" in the GUI:
 
 ## Macros
 
-The Macros tab holds named input sequences shared by all profiles, each in its own collapsible card ("+ New macro" adds one at the top). Each step is a **tap** (press, hold for N ms, release), **hold down**, **release**, **wait** (N ms), or **move stick** (a virtual-pad stick to a direction or custom position, held until the next stick step and recentered when the macro ends). Steps can press a key or key combo, mouse button, scroll wheel or gamepad button. "Insert motion…" adds fighting-game motions one frame apart: quarter circles, dragon punch and half circles, written facing right. Map a macro with the "Macro…" action:
+The Macros tab holds named input sequences, each in its own collapsible card ("+ New macro" adds one at the top). Each step is a **tap** (press, hold for N ms, release), **hold down**, **release**, **wait** (N ms), or **move stick** (a virtual-pad stick to a direction or custom position, held until the next stick step and recentered when the macro ends). Steps can press a key or key combo, mouse button, scroll wheel or gamepad button. "Insert motion…" adds fighting-game motions one frame apart: quarter circles, dragon punch and half circles, written facing right. Map a macro with the "Macro…" action:
 
 - **Play once**: each press plays it through to the end, even if you let go early.
 - **Repeat while held**: it loops until you let go, then stops at once.
@@ -87,6 +87,19 @@ The Overlays tab also holds on-screen **action menus**, shared by all profiles. 
 An item can open another menu of the same kind (radial menus can't open menus). The new menu is a child of the first: letting go closes both. While a menu is open the controller drives it, and anything the mappings were holding is released. A quick tap can't hold a menu up, so a tap-triggered menu (e.g. on a double tap that isn't the button's last gesture) needs a Toggle. Menus opened from the command line or an analog zone, which can't be held, stay until an item is chosen or B is pressed (Select for face-button menus). The overlay window stays running invisibly between uses, so menus appear instantly.
 
 Each menu is a collapsible card on the Overlays tab, with a live preview; "Add a menu" adds another at the top. Under **Appearance**, each menu (and the keyboard) has its own screen position (a 3×3 grid of corners, edges and center, so it fits any monitor size or aspect ratio), size (50–200%), and color and opacity for the background, items and selected item. Text switches between light and dark to stay readable. Older configs with `cascade` menus still load.
+
+## Info overlays
+
+Info overlays put text on screen without taking the controller, mainly to show a game's controls. Each one is a grid of cells (rows of cells that line up in columns), with its own position, size and colors. Cells can hold tokens:
+
+- **Button glyphs** drawn the way the controller in use labels them: `{south}` is A on Xbox, ✕ on PlayStation and B on Nintendo; also `{east}` `{west}` `{north}` `{lb}` `{rb}` `{lt}` `{rt}` `{select}` `{start}` `{guide}` `{ls}` `{rs}` `{l3}` `{r3}` `{dpad}` `{up}` `{down}` `{left}` `{right}`.
+- **Live values**, updated every second: `{time}` `{time12}` `{date}` `{profile}` `{app}` (the focused program's executable) `{title}` `{pid}` `{cpu}` `{ram}` `{gpu}` (AMD only) `{controller}`.
+
+An info overlay is either always shown while one of its profiles is active, or shown with the "Show info overlay…" action while that input is held (wrap it in Toggle to keep it up). Overlays at the same screen position stack.
+
+## Game-specific macros and overlays
+
+Macros, menus and info overlays are shared by all profiles unless "Used by" on their card names some. A profile can only use its own and shared ones, and its editor only offers those. "Show:" on the Macros and Overlays tabs lists what one profile can use, and anything added while a profile is picked there belongs to it. Renaming or duplicating a profile carries its macros and overlays along.
 
 ## Gyro
 
