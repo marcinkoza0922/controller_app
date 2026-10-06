@@ -7,10 +7,13 @@ mod info;
 mod input;
 mod ipc;
 mod keyboard;
+mod launchers;
+mod library;
 mod menu;
 mod monitor;
 mod output;
 mod overlay;
+mod pack;
 mod pad_svg;
 mod rumble;
 mod style;
@@ -27,7 +30,7 @@ commands:
   daemon           run the background remapping service
   status           show daemon status and detected controllers
   enable|disable   turn remapping on or off
-  profile <name>   switch the active profile
+  profile <name>   switch to a profile (in the current game, General, or any game)
   next-profile     switch to the next profile
   reload           re-read the config file
   overlay-toggle   open or close the on-screen keyboard overlay
@@ -68,7 +71,10 @@ fn status() -> Result<()> {
         bail!("unexpected reply from daemon");
     };
     println!("enabled: {}", s.enabled);
-    println!("profile: {}", s.active_profile);
+    match &s.active_game {
+        Some(game) => println!("profile: {} ({game})", s.active_profile),
+        None => println!("profile: {}", s.active_profile),
+    }
     let tracking = match s.focus_backend {
         ipc::FocusBackend::Kwin => "focused window (KWin)",
         ipc::FocusBackend::ProcessScan => "running processes",

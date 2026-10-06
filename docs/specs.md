@@ -1,6 +1,6 @@
 # Games, packs and the built-in library
 
-Status: draft spec, from interviews on 2026-10-06. Nothing here is implemented yet.
+Status: implemented (2026-10-06), except where the open questions below say otherwise.
 
 ## Goals
 
@@ -62,8 +62,9 @@ Game
 game's profile or item looks first in that game, then in Shared. Shared items can only reference other Shared items.
 
 **Names.** Unique per kind within a game, so "Dodge" can exist in Elden Ring and Sekiro.
-A game item may not use a Shared item's name: it's a validation error shown on the game item.
-That keeps one meaning per name, with no overriding.
+A game item may not use a Shared item's name, and a Shared item may not take a name any game's
+item uses: the rename is refused, and new items get a free name ("Macro 2"). That keeps one
+meaning per name, with no overriding.
 
 **Scope inside a game.** Macros, menus and info overlays belong to the game as a whole: every
 profile in the game can use them, and nothing is scoped per profile. An info overlay set to
@@ -336,8 +337,6 @@ the user's say.
 - **Rules for several profiles.** A game whose profiles need different rules (e.g. a
   launcher window versus the game itself) works, since each rule names its profile. Is a
   game-level "launch profile" also needed for when no rule's details are known?
-- **Shared names.** Making a new Shared item whose name an existing game item already uses
-  turns the game item into an error. Should creating the Shared item be blocked instead?
 - **Library ↔ running game.** When a running game matches a library pack the user hasn't
   added, should the app suggest adding it (a notification), or only mark it in the picker?
 - **File association** for `.padpack` (double-click to import) depends on packaging.

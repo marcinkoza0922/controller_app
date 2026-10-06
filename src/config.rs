@@ -221,13 +221,11 @@ pub enum ButtonAction {
     OpenMenu(String),
 }
 
-/// An on-screen action menu, shared by all profiles and opened with `ButtonAction::OpenMenu`.
+/// An on-screen action menu, usable by every profile of its game (or, when shared, of every
+/// game) and opened with `ButtonAction::OpenMenu`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Menu {
     pub name: String,
-    /// Profiles that can use it; `None` means all of them.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub profiles: Option<Vec<String>>,
     pub kind: MenuKind,
     pub items: Vec<MenuItem>,
     /// Button that backs out of the menu (one level for submenus). Defaults to East, or to
@@ -547,19 +545,12 @@ impl fmt::Display for CarouselControls {
     }
 }
 
-/// A named sequence of inputs, shared by all profiles.
+/// A named sequence of inputs, usable by every profile of its game (or, when shared, of
+/// every game).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Macro {
     pub name: String,
-    /// Profiles that can use it; `None` means all of them.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub profiles: Option<Vec<String>>,
     pub steps: Vec<MacroStep>,
-}
-
-/// Whether something scoped to `profiles` (`None`: all) is available to `profile`.
-pub fn in_scope(profiles: &Option<Vec<String>>, profile: &str) -> bool {
-    profiles.as_ref().is_none_or(|list| list.iter().any(|p| p == profile))
 }
 
 /// An on-screen panel of text laid out in a grid, e.g. a game's button mappings. Cells may
@@ -567,10 +558,7 @@ pub fn in_scope(profiles: &Option<Vec<String>>, profile: &str) -> bool {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InfoOverlay {
     pub name: String,
-    /// Profiles that can use it; `None` means all of them.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub profiles: Option<Vec<String>>,
-    /// Shown whenever one of its profiles is active, rather than only by `ShowInfo`.
+    /// Shown whenever a profile of its game is active, rather than only by `ShowInfo`.
     #[serde(default)]
     pub always: bool,
     #[serde(default = "OverlayStyle::info")]
@@ -1365,30 +1353,257 @@ impl fmt::Display for RuleKind {
 pub struct Rule {
     pub kind: RuleKind,
     pub value: String,
+    /// One of its game's profiles.
+    pub profile: String,
+    /// Off when an imported game's rule for the same window took over.
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub enabled: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn is_true(b: &bool) -> bool {
+    *b
+}
+
+impl Rule {
+    pub fn new(kind: RuleKind, value: impl Into<String>, profile: impl Into<String>) -> Self {
+        Rule { kind, value: value.into(), profile: profile.into(), enabled: true }
+    }
+
+    /// Same window match (kind and value), whichever profile it picks.
+    pub fn same_match(&self, other: &Rule) -> bool {
+        self.kind == other.kind && self.value.trim().eq_ignore_ascii_case(other.value.trim())
+    }
+}
+
+/// A profile, by its game (`None`: General) and name.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub struct ProfileRef {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game: Option<String>,
     pub profile: String,
 }
 
-/// Per-game profile switching.
+impl ProfileRef {
+    pub fn new(game: Option<&str>, profile: &str) -> Self {
+        ProfileRef { game: game.map(str::to_string), profile: profile.to_string() }
+    }
+}
+
+impl fmt::Display for ProfileRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.game {
+            Some(game) => write!(f, "{game} › {}", self.profile),
+            None => f.write_str(&self.profile),
+        }
+    }
+}
+
+/// Per-game profile switching. The rules themselves belong to games.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AutoSwitch {
     pub enabled: bool,
     /// Profile for windows no rule matches; `None` leaves the current profile alone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default_profile: Option<String>,
-    #[serde(default)]
-    pub rules: Vec<Rule>,
+    pub default_profile: Option<ProfileRef>,
 }
 
 impl Default for AutoSwitch {
     fn default() -> Self {
-        AutoSwitch { enabled: true, default_profile: None, rules: Vec::new() }
+        AutoSwitch { enabled: true, default_profile: None }
     }
+}
+
+/// A pack this game was made from, and how to tell whether it has been edited since.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Origin {
+    pub id: String,
+    pub version: String,
+    /// From the built-in library rather than a file.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub library: bool,
+    /// Content hash of each item at import (see `crate::pack::item_hashes`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub hashes: BTreeMap<String, String>,
+}
+
+/// Another pack, credited by a fork.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct PackRef {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub author: String,
+    #[serde(default)]
+    pub version: String,
+}
+
+/// What a game's next export says about itself.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct PackInfo {
+    /// Empty until the first export.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub version: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub author: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub made_with: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub based_on: Option<PackRef>,
+}
+
+impl PackInfo {
+    fn is_empty(&self) -> bool {
+        *self == PackInfo::default()
+    }
+}
+
+/// A game: its profiles, the macros, menus and info overlays they use, and the rules that
+/// switch to it. General is a game too, with no rules.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Game {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "PackInfo::is_empty")]
+    pub pack: PackInfo,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<Origin>,
+    #[serde(default)]
+    pub rules: Vec<Rule>,
+    pub profiles: Vec<Profile>,
+    /// Mapped with `ButtonAction::Macro`.
+    #[serde(default)]
+    pub macros: Vec<Macro>,
+    /// Opened with `ButtonAction::OpenMenu`.
+    #[serde(default)]
+    pub menus: Vec<Menu>,
+    /// Shown by `ButtonAction::ShowInfo`, or always while the game is active.
+    #[serde(default, rename = "info_overlays")]
+    pub info: Vec<InfoOverlay>,
+}
+
+impl Game {
+    pub fn new(name: &str, profiles: Vec<Profile>) -> Self {
+        Game {
+            name: name.into(),
+            pack: PackInfo::default(),
+            origin: None,
+            rules: Vec::new(),
+            profiles,
+            macros: Vec::new(),
+            menus: Vec::new(),
+            info: Vec::new(),
+        }
+    }
+
+    pub fn profile(&self, name: &str) -> Option<&Profile> {
+        self.profiles.iter().find(|p| p.name == name)
+    }
+
+    /// Points every reference to the macro, menu or info overlay `old` (of `kind`) at `new`:
+    /// in profiles, menu items and macro steps.
+    pub fn rename_refs(&mut self, kind: ItemKind, old: &str, new: &str) {
+        rename_in(&mut self.profiles, &mut self.menus, &mut self.macros, kind, old, new);
+    }
+}
+
+/// Macros, menus and info overlays every profile of every game can use.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Shared {
+    #[serde(default)]
+    pub macros: Vec<Macro>,
+    #[serde(default)]
+    pub menus: Vec<Menu>,
+    #[serde(default, rename = "info_overlays")]
+    pub info: Vec<InfoOverlay>,
+}
+
+impl Shared {
+    /// Like [`Game::rename_refs`], within the shared items.
+    pub fn rename_refs(&mut self, kind: ItemKind, old: &str, new: &str) {
+        rename_in(&mut [], &mut self.menus, &mut self.macros, kind, old, new);
+    }
+}
+
+/// The three kinds of named item a profile refers to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ItemKind {
+    Macro,
+    Menu,
+    Info,
+}
+
+impl ItemKind {
+    pub const ALL: [ItemKind; 3] = [ItemKind::Macro, ItemKind::Menu, ItemKind::Info];
+
+    pub fn noun(self) -> &'static str {
+        match self {
+            ItemKind::Macro => "macro",
+            ItemKind::Menu => "menu",
+            ItemKind::Info => "info overlay",
+        }
+    }
+
+    /// The name `action` refers to, if it's a reference to this kind.
+    pub fn name_in(self, action: &ButtonAction) -> Option<&String> {
+        match (self, action) {
+            (ItemKind::Macro, ButtonAction::Macro { name, .. })
+            | (ItemKind::Menu, ButtonAction::OpenMenu(name))
+            | (ItemKind::Info, ButtonAction::ShowInfo(name)) => Some(name),
+            _ => None,
+        }
+    }
+
+    fn name_in_mut(self, action: &mut ButtonAction) -> Option<&mut String> {
+        match (self, action) {
+            (ItemKind::Macro, ButtonAction::Macro { name, .. })
+            | (ItemKind::Menu, ButtonAction::OpenMenu(name))
+            | (ItemKind::Info, ButtonAction::ShowInfo(name)) => Some(name),
+            _ => None,
+        }
+    }
+}
+
+fn rename_in(profiles: &mut [Profile], menus: &mut [Menu], macros: &mut [Macro], kind: ItemKind, old: &str, new: &str) {
+    let mut follow = |a: &mut ButtonAction| {
+        a.walk_mut(&mut |a| {
+            if let Some(name) = kind.name_in_mut(a)
+                && name == old
+            {
+                *name = new.to_string();
+            }
+        })
+    };
+    for p in profiles {
+        p.actions_mut().into_iter().for_each(&mut follow);
+    }
+    for m in menus {
+        m.items.iter_mut().for_each(|item| follow(&mut item.action));
+    }
+    for m in macros {
+        m.steps.iter_mut().filter_map(MacroStep::action_mut).for_each(&mut follow);
+    }
+}
+
+/// What the active profile can use: its game's items first, then shared ones.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Scope {
+    pub macros: Vec<Macro>,
+    pub menus: Vec<Menu>,
+    pub info: Vec<InfoOverlay>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Config {
     pub enabled: bool,
-    pub active_profile: String,
+    #[serde(default)]
+    pub active: ProfileRef,
     /// Device names the daemon should leave alone.
     #[serde(default)]
     pub ignored_devices: Vec<String>,
@@ -1397,79 +1612,40 @@ pub struct Config {
     /// Gyro drift (degrees/second per raw sensor axis) measured by "Calibrate gyro", per controller.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub gyro_calibration: BTreeMap<String, [f32; 3]>,
-    /// Shared by all profiles; mapped with `ButtonAction::Macro`.
-    #[serde(default)]
-    pub macros: Vec<Macro>,
-    /// On-screen action menus, shared by all profiles; opened with `ButtonAction::OpenMenu`.
-    #[serde(default)]
-    pub menus: Vec<Menu>,
     #[serde(default = "default_keyboard_style")]
     pub keyboard_style: OverlayStyle,
     #[serde(default = "default_numpad_style")]
     pub numpad_style: OverlayStyle,
-    /// Info overlays, shown by `ButtonAction::ShowInfo` or always for their profiles.
-    #[serde(default, rename = "info_overlays")]
-    pub info: Vec<InfoOverlay>,
     /// Whose button glyphs info overlays use when the controller in use isn't recognized.
     #[serde(default)]
     pub info_glyphs: crate::info::PadFamily,
-    pub profiles: Vec<Profile>,
+    /// Profiles that aren't for a particular game (desktop, plain gamepad).
+    pub general: Game,
+    #[serde(default)]
+    pub shared: Shared,
+    #[serde(default)]
+    pub games: Vec<Game>,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Config {
             enabled: true,
-            active_profile: "Gamepad".into(),
+            active: ProfileRef::new(None, "Gamepad"),
             ignored_devices: Vec::new(),
             auto_switch: AutoSwitch::default(),
             gyro_calibration: BTreeMap::new(),
-            macros: Vec::new(),
-            menus: Vec::new(),
             keyboard_style: OverlayStyle::keyboard(),
             numpad_style: OverlayStyle::numpad(),
-            info: Vec::new(),
             info_glyphs: crate::info::PadFamily::default(),
-            profiles: vec![Profile::passthrough("Gamepad"), Profile::desktop("Desktop")],
+            general: Game::new("General", vec![Profile::passthrough("Gamepad"), Profile::desktop("Desktop")]),
+            shared: Shared::default(),
+            games: Vec::new(),
         }
     }
 }
 
 impl Config {
-    /// Profile-scope lists that name a profile, for following renames and deletes.
-    fn scopes_mut(&mut self) -> impl Iterator<Item = &mut Vec<String>> {
-        let macros = self.macros.iter_mut().filter_map(|m| m.profiles.as_mut());
-        let menus = self.menus.iter_mut().filter_map(|m| m.profiles.as_mut());
-        let info = self.info.iter_mut().filter_map(|m| m.profiles.as_mut());
-        macros.chain(menus).chain(info)
-    }
-
-    /// Keeps macros, menus and info overlays scoped to a renamed profile with it.
-    pub fn profile_renamed(&mut self, old: &str, new: &str) {
-        for list in self.scopes_mut() {
-            for p in list.iter_mut().filter(|p| *p == old) {
-                *p = new.to_string();
-            }
-        }
-    }
-
-    /// Drops a deleted profile from scope lists. Items scoped only to it stay, unused, rather
-    /// than turning into shared ones.
-    pub fn profile_removed(&mut self, name: &str) {
-        for list in self.scopes_mut() {
-            list.retain(|p| p != name);
-        }
-    }
-
-    /// A copy of a profile can use everything the original could.
-    pub fn profile_copied(&mut self, from: &str, to: &str) {
-        for list in self.scopes_mut() {
-            if list.iter().any(|p| p == from) {
-                list.push(to.to_string());
-            }
-        }
-    }
-
     pub fn path() -> PathBuf {
         dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
@@ -1477,7 +1653,8 @@ impl Config {
             .join("config.toml")
     }
 
-    /// Loads the config, writing the default one if none exists yet.
+    /// Loads the config, writing the default one if none exists yet. A config from before
+    /// games existed is set aside as `config.toml.old` and replaced by the default.
     pub fn load() -> Result<Self> {
         let path = Self::path();
         if !path.exists() {
@@ -1487,7 +1664,20 @@ impl Config {
         }
         let text = std::fs::read_to_string(&path)
             .with_context(|| format!("reading {}", path.display()))?;
-        toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))
+        match toml::from_str(&text) {
+            Ok(config) => Ok(config),
+            Err(e) => {
+                let old_format = toml::from_str::<toml::Table>(&text)
+                    .is_ok_and(|t| t.contains_key("profiles") && !t.contains_key("general"));
+                if !old_format {
+                    return Err(e).with_context(|| format!("parsing {}", path.display()));
+                }
+                std::fs::rename(&path, path.with_extension("toml.old"))?;
+                let config = Config::default();
+                config.save()?;
+                Ok(config)
+            }
+        }
     }
 
     pub fn save(&self) -> Result<()> {
@@ -1502,17 +1692,90 @@ impl Config {
         Ok(())
     }
 
-    pub fn active(&self) -> Option<&Profile> {
-        self.profiles
-            .iter()
-            .find(|p| p.name == self.active_profile)
-            .or(self.profiles.first())
+    /// The game named `game`, or General for `None`.
+    pub fn game(&self, game: Option<&str>) -> Option<&Game> {
+        match game {
+            None => Some(&self.general),
+            Some(name) => self.games.iter().find(|g| g.name == name),
+        }
     }
 
-    pub fn next_profile_name(&self) -> Option<String> {
-        let idx = self.profiles.iter().position(|p| p.name == self.active_profile)?;
-        let next = &self.profiles[(idx + 1) % self.profiles.len()];
-        Some(next.name.clone())
+    pub fn game_mut(&mut self, game: Option<&str>) -> Option<&mut Game> {
+        match game {
+            None => Some(&mut self.general),
+            Some(name) => self.games.iter_mut().find(|g| g.name == name),
+        }
+    }
+
+    /// General, then every game, each with its `ProfileRef` game part.
+    pub fn all_games(&self) -> impl Iterator<Item = (Option<&str>, &Game)> {
+        std::iter::once((None, &self.general)).chain(self.games.iter().map(|g| (Some(g.name.as_str()), g)))
+    }
+
+    pub fn profile(&self, at: &ProfileRef) -> Option<&Profile> {
+        self.game(at.game.as_deref())?.profile(&at.profile)
+    }
+
+    /// The active profile's game, or General if it's gone.
+    pub fn active_game(&self) -> &Game {
+        self.game(self.active.game.as_deref())
+            .filter(|g| !g.profiles.is_empty())
+            .unwrap_or(&self.general)
+    }
+
+    /// The active profile, or the first one of its game (or of General) if it's gone.
+    pub fn active(&self) -> Option<&Profile> {
+        let game = self.active_game();
+        game.profile(&self.active.profile).or(game.profiles.first())
+    }
+
+    /// Where the active profile really is, after the fallbacks of [`Config::active`].
+    pub fn active_ref(&self) -> ProfileRef {
+        let game = self.active_game();
+        let name = self.active().map(|p| p.name.as_str()).unwrap_or_default();
+        let game = (!std::ptr::eq(game, &self.general)).then_some(game.name.as_str());
+        ProfileRef::new(game, name)
+    }
+
+    /// Where to go when the active profile disappears (e.g. its game was deleted): the
+    /// auto-switch default if it still exists, else General's first profile.
+    pub fn fallback_profile(&self) -> ProfileRef {
+        let default = self.auto_switch.default_profile.clone().filter(|d| self.profile(d).is_some());
+        default.unwrap_or_else(|| ProfileRef::new(None, self.general.profiles.first().map_or("", |p| &p.name)))
+    }
+
+    /// The next profile of the active game, wrapping around.
+    pub fn next_profile(&self) -> Option<ProfileRef> {
+        let at = self.active_ref();
+        let profiles = &self.active_game().profiles;
+        let idx = profiles.iter().position(|p| p.name == at.profile)?;
+        let next = &profiles[(idx + 1) % profiles.len()];
+        Some(ProfileRef { profile: next.name.clone(), ..at })
+    }
+
+    /// The items the active profile can use: its game's first, then shared ones it doesn't
+    /// shadow.
+    pub fn scope(&self) -> Scope {
+        fn merge<T: Clone>(own: &[T], shared: &[T], name: impl Fn(&T) -> &str) -> Vec<T> {
+            let mut all = own.to_vec();
+            all.extend(shared.iter().filter(|s| !own.iter().any(|o| name(o) == name(s))).cloned());
+            all
+        }
+        let game = self.active_game();
+        Scope {
+            macros: merge(&game.macros, &self.shared.macros, |m| &m.name),
+            menus: merge(&game.menus, &self.shared.menus, |m| &m.name),
+            info: merge(&game.info, &self.shared.info, |o| &o.name),
+        }
+    }
+
+    /// Finds a profile by name alone (for the command line): in the active game, then
+    /// General, then the first game that has one.
+    pub fn find_profile(&self, name: &str) -> Option<ProfileRef> {
+        let active = self.active_ref();
+        let in_active = self.game(active.game.as_deref()).and_then(|g| g.profile(name)).map(|_| active.game.clone());
+        let anywhere = || self.all_games().find(|(_, g)| g.profile(name).is_some()).map(|(id, _)| id.map(str::to_string));
+        in_active.or_else(anywhere).map(|game| ProfileRef { game, profile: name.to_string() })
     }
 }
 
@@ -1531,7 +1794,7 @@ mod tests {
     #[test]
     fn multi_and_combos_roundtrip_through_toml() {
         let mut config = Config::default();
-        config.profiles[0].set_button(
+        config.general.profiles[0].set_button(
             Button::South,
             ButtonAction::Multi(vec![
                 ButtonAction::Gamepad(Button::South),
@@ -1539,11 +1802,11 @@ mod tests {
                 ButtonAction::Mouse(MouseButton::Left),
             ]),
         );
-        config.profiles[0].combos.push(Combo {
+        config.general.profiles[0].combos.push(Combo {
             buttons: vec![Button::Select, Button::Start],
             action: ButtonAction::NextProfile,
         });
-        config.profiles[0].gestures.insert(
+        config.general.profiles[0].gestures.insert(
             Button::North,
             Gestures {
                 double_tap: Some(ButtonAction::Keys(vec!["KEY_F5".into()])),
@@ -1558,7 +1821,7 @@ mod tests {
     #[test]
     fn zones_roundtrip_and_legacy_trigger_format_loads() {
         let mut config = Config::default();
-        let p = &mut config.profiles[0];
+        let p = &mut config.general.profiles[0];
         p.left_stick.zones.push(Zone { min: 0.0, max: 0.75, action: ButtonAction::Keys(vec!["KEY_LEFTSHIFT".into()]) });
         p.right_trigger.zones.push(Zone { min: 0.95, max: 1.0, action: ButtonAction::Mouse(MouseButton::Left) });
         let back: Config = toml::from_str(&toml::to_string_pretty(&config).unwrap()).unwrap();
@@ -1566,20 +1829,20 @@ mod tests {
 
         // Before zones existed, a trigger was stored as a bare TriggerAction.
         let mut value = toml::Value::try_from(Config::default()).unwrap();
-        for profile in value["profiles"].as_array_mut().unwrap() {
+        for profile in value["general"]["profiles"].as_array_mut().unwrap() {
             let table = profile.as_table_mut().unwrap();
             let action = table["left_trigger"]["action"].clone();
             table.insert("left_trigger".into(), action);
         }
         let config: Config = toml::from_str(&toml::to_string(&value).unwrap()).unwrap();
-        assert_eq!(config.profiles[0].left_trigger, TriggerAction::Gamepad(Trigger::Left).into());
-        assert_eq!(config.profiles[1].trigger(Trigger::Left), Config::default().profiles[1].trigger(Trigger::Left));
+        assert_eq!(config.general.profiles[0].left_trigger, TriggerAction::Gamepad(Trigger::Left).into());
+        assert_eq!(config.general.profiles[1].trigger(Trigger::Left), Config::default().general.profiles[1].trigger(Trigger::Left));
     }
 
     #[test]
     fn old_configs_without_combos_still_load() {
         let mut value = toml::Value::try_from(Config::default()).unwrap();
-        for profile in value["profiles"].as_array_mut().unwrap() {
+        for profile in value["general"]["profiles"].as_array_mut().unwrap() {
             let table = profile.as_table_mut().unwrap();
             table.remove("combos");
             table.remove("combo_window_ms");
@@ -1588,20 +1851,21 @@ mod tests {
             table.remove("long_press_ms");
         }
         let config: Config = toml::from_str(&toml::to_string(&value).unwrap()).unwrap();
-        assert!(config.profiles[0].combos.is_empty());
-        assert_eq!(config.profiles[0].combo_window_ms, 60);
+        assert!(config.general.profiles[0].combos.is_empty());
+        assert_eq!(config.general.profiles[0].combo_window_ms, 60);
     }
 
     #[test]
     fn auto_switch_roundtrips_and_is_optional() {
         let mut config = Config::default();
-        config.auto_switch.default_profile = Some("Desktop".into());
-        config.auto_switch.rules.push(Rule {
-            kind: RuleKind::SteamAppId,
-            value: "1245620".into(),
-            profile: "Gamepad".into(),
-        });
-        let back: Config = toml::from_str(&toml::to_string_pretty(&config).unwrap()).unwrap();
+        config.auto_switch.default_profile = Some(ProfileRef::new(None, "Desktop"));
+        let mut game = Game::new("Elden Ring", vec![Profile::pc_action("Gameplay")]);
+        game.rules.push(Rule::new(RuleKind::SteamAppId, "1245620", "Gameplay"));
+        game.rules.push(Rule { enabled: false, ..Rule::new(RuleKind::Executable, "eldenring.exe", "Gameplay") });
+        config.games.push(game);
+        let text = toml::to_string_pretty(&config).unwrap();
+        assert_eq!(text.matches("enabled = false").count(), 1, "rules only note being off");
+        let back: Config = toml::from_str(&text).unwrap();
         assert_eq!(config, back);
 
         let mut value = toml::Value::try_from(Config::default()).unwrap();
@@ -1654,17 +1918,17 @@ mod tests {
             action: Box::new(ButtonAction::Mouse(MouseButton::Left)),
             rate: 12.0,
         }));
-        config.profiles[0].set_button(Button::RightStick, crouch);
-        config.profiles[0].set_button(Button::West, auto_fire);
+        config.general.profiles[0].set_button(Button::RightStick, crouch);
+        config.general.profiles[0].set_button(Button::West, auto_fire);
         let back: Config = toml::from_str(&toml::to_string_pretty(&config).unwrap()).unwrap();
         assert_eq!(config, back);
-        assert_eq!(config.profiles[0].button(Button::RightStick).key_names(), [&"KEY_C".to_string()]);
+        assert_eq!(config.general.profiles[0].button(Button::RightStick).key_names(), [&"KEY_C".to_string()]);
     }
 
     #[test]
     fn gyro_config_roundtrips_and_is_optional() {
         let mut config = Config::default();
-        config.profiles[0].gyro = GyroConfig {
+        config.general.profiles[0].gyro = GyroConfig {
             mode: GyroMode::Stick { stick: Stick::Right, full_rate: 300.0, anti_deadzone: 0.2 },
             horizontal: GyroHorizontal::YawAndRoll,
             invert_x: true,
@@ -1678,20 +1942,19 @@ mod tests {
         assert_eq!(config, back);
 
         let mut value = toml::Value::try_from(Config::default()).unwrap();
-        for profile in value["profiles"].as_array_mut().unwrap() {
+        for profile in value["general"]["profiles"].as_array_mut().unwrap() {
             profile.as_table_mut().unwrap().remove("gyro");
         }
         let old: Config = toml::from_str(&toml::to_string(&value).unwrap()).unwrap();
-        assert_eq!(old.profiles[0].gyro, GyroConfig::default());
+        assert_eq!(old.general.profiles[0].gyro, GyroConfig::default());
     }
 
     #[test]
     fn macros_roundtrip_and_walk_finds_nested_mappings() {
         let mut config = Config::default();
         let key = |k: &str| ButtonAction::Keys(vec![k.into()]);
-        config.macros.push(Macro {
+        config.shared.macros.push(Macro {
             name: "Combo".into(),
-            profiles: None,
             steps: vec![
                 MacroStep::Tap { action: key("KEY_A"), hold_ms: 40 },
                 MacroStep::Wait(100),
@@ -1701,12 +1964,12 @@ mod tests {
             ],
         });
         let mapped = ButtonAction::Toggle(Box::new(ButtonAction::Macro { name: "Combo".into(), repeat: true }));
-        config.profiles[0].set_button(Button::West, mapped);
+        config.general.profiles[0].set_button(Button::West, mapped);
         let back: Config = toml::from_str(&toml::to_string_pretty(&config).unwrap()).unwrap();
         assert_eq!(config, back);
 
         let mut names = Vec::new();
-        for a in config.profiles[0].actions() {
+        for a in config.general.profiles[0].actions() {
             a.walk(&mut |a| {
                 if let ButtonAction::Macro { name, .. } = a {
                     names.push(name.clone());
@@ -1714,26 +1977,25 @@ mod tests {
             });
         }
         assert_eq!(names, ["Combo"]);
-        assert_eq!(config.macros[0].steps.iter().map(MacroStep::duration_ms).sum::<u64>(), 160);
+        assert_eq!(config.shared.macros[0].steps.iter().map(MacroStep::duration_ms).sum::<u64>(), 160);
     }
 
     #[test]
     fn stick_direction_buttons_and_macro_stick_steps_roundtrip() {
         let mut config = Config::default();
-        config.profiles[0].set_button(Button::RightStickUp, ButtonAction::Macro { name: "Jump".into(), repeat: false });
-        config.profiles[0].set_button(Button::DpadRight, ButtonAction::Gamepad(Button::LeftStickRight));
-        config.profiles[0].combos.push(Combo {
+        config.general.profiles[0].set_button(Button::RightStickUp, ButtonAction::Macro { name: "Jump".into(), repeat: false });
+        config.general.profiles[0].set_button(Button::DpadRight, ButtonAction::Gamepad(Button::LeftStickRight));
+        config.general.profiles[0].combos.push(Combo {
             buttons: vec![Button::LeftBumper, Button::RightStickRight],
             action: ButtonAction::Keys(vec!["KEY_F".into()]),
         });
-        config.macros.push(Macro {
+        config.shared.macros.push(Macro {
             name: "Jump".into(),
-            profiles: None,
             steps: vec![MacroStep::Stick { stick: Stick::Left, x: 0.0, y: -1.0 }, MacroStep::Wait(17)],
         });
         let back: Config = toml::from_str(&toml::to_string_pretty(&config).unwrap()).unwrap();
         assert_eq!(config, back);
-        let found = config.profiles[0].actions().into_iter().any(|a| matches!(a, ButtonAction::Macro { .. }));
+        let found = config.general.profiles[0].actions().into_iter().any(|a| matches!(a, ButtonAction::Macro { .. }));
         assert!(found, "stick-direction mappings are visited like any button");
     }
 
@@ -1750,41 +2012,39 @@ mod tests {
     #[test]
     fn menus_roundtrip_and_pick_a_sensible_cancel_button() {
         let item = |label: &str, action| MenuItem { label: label.into(), action, button: None };
-        let mut config = Config {
+        let shared = Shared {
             menus: vec![
             Menu {
                 name: "Weapons".into(),
-                profiles: None,
-                kind: MenuKind::Radial { stick: Stick::Right },
+                    kind: MenuKind::Radial { stick: Stick::Right },
                 items: (1..=4).map(|n| item(&format!("Slot {n}"), ButtonAction::Keys(vec![format!("KEY_{n}")]))).collect(),
                 cancel: None,
                 style: OverlayStyle::default(),
             },
             Menu {
                 name: "Pause".into(),
-                profiles: None,
-                kind: MenuKind::Buttons,
+                    kind: MenuKind::Buttons,
                 items: vec![MenuItem { button: Some(Button::LeftBumper), ..item("Map", ButtonAction::Keys(vec!["KEY_M".into()])) }],
                 cancel: Some(Button::Start),
                 style: OverlayStyle { position: ScreenPosition::TopRight, scale: 1.5, ..OverlayStyle::default() },
             },
             Menu {
                 name: "Faces".into(),
-                profiles: None,
-                kind: MenuKind::Directional { cluster: Cluster::FaceButtons },
+                    kind: MenuKind::Directional { cluster: Cluster::FaceButtons },
                 items: vec![item("More", ButtonAction::OpenMenu("Pause".into()))],
                 cancel: None,
                 style: OverlayStyle::default(),
             },
             ],
-            ..Config::default()
+            ..Shared::default()
         };
-        config.profiles[0].set_button(Button::Select, ButtonAction::OpenMenu("Pause".into()));
+        let mut config = Config { shared, ..Config::default() };
+        config.general.profiles[0].set_button(Button::Select, ButtonAction::OpenMenu("Pause".into()));
         let back: Config = toml::from_str(&toml::to_string_pretty(&config).unwrap()).unwrap();
         assert_eq!(config, back);
-        assert_eq!(config.menus[0].cancel_button(), Button::East);
-        assert_eq!(config.menus[1].cancel_button(), Button::Start);
-        assert_eq!(config.menus[2].cancel_button(), Button::Select, "East is a slot in a face-button directional menu");
+        assert_eq!(config.shared.menus[0].cancel_button(), Button::East);
+        assert_eq!(config.shared.menus[1].cancel_button(), Button::Start);
+        assert_eq!(config.shared.menus[2].cancel_button(), Button::Select, "East is a slot in a face-button directional menu");
     }
 
     #[test]
@@ -1813,16 +2073,71 @@ mod tests {
 
     #[test]
     fn templates_roundtrip_through_toml() {
-        let config = Config { profiles: templates(), ..Config::default() };
+        let config = Config { general: Game::new("General", templates()), ..Config::default() };
         let back: Config = toml::from_str(&toml::to_string_pretty(&config).unwrap()).unwrap();
         assert_eq!(config, back);
     }
 
     #[test]
-    fn next_profile_wraps() {
+    fn next_profile_wraps_within_the_game() {
         let mut config = Config::default();
-        assert_eq!(config.next_profile_name().as_deref(), Some("Desktop"));
-        config.active_profile = "Desktop".into();
-        assert_eq!(config.next_profile_name().as_deref(), Some("Gamepad"));
+        assert_eq!(config.next_profile(), Some(ProfileRef::new(None, "Desktop")));
+        config.active = ProfileRef::new(None, "Desktop");
+        assert_eq!(config.next_profile(), Some(ProfileRef::new(None, "Gamepad")));
+        config.games.push(Game::new("Doom", vec![Profile::pc_action("Play"), Profile::desktop("Menus")]));
+        config.active = ProfileRef::new(Some("Doom"), "Menus");
+        assert_eq!(config.next_profile(), Some(ProfileRef::new(Some("Doom"), "Play")));
+    }
+
+    #[test]
+    fn a_missing_active_profile_falls_back_to_its_game_then_general() {
+        let mut config = Config::default();
+        config.games.push(Game::new("Doom", vec![Profile::pc_action("Play")]));
+        config.active = ProfileRef::new(Some("Doom"), "Gone");
+        assert_eq!(config.active_ref(), ProfileRef::new(Some("Doom"), "Play"));
+        config.active = ProfileRef::new(Some("No such game"), "Play");
+        assert_eq!(config.active_ref(), ProfileRef::new(None, "Gamepad"));
+    }
+
+    #[test]
+    fn scope_puts_the_games_items_before_shared_ones() {
+        let mut config = Config::default();
+        let m = |name: &str, steps: usize| Macro { name: name.into(), steps: vec![MacroStep::Wait(1); steps] };
+        config.shared.macros = vec![m("Dodge", 1), m("Screenshot", 1)];
+        let mut game = Game::new("Doom", vec![Profile::pc_action("Play")]);
+        game.macros = vec![m("Dodge", 2)];
+        config.games.push(game);
+        assert_eq!(config.scope().macros, [m("Dodge", 1), m("Screenshot", 1)], "General sees shared ones");
+        config.active = ProfileRef::new(Some("Doom"), "Play");
+        assert_eq!(config.scope().macros, [m("Dodge", 2), m("Screenshot", 1)]);
+    }
+
+    #[test]
+    fn finding_a_profile_by_name_prefers_the_active_game() {
+        let mut config = Config::default();
+        config.games.push(Game::new("A", vec![Profile::desktop("Desktop"), Profile::pc_action("Play")]));
+        config.games.push(Game::new("B", vec![Profile::pc_action("Play")]));
+        assert_eq!(config.find_profile("Desktop"), Some(ProfileRef::new(None, "Desktop")));
+        assert_eq!(config.find_profile("Play"), Some(ProfileRef::new(Some("A"), "Play")));
+        config.active = ProfileRef::new(Some("B"), "Play");
+        assert_eq!(config.find_profile("Play"), Some(ProfileRef::new(Some("B"), "Play")));
+        assert_eq!(config.find_profile("Nope"), None);
+    }
+
+    #[test]
+    fn renames_follow_into_profiles_menus_and_macros() {
+        let mut game = Game::new("G", vec![Profile::passthrough("P")]);
+        game.profiles[0].set_button(Button::West, ButtonAction::Toggle(Box::new(ButtonAction::Macro { name: "Old".into(), repeat: false })));
+        game.menus.push(Menu {
+            name: "M".into(),
+            kind: MenuKind::List,
+            items: vec![MenuItem { label: "x".into(), action: ButtonAction::Macro { name: "Old".into(), repeat: false }, button: None }],
+            cancel: None,
+            style: OverlayStyle::default(),
+        });
+        game.rename_refs(ItemKind::Macro, "Old", "New");
+        game.rename_refs(ItemKind::Menu, "New", "Wrong kind");
+        assert_eq!(game.profiles[0].button(Button::West), &ButtonAction::Toggle(Box::new(ButtonAction::Macro { name: "New".into(), repeat: false })));
+        assert_eq!(game.menus[0].items[0].action, ButtonAction::Macro { name: "New".into(), repeat: false });
     }
 }

@@ -24,7 +24,7 @@ use anyhow::{Context, Result, bail};
 use evdev::Device;
 
 use crate::{
-    config::Config,
+    config::{Config, ProfileRef, Scope},
     engine::{Engine, Opener},
     focus::{self, FocusEvent},
     input::{self, InputEvent, MotionFrame, MotionNormalizer, MotionSample, Normalizer},
@@ -141,6 +141,8 @@ type NodeKey = (PathBuf, u64);
 
 struct Daemon {
     config: Config,
+    /// What the active profile can use (its game's items, then shared ones).
+    scope: Scope,
     kbm: VirtualKbm,
     devices: HashMap<u64, Managed>,
     next_id: u64,
@@ -160,7 +162,7 @@ struct Daemon {
     focused: Option<WindowInfo>,
     recent_windows: Vec<WindowInfo>,
     /// Last profile chosen by process scanning, so manual switches stick until it changes.
-    scan_target: Option<String>,
+    scan_target: Option<ProfileRef>,
     /// What the on-screen overlay is showing; while set it gets all controller input.
     active: Option<Active>,
     /// Where the overlay keyboard's cursor was, for the next time it opens.
@@ -192,6 +194,7 @@ pub fn run() -> Result<()> {
         "creating virtual keyboard/mouse (do you have write access to /dev/uinput?)",
     )?;
     let mut daemon = Daemon {
+        scope: config.scope(),
         config,
         kbm,
         devices: HashMap::new(),
@@ -308,7 +311,7 @@ impl Daemon {
                 (keyboard_actions, changed) = k.tick(now);
             }
             Some(Active::Menu { session, .. }) if session.next_deadline().is_some_and(|d| d <= now) => {
-                changed = session.tick(&self.config.menus, now);
+                changed = session.tick(&self.scope.menus, now);
             }
             _ => {}
         }
@@ -333,7 +336,7 @@ impl Daemon {
             }
             dev.draw_status();
         }
-        if switch && let Some(next) = self.config.next_profile_name() {
+        if switch && let Some(next) = self.config.next_profile() {
             self.switch_profile(next);
         }
         if let Some(layout) = toggle_overlay {
@@ -367,7 +370,7 @@ impl Daemon {
         if self.active.is_some() {
             return;
         }
-        let Some(mut session) = MenuSession::open(&self.config.menus, &name, opener) else {
+        let Some(mut session) = MenuSession::open(&self.scope.menus, &name, opener) else {
             log!("no menu named {name:?}, or it has no items");
             return;
         };
@@ -375,7 +378,7 @@ impl Daemon {
             return;
         }
         if let Some(dev) = self.devices.get(&device)
-            && !session.prime(&self.config.menus, dev.view.buttons(), dev.view.axes())
+            && !session.prime(&self.scope.menus, dev.view.buttons(), dev.view.axes())
         {
             log!("menu {name:?} not shown: its button was already let go (use a Toggle to open it with a tap)");
             return;
@@ -463,7 +466,7 @@ impl Daemon {
         if menu_up && (switch || toggle_overlay.is_some()) {
             self.close_overlay();
         }
-        if switch && let Some(next) = self.config.next_profile_name() {
+        if switch && let Some(next) = self.config.next_profile() {
             self.switch_profile(next);
         }
         if let Some(layout) = toggle_overlay {
@@ -484,7 +487,7 @@ impl Daemon {
                 };
                 Some(OverlayView::Keyboard(view))
             }
-            Some(Active::Menu { session, .. }) => session.view(&self.config.menus).map(OverlayView::Menu),
+            Some(Active::Menu { session, .. }) => session.view(&self.scope.menus).map(OverlayView::Menu),
             None => None,
         }
     }
@@ -520,14 +523,8 @@ impl Daemon {
     /// Info overlays to show now: those of the active profile set to always show, and any
     /// a ShowInfo action holds up.
     fn visible_info(&self) -> Vec<crate::config::InfoOverlay> {
-        let Some(profile) = self.config.active() else { return Vec::new() };
         let held: HashSet<&String> = self.devices.values().flat_map(|d| d.engine.shown_info()).collect();
-        self.config
-            .info
-            .iter()
-            .filter(|o| crate::config::in_scope(&o.profiles, &profile.name) && (o.always || held.contains(&o.name)))
-            .cloned()
-            .collect()
+        self.scope.info.iter().filter(|o| o.always || held.contains(&o.name)).cloned().collect()
     }
 
     fn live_values(&self) -> crate::info::Live {
@@ -713,38 +710,37 @@ impl Daemon {
         if !self.config.auto_switch.enabled {
             return;
         }
-        let target = focus::profile_for(&self.config.auto_switch, &window).map(str::to_string);
-        if let Some(name) = target {
-            self.auto_switch_to(name, &describe(&window));
+        if let Some(target) = focus::profile_for(&self.config, &window) {
+            self.auto_switch_to(target, &describe(&window));
         }
     }
 
     /// Process-scan fallback for desktops without focus tracking.
     fn scan_processes(&mut self) {
-        let auto = &self.config.auto_switch;
-        if self.focus_backend != FocusBackend::ProcessScan || !auto.enabled || auto.rules.is_empty() {
+        let no_rules = focus::rules(&self.config).next().is_none();
+        if self.focus_backend != FocusBackend::ProcessScan || !self.config.auto_switch.enabled || no_rules {
             return;
         }
-        let target = focus::profile_for_processes(auto, &focus::running_processes()).map(str::to_string);
+        let target = focus::profile_for_processes(&self.config, &focus::running_processes());
         if target == self.scan_target {
             return;
         }
         self.scan_target = target.clone();
-        if let Some(name) = target {
-            self.auto_switch_to(name, "running processes");
+        if let Some(target) = target {
+            self.auto_switch_to(target, "running processes");
         }
     }
 
-    fn auto_switch_to(&mut self, name: String, reason: &str) {
-        if name == self.config.active_profile {
+    fn auto_switch_to(&mut self, target: ProfileRef, reason: &str) {
+        if target == self.config.active_ref() {
             return;
         }
-        if !self.config.profiles.iter().any(|p| p.name == name) {
-            log!("per-game rule points to missing profile {name:?}");
+        if self.config.profile(&target).is_none() {
+            log!("per-game rule points to missing profile {target}");
             return;
         }
-        log!("{reason} → profile {name:?}");
-        self.switch_profile(name);
+        log!("{reason} → profile {target}");
+        self.switch_profile(target);
     }
 
     fn broadcast(&mut self, snapshot: Option<InputSnapshot>) {
@@ -785,7 +781,7 @@ impl Daemon {
         }
         let toggle_overlay = dev.engine.take_overlay_toggle();
         let menu_request = dev.engine.take_menu_request();
-        if switch && let Some(next) = self.config.next_profile_name() {
+        if switch && let Some(next) = self.config.next_profile() {
             self.switch_profile(next);
         }
         if let Some(layout) = toggle_overlay {
@@ -814,7 +810,7 @@ impl Daemon {
                 }
                 Some(Active::Menu { session, device }) => {
                     let device = *device;
-                    match session.handle(&self.config.menus, ev, now) {
+                    match session.handle(&self.scope.menus, ev, now) {
                         Some(MenuOutcome::Choose { menu, item, action, close }) => {
                             if close {
                                 self.close_overlay();
@@ -844,9 +840,11 @@ impl Daemon {
             Request::SetConfig(new) => {
                 let mut new = *new;
                 new.enabled = self.config.enabled;
-                if new.profiles.iter().any(|p| p.name == self.config.active_profile) {
-                    new.active_profile = self.config.active_profile.clone();
-                }
+                new.active = if new.profile(&self.config.active).is_some() {
+                    self.config.active.clone()
+                } else {
+                    new.fallback_profile()
+                };
                 self.replace_config(new)
             }
             Request::Reload => match Config::load() {
@@ -861,14 +859,21 @@ impl Daemon {
                 self.save_and_rescan()
             }
             Request::SetProfile(name) => {
-                if !self.config.profiles.iter().any(|p| p.name == name) {
+                let Some(target) = self.config.find_profile(&name) else {
                     return Response::Error(format!("no profile named {name:?}"));
+                };
+                self.switch_profile(target);
+                Response::Ok
+            }
+            Request::Activate(target) => {
+                if self.config.profile(&target).is_none() {
+                    return Response::Error(format!("no profile {target}"));
                 }
-                self.switch_profile(name);
+                self.switch_profile(target);
                 Response::Ok
             }
             Request::NextProfile => {
-                if let Some(next) = self.config.next_profile_name() {
+                if let Some(next) = self.config.next_profile() {
                     self.switch_profile(next);
                 }
                 Response::Ok
@@ -884,7 +889,7 @@ impl Daemon {
                 Response::Ok
             }
             Request::OpenMenu(name) => {
-                if !self.config.menus.iter().any(|m| m.name == name) {
+                if !self.scope.menus.iter().any(|m| m.name == name) {
                     return Response::Error(format!("no menu named {name:?}"));
                 }
                 let device = self.last_active.or_else(|| self.devices.keys().next().copied()).unwrap_or(u64::MAX);
@@ -923,8 +928,8 @@ impl Daemon {
     }
 
     fn replace_config(&mut self, new: Config) -> Response {
-        if new.profiles.is_empty() {
-            return Response::Error("config must contain at least one profile".into());
+        if new.general.profiles.is_empty() {
+            return Response::Error("General must have at least one profile".into());
         }
         // An open menu refers to menus by position, which the new config may change.
         if matches!(self.active, Some(Active::Menu { .. })) {
@@ -932,9 +937,7 @@ impl Daemon {
         }
         self.release_all();
         self.config = new;
-        for dev in self.devices.values_mut() {
-            dev.engine.set_macros(&self.config.macros);
-        }
+        self.refresh_scope();
         let ignored = self.config.ignored_devices.clone();
         let enabled = self.config.enabled;
         self.release_devices(|d| !enabled || ignored.contains(&d.name));
@@ -951,13 +954,29 @@ impl Daemon {
         }
     }
 
-    fn switch_profile(&mut self, name: String) {
-        if name == self.config.active_profile {
+    /// Recomputes what the active profile can use, after a config or game change.
+    fn refresh_scope(&mut self) {
+        self.scope = self.config.scope();
+        for dev in self.devices.values_mut() {
+            dev.engine.set_macros(&self.scope.macros);
+        }
+    }
+
+    fn switch_profile(&mut self, target: ProfileRef) {
+        if target == self.config.active_ref() {
             return;
         }
-        log!("switching to profile {name:?}");
+        log!("switching to profile {target}");
+        // An open menu refers to menus by position, which another game's list changes.
+        let game_changes = target.game != self.config.active_ref().game;
+        if game_changes && matches!(self.active, Some(Active::Menu { .. })) {
+            self.close_overlay();
+        }
         self.release_all();
-        self.config.active_profile = name;
+        self.config.active = target;
+        if game_changes {
+            self.refresh_scope();
+        }
         self.resync_all();
         // Other info overlays may belong to the new profile.
         self.broadcast_overlay();
@@ -1017,6 +1036,7 @@ impl Daemon {
         Status {
             enabled: self.config.enabled,
             active_profile: self.config.active().map(|p| p.name.clone()).unwrap_or_default(),
+            active_game: self.config.active_ref().game,
             devices,
             focus_backend: self.focus_backend,
             focused: self.focused.clone(),
@@ -1128,7 +1148,7 @@ impl Daemon {
             family,
             engine: {
                 let mut engine = Engine::default();
-                engine.set_macros(&self.config.macros);
+                engine.set_macros(&self.scope.macros);
                 engine
             },
             pad,

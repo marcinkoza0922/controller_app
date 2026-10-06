@@ -1,0 +1,727 @@
+//! Packs: a game written to a `.padpack` file (TOML, in the config's own shapes), and what
+//! importing, updating and exporting one does to the config.
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use anyhow::{Context, Result, bail};
+use serde::{Deserialize, Serialize};
+
+use crate::config::{
+    ButtonAction, Config, Game, GyroMode, InfoOverlay, ItemKind, Macro, Menu, MacroStep, Origin, PackInfo, PackRef,
+    Profile, Rule, Shared,
+};
+
+/// The pack format this app writes, and the newest it reads.
+pub const FORMAT: u32 = 1;
+pub const EXTENSION: &str = "padpack";
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Pack {
+    pub format: u32,
+    pub pack: Header,
+    #[serde(default)]
+    pub rules: Vec<Rule>,
+    pub profiles: Vec<Profile>,
+    #[serde(default)]
+    pub macros: Vec<Macro>,
+    #[serde(default)]
+    pub menus: Vec<Menu>,
+    #[serde(default)]
+    pub info_overlays: Vec<InfoOverlay>,
+}
+
+/// What a pack says about itself.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Header {
+    /// Stable across versions of the same pack.
+    pub id: String,
+    /// Becomes the game's name.
+    pub name: String,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub author: String,
+    #[serde(default)]
+    pub description: String,
+    /// The controller it was made with (free text).
+    #[serde(default)]
+    pub made_with: String,
+    /// Inputs beyond a plain XInput pad that its profiles use.
+    #[serde(default)]
+    pub requires: Vec<Feature>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub based_on: Option<PackRef>,
+}
+
+/// An input beyond the XInput baseline (face buttons, bumpers, analog triggers, Select,
+/// Start, Guide, two clickable sticks and the D-pad).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Feature {
+    Gyro,
+}
+
+impl Feature {
+    pub fn label(self) -> &'static str {
+        match self {
+            Feature::Gyro => "gyro",
+        }
+    }
+
+    /// What a player without it loses, for warnings.
+    pub fn missing(self) -> &'static str {
+        match self {
+            Feature::Gyro => "gyro controls won't work",
+        }
+    }
+}
+
+/// A feature and the profile that uses it.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct FeatureUse {
+    pub feature: Feature,
+    pub profile: String,
+}
+
+impl Pack {
+    pub fn info(&self) -> PackInfo {
+        let h = &self.pack;
+        PackInfo {
+            id: h.id.clone(),
+            version: h.version.clone(),
+            author: h.author.clone(),
+            description: h.description.clone(),
+            made_with: h.made_with.clone(),
+            based_on: h.based_on.clone(),
+        }
+    }
+
+    /// The game this pack makes, before any clash handling.
+    pub fn to_game(&self) -> Game {
+        Game {
+            name: self.pack.name.clone(),
+            pack: self.info(),
+            origin: None,
+            rules: self.rules.clone(),
+            profiles: self.profiles.clone(),
+            macros: self.macros.clone(),
+            menus: self.menus.clone(),
+            info: self.info_overlays.clone(),
+        }
+    }
+
+    pub fn to_toml(&self) -> Result<String> {
+        Ok(toml::to_string_pretty(self)?)
+    }
+}
+
+/// Reads a pack, refusing one from a newer app and anything malformed (whole or nothing).
+pub fn parse(text: &str) -> Result<Pack> {
+    let table: toml::Table = toml::from_str(text).context("not a valid pack file")?;
+    let format = table.get("format").and_then(toml::Value::as_integer).context("not a pack file (no format number)")?;
+    if format > FORMAT as i64 {
+        bail!("This pack was made with a newer version of the app. Update to import it.");
+    }
+    if format < 1 {
+        bail!("unknown pack format {format}");
+    }
+    // Older formats would be upgraded here, before parsing as the current one.
+    let pack: Pack = toml::from_str(text).context("reading the pack")?;
+    check(&pack)?;
+    Ok(pack)
+}
+
+/// What a pack must hold to make a usable game.
+fn check(pack: &Pack) -> Result<()> {
+    if pack.pack.id.trim().is_empty() {
+        bail!("the pack has no id");
+    }
+    if pack.pack.name.trim().is_empty() {
+        bail!("the pack has no name");
+    }
+    if pack.profiles.is_empty() {
+        bail!("the pack has no profiles");
+    }
+    let game = pack.to_game();
+    for kind in ItemKind::ALL {
+        let names = names(&game, kind);
+        let unique: BTreeSet<&String> = names.iter().copied().collect();
+        if unique.len() != names.len() {
+            bail!("the pack has two {}s with the same name", kind.noun());
+        }
+    }
+    let profiles: BTreeSet<&String> = pack.profiles.iter().map(|p| &p.name).collect();
+    if profiles.len() != pack.profiles.len() {
+        bail!("the pack has two profiles with the same name");
+    }
+    if let Some(r) = pack.rules.iter().find(|r| !profiles.contains(&r.profile)) {
+        bail!("a rule points to missing profile {:?}", r.profile);
+    }
+    Ok(())
+}
+
+/// A new random pack ID (a version 4 UUID).
+pub fn new_id() -> String {
+    use std::io::Read;
+    let mut b = [0u8; 16];
+    let read = std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut b));
+    if read.is_err() {
+        // Not cryptographic, only unique enough: the clock and this process.
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+        let seed = now.as_nanos() ^ ((std::process::id() as u128) << 64);
+        b = seed.to_le_bytes();
+    }
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    let hex: String = b.iter().map(|x| format!("{x:02x}")).collect();
+    format!("{}-{}-{}-{}-{}", &hex[..8], &hex[8..12], &hex[12..16], &hex[16..20], &hex[20..])
+}
+
+fn names(game: &Game, kind: ItemKind) -> Vec<&String> {
+    match kind {
+        ItemKind::Macro => game.macros.iter().map(|m| &m.name).collect(),
+        ItemKind::Menu => game.menus.iter().map(|m| &m.name).collect(),
+        ItemKind::Info => game.info.iter().map(|o| &o.name).collect(),
+    }
+}
+
+fn shared_has(shared: &Shared, kind: ItemKind, name: &str) -> bool {
+    match kind {
+        ItemKind::Macro => shared.macros.iter().any(|m| m.name == name),
+        ItemKind::Menu => shared.menus.iter().any(|m| m.name == name),
+        ItemKind::Info => shared.info.iter().any(|o| o.name == name),
+    }
+}
+
+/// Every (kind, name) reference in these profiles, menus and macros, nested ones included.
+fn references(profiles: &[Profile], menus: &[Menu], macros: &[Macro]) -> BTreeSet<(ItemKind, String)> {
+    let mut refs = BTreeSet::new();
+    let mut visit = |a: &ButtonAction| {
+        a.walk(&mut |a| {
+            for kind in ItemKind::ALL {
+                if let Some(name) = kind.name_in(a) {
+                    refs.insert((kind, name.clone()));
+                }
+            }
+        })
+    };
+    for p in profiles {
+        p.actions().into_iter().for_each(&mut visit);
+    }
+    for m in menus {
+        m.items.iter().for_each(|i| visit(&i.action));
+    }
+    for m in macros {
+        m.steps.iter().filter_map(MacroStep::action).for_each(&mut visit);
+    }
+    refs
+}
+
+/// Inputs beyond the XInput baseline that the profiles use, and where.
+pub fn features(profiles: &[Profile]) -> Vec<FeatureUse> {
+    profiles
+        .iter()
+        .filter(|p| p.gyro.mode != GyroMode::Off)
+        .map(|p| FeatureUse { feature: Feature::Gyro, profile: p.name.clone() })
+        .collect()
+}
+
+/// A pack ready to save, and what the export dialog should point out.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Export {
+    pub pack: Pack,
+    /// Shared items written into the pack because the game uses them.
+    pub pulled_in: Vec<(ItemKind, String)>,
+    /// References to items that exist nowhere, e.g. "macro \"Dodge\"".
+    pub dangling: Vec<String>,
+    pub features: Vec<FeatureUse>,
+}
+
+/// The pack metadata the export dialog starts from. Exporting a game that came from someone
+/// else's pack (or the library) makes a fork: a new ID, crediting the original. `library`
+/// keeps a library pack's ID instead, for the maintainer publishing a new version.
+pub fn draft(game: &Game, library: bool) -> PackInfo {
+    let mut info = game.pack.clone();
+    if let Some(origin) = &game.origin
+        && !library
+        && (info.id.is_empty() || info.id == origin.id)
+    {
+        info.based_on = Some(PackRef {
+            id: origin.id.clone(),
+            name: game.name.clone(),
+            author: info.author.clone(),
+            version: origin.version.clone(),
+        });
+        info.id = new_id();
+        info.author = String::new();
+        info.version = String::new();
+    }
+    if info.id.is_empty() {
+        info.id = new_id();
+    }
+    if info.version.is_empty() {
+        info.version = "1.0".into();
+    }
+    info
+}
+
+/// Writes `game` as a pack with this metadata, copying in the shared items it uses (followed
+/// through menus and macros) so the pack works on its own.
+pub fn export(game: &Game, shared: &Shared, info: &PackInfo) -> Export {
+    let mut pack_game = game.clone();
+    let mut pulled_in = Vec::new();
+    let mut dangling = BTreeSet::new();
+    // Each pass adds the shared items the previous ones referred to.
+    loop {
+        let refs = references(&pack_game.profiles, &pack_game.menus, &pack_game.macros);
+        let mut added = false;
+        for (kind, name) in refs {
+            if names(&pack_game, kind).contains(&&name) {
+                continue;
+            }
+            if !shared_has(shared, kind, &name) {
+                dangling.insert(format!("{} {name:?}", kind.noun()));
+                continue;
+            }
+            match kind {
+                ItemKind::Macro => pack_game.macros.extend(shared.macros.iter().find(|m| m.name == name).cloned()),
+                ItemKind::Menu => pack_game.menus.extend(shared.menus.iter().find(|m| m.name == name).cloned()),
+                ItemKind::Info => pack_game.info.extend(shared.info.iter().find(|o| o.name == name).cloned()),
+            }
+            pulled_in.push((kind, name));
+            added = true;
+        }
+        if !added {
+            break;
+        }
+    }
+    let features = features(&pack_game.profiles);
+    let requires: BTreeSet<Feature> = features.iter().map(|f| f.feature).collect();
+    let pack = Pack {
+        format: FORMAT,
+        pack: Header {
+            id: info.id.clone(),
+            name: game.name.clone(),
+            version: info.version.clone(),
+            author: info.author.clone(),
+            description: info.description.clone(),
+            made_with: info.made_with.clone(),
+            requires: requires.into_iter().collect(),
+            based_on: info.based_on.clone(),
+        },
+        rules: pack_game.rules.iter().map(|r| Rule { enabled: true, ..r.clone() }).collect(),
+        profiles: pack_game.profiles,
+        macros: pack_game.macros,
+        menus: pack_game.menus,
+        info_overlays: pack_game.info,
+    };
+    Export { pack, pulled_in, dangling: dangling.into_iter().collect(), features }
+}
+
+/// A stable 64-bit FNV-1a hash, as hex.
+fn fnv(text: &str) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in text.bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("{h:016x}")
+}
+
+fn hash<T: Serialize>(item: &T) -> String {
+    fnv(&toml::to_string(item).unwrap_or_default())
+}
+
+/// A content hash per profile, macro, menu and info overlay, keyed "kind:name".
+pub fn item_hashes(game: &Game) -> BTreeMap<String, String> {
+    let mut hashes = BTreeMap::new();
+    for p in &game.profiles {
+        hashes.insert(format!("profile:{}", p.name), hash(p));
+    }
+    for m in &game.macros {
+        hashes.insert(format!("macro:{}", m.name), hash(m));
+    }
+    for m in &game.menus {
+        hashes.insert(format!("menu:{}", m.name), hash(m));
+    }
+    for o in &game.info {
+        hashes.insert(format!("info overlay:{}", o.name), hash(o));
+    }
+    hashes
+}
+
+/// Items edited, added or removed since the game was imported, as "macro “Dodge”".
+pub fn edited_items(game: &Game) -> Vec<String> {
+    let Some(origin) = &game.origin else { return Vec::new() };
+    let now = item_hashes(game);
+    let keys: BTreeSet<&String> = now.keys().chain(origin.hashes.keys()).collect();
+    keys.into_iter()
+        .filter(|k| now.get(*k) != origin.hashes.get(*k))
+        .map(|k| {
+            let (kind, name) = k.split_once(':').unwrap_or(("item", k));
+            format!("{kind} “{name}”")
+        })
+        .collect()
+}
+
+/// How an incoming pack's version relates to the installed one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdateKind {
+    Update,
+    Reinstall,
+    Downgrade,
+}
+
+impl UpdateKind {
+    pub fn verb(self) -> &'static str {
+        match self {
+            UpdateKind::Update => "Update",
+            UpdateKind::Reinstall => "Reinstall",
+            UpdateKind::Downgrade => "Downgrade",
+        }
+    }
+}
+
+/// Compares dotted versions number by number ("1.10" is newer than "1.9"); anything that
+/// isn't a number compares as text.
+pub fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
+    let parts = |v: &str| v.trim().trim_start_matches(['v', 'V']).split('.').map(str::to_string).collect::<Vec<_>>();
+    let (a, b) = (parts(a), parts(b));
+    for i in 0..a.len().max(b.len()) {
+        let (x, y) = (a.get(i).map_or("0", String::as_str), b.get(i).map_or("0", String::as_str));
+        let order = match (x.parse::<u64>(), y.parse::<u64>()) {
+            (Ok(x), Ok(y)) => x.cmp(&y),
+            _ => x.cmp(y),
+        };
+        if order.is_ne() {
+            return order;
+        }
+    }
+    std::cmp::Ordering::Equal
+}
+
+/// An imported rule matching the same window as another game's (switched-on) rule.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RuleClash {
+    /// Index in the pack's rules.
+    pub rule: usize,
+    pub other_game: String,
+}
+
+/// What importing a pack would do, for the preview.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Plan {
+    pub pack: Pack,
+    pub library: bool,
+    /// The installed game with this pack's ID, which an import updates.
+    pub update_of: Option<String>,
+    pub update_kind: Option<UpdateKind>,
+    /// For an update: the installed game's items edited since its import.
+    pub edited: Vec<String>,
+    /// Another game with the pack's name (not an update).
+    pub name_clash: bool,
+    /// The name the game gets if renamed.
+    pub renamed: String,
+    /// Pack items named like shared ones, and the names they get instead.
+    pub shared_clashes: Vec<(ItemKind, String, String)>,
+    pub rule_clashes: Vec<RuleClash>,
+}
+
+/// What the user chose in the preview.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Choices {
+    /// Replace the game that has the pack's name instead of renaming the import.
+    pub replace: bool,
+    /// Per rule clash: keep the other game's rule (the imported one comes in switched off).
+    pub keep_mine: Vec<bool>,
+}
+
+fn unique(base: &str, taken: impl Fn(&str) -> bool) -> String {
+    (2..).map(|i| format!("{base} ({i})")).find(|n| !taken(n)).unwrap_or_else(|| base.to_string())
+}
+
+/// Works out what importing `pack` would do to `config`.
+pub fn plan(config: &Config, pack: Pack, library: bool) -> Plan {
+    let installed = config.games.iter().find(|g| g.origin.as_ref().is_some_and(|o| o.id == pack.pack.id));
+    let update_kind = installed.and_then(|g| g.origin.as_ref()).map(|o| match compare_versions(&pack.pack.version, &o.version) {
+        std::cmp::Ordering::Greater => UpdateKind::Update,
+        std::cmp::Ordering::Equal => UpdateKind::Reinstall,
+        std::cmp::Ordering::Less => UpdateKind::Downgrade,
+    });
+    let name = &pack.pack.name;
+    let name_clash = installed.is_none() && config.games.iter().any(|g| &g.name == name);
+    let renamed = unique(name, |n| config.games.iter().any(|g| g.name == n));
+
+    let game = pack.to_game();
+    let mut shared_clashes = Vec::new();
+    for kind in ItemKind::ALL {
+        for item in names(&game, kind) {
+            if shared_has(&config.shared, kind, item) {
+                let taken = |n: &str| shared_has(&config.shared, kind, n) || names(&game, kind).iter().any(|x| *x == n);
+                shared_clashes.push((kind, item.clone(), unique(item, taken)));
+            }
+        }
+    }
+
+    let target = installed.map(|g| g.name.as_str());
+    let mut rule_clashes = Vec::new();
+    for (i, rule) in pack.rules.iter().enumerate() {
+        // An update keeps what was decided for rules the game already had.
+        if installed.is_some_and(|g| g.rules.iter().any(|r| r.same_match(rule))) {
+            continue;
+        }
+        let other = config
+            .games
+            .iter()
+            .filter(|g| Some(g.name.as_str()) != target)
+            .find(|g| g.rules.iter().any(|r| r.enabled && r.same_match(rule)));
+        if let Some(other) = other {
+            rule_clashes.push(RuleClash { rule: i, other_game: other.name.clone() });
+        }
+    }
+
+    Plan {
+        update_of: installed.map(|g| g.name.clone()),
+        update_kind,
+        edited: installed.map(edited_items).unwrap_or_default(),
+        name_clash,
+        renamed,
+        shared_clashes,
+        rule_clashes,
+        pack,
+        library,
+    }
+}
+
+/// Rule clashes that still matter: not with a game the import replaces.
+pub fn live_clashes<'a>(plan: &'a Plan, choices: &Choices) -> impl Iterator<Item = (usize, &'a RuleClash)> {
+    let replaced = (plan.name_clash && choices.replace).then_some(plan.pack.pack.name.as_str());
+    plan.rule_clashes.iter().enumerate().filter(move |(_, c)| Some(c.other_game.as_str()) != replaced)
+}
+
+/// Imports the planned pack into `config` and returns the new game's name.
+pub fn apply(config: &mut Config, plan: &Plan, choices: &Choices) -> String {
+    let mut game = plan.pack.to_game();
+    for (kind, old, new) in &plan.shared_clashes {
+        match kind {
+            ItemKind::Macro => game.macros.iter_mut().filter(|m| &m.name == old).for_each(|m| m.name = new.clone()),
+            ItemKind::Menu => game.menus.iter_mut().filter(|m| &m.name == old).for_each(|m| m.name = new.clone()),
+            ItemKind::Info => game.info.iter_mut().filter(|o| &o.name == old).for_each(|o| o.name = new.clone()),
+        }
+        game.rename_refs(*kind, old, new);
+    }
+
+    // Rules: an update keeps each existing rule's on/off; clashes go as chosen.
+    let previous = plan.update_of.as_deref().and_then(|n| config.games.iter().find(|g| g.name == n));
+    for (i, rule) in game.rules.iter_mut().enumerate() {
+        if let Some(old) = previous.and_then(|g| g.rules.iter().find(|r| r.same_match(rule))) {
+            rule.enabled = old.enabled;
+        }
+        if let Some((c, _)) = live_clashes(plan, choices).find(|(_, c)| c.rule == i)
+            && choices.keep_mine.get(c).copied().unwrap_or(false)
+        {
+            rule.enabled = false;
+        }
+    }
+    for (c, clash) in live_clashes(plan, choices) {
+        if choices.keep_mine.get(c).copied().unwrap_or(false) {
+            continue;
+        }
+        let rule = &plan.pack.rules[clash.rule];
+        if let Some(other) = config.games.iter_mut().find(|g| g.name == clash.other_game) {
+            other.rules.iter_mut().filter(|r| r.same_match(rule)).for_each(|r| r.enabled = false);
+        }
+    }
+
+    game.origin = Some(Origin {
+        id: plan.pack.pack.id.clone(),
+        version: plan.pack.pack.version.clone(),
+        library: plan.library,
+        hashes: item_hashes(&game),
+    });
+
+    let replace = match &plan.update_of {
+        Some(name) => {
+            game.name = name.clone();
+            Some(name.clone())
+        }
+        None if plan.name_clash && choices.replace => Some(game.name.clone()),
+        None if plan.name_clash => {
+            game.name = plan.renamed.clone();
+            None
+        }
+        None => None,
+    };
+    let name = game.name.clone();
+    match replace.and_then(|n| config.games.iter().position(|g| g.name == n)) {
+        Some(i) => config.games[i] = game,
+        None => config.games.push(game),
+    }
+    name
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{Button, MenuItem, MenuKind, OverlayStyle, ProfileRef, RuleKind};
+
+    fn mac(name: &str) -> Macro {
+        Macro { name: name.into(), steps: vec![MacroStep::Wait(10)] }
+    }
+
+    fn menu(name: &str, items: Vec<ButtonAction>) -> Menu {
+        Menu {
+            name: name.into(),
+            kind: MenuKind::List,
+            items: items.into_iter().map(|action| MenuItem { label: "x".into(), action, button: None }).collect(),
+            cancel: None,
+            style: OverlayStyle::default(),
+        }
+    }
+
+    fn macro_ref(name: &str) -> ButtonAction {
+        ButtonAction::Macro { name: name.into(), repeat: false }
+    }
+
+    /// A game whose profile opens shared menu "Wheel", which plays shared macro "Heal".
+    fn setup() -> Config {
+        let mut config = Config::default();
+        config.shared.macros = vec![mac("Heal"), mac("Unused")];
+        config.shared.menus = vec![menu("Wheel", vec![macro_ref("Heal")])];
+        let mut game = Game::new("Doom", vec![Profile::pc_action("Play")]);
+        game.profiles[0].set_button(Button::Select, ButtonAction::OpenMenu("Wheel".into()));
+        game.profiles[0].set_button(Button::North, macro_ref("Gone"));
+        game.macros = vec![mac("Dodge")];
+        game.rules = vec![Rule::new(RuleKind::Executable, "doom.exe", "Play")];
+        config.games.push(game);
+        config
+    }
+
+    #[test]
+    fn export_copies_in_used_shared_items_and_reports_problems() {
+        let config = setup();
+        let game = &config.games[0];
+        let info = draft(game, false);
+        let out = export(game, &config.shared, &info);
+        assert_eq!(out.pulled_in, [(ItemKind::Menu, "Wheel".to_string()), (ItemKind::Macro, "Heal".to_string())]);
+        assert_eq!(out.dangling, ["macro \"Gone\""]);
+        assert_eq!(out.pack.pack.requires, [Feature::Gyro], "the action template aims with gyro");
+        assert_eq!(out.features, [FeatureUse { feature: Feature::Gyro, profile: "Play".into() }]);
+        assert!(!out.pack.macros.iter().any(|m| m.name == "Unused"));
+        assert_eq!(out.pack.pack.name, "Doom");
+    }
+
+    #[test]
+    fn packs_roundtrip_and_newer_formats_are_refused() {
+        let config = setup();
+        let out = export(&config.games[0], &config.shared, &draft(&config.games[0], false));
+        let text = out.pack.to_toml().unwrap();
+        assert_eq!(parse(&text).unwrap(), out.pack);
+
+        let newer = text.replacen("format = 1", "format = 2", 1);
+        assert!(parse(&newer).unwrap_err().to_string().contains("newer version of the app"));
+        let extra = format!("surprise = 1\n{text}");
+        assert!(parse(&extra).is_err(), "strict within a format");
+        assert!(parse("[pack]\nid = 'x'").unwrap_err().to_string().contains("no format number"));
+    }
+
+    #[test]
+    fn importing_twice_renames_then_updates_by_id() {
+        let mut config = setup();
+        let mut pack = export(&config.games[0], &config.shared, &draft(&config.games[0], false)).pack;
+        pack.pack.version = "1.0".into();
+
+        // "Doom" exists (made by the user, no origin): a name clash, renamed by default.
+        let p = plan(&config, pack.clone(), false);
+        assert!(p.name_clash && p.update_of.is_none());
+        assert_eq!(p.renamed, "Doom (2)");
+        // Its rule matches the user's own Doom rule.
+        assert_eq!(p.rule_clashes, [RuleClash { rule: 0, other_game: "Doom".into() }]);
+        let name = apply(&mut config, &p, &Choices::default());
+        assert_eq!(name, "Doom (2)");
+        assert!(!config.games[0].rules[0].enabled, "the import's rule took over");
+        assert!(config.games[1].rules[0].enabled);
+        // Shared items it carries clash with the user's shared ones and get renamed.
+        let imported = &config.games[1];
+        assert!(imported.menus.iter().any(|m| m.name == "Wheel (2)"));
+        assert_eq!(imported.menus[0].items[0].action, macro_ref("Heal (2)"));
+        assert_eq!(imported.profiles[0].button(Button::Select), &ButtonAction::OpenMenu("Wheel (2)".into()));
+
+        // The same ID again is an update of "Doom (2)", which the user has since edited.
+        config.games[1].macros[0].steps.push(MacroStep::Wait(5));
+        config.games[1].rules[0].enabled = false;
+        pack.pack.version = "1.1".into();
+        let p = plan(&config, pack.clone(), false);
+        assert_eq!(p.update_of.as_deref(), Some("Doom (2)"));
+        assert_eq!(p.update_kind, Some(UpdateKind::Update));
+        assert_eq!(p.edited, ["macro “Dodge”"]);
+        assert!(p.rule_clashes.is_empty(), "rules the game had keep their decision");
+        apply(&mut config, &p, &Choices::default());
+        assert_eq!(config.games.len(), 2);
+        assert_eq!(config.games[1].origin.as_ref().unwrap().version, "1.1");
+        assert!(!config.games[1].rules[0].enabled, "switched off before, stays off");
+        assert!(edited_items(&config.games[1]).is_empty());
+
+        pack.pack.version = "1.0.9".into();
+        assert_eq!(plan(&config, pack, false).update_kind, Some(UpdateKind::Downgrade));
+    }
+
+    #[test]
+    fn replacing_and_keeping_my_rule() {
+        let mut config = setup();
+        let mut pack = export(&config.games[0], &config.shared, &draft(&config.games[0], false)).pack;
+        pack.pack.id = new_id();
+        let p = plan(&config, pack, false);
+        assert_eq!(p.rule_clashes.len(), 1, "with the same-named game, until it's replaced");
+        let choices = Choices { replace: true, keep_mine: vec![true] };
+        assert_eq!(live_clashes(&p, &choices).count(), 0);
+        assert_eq!(apply(&mut config, &p, &choices), "Doom");
+        assert_eq!(config.games.len(), 1, "replaced in place");
+        assert!(config.games[0].rules[0].enabled, "no clash left with the game it replaced");
+        assert!(config.games[0].origin.is_some());
+    }
+
+    #[test]
+    fn forks_get_a_new_id_and_credit_the_original() {
+        let mut game = Game::new("Doom", vec![Profile::passthrough("P")]);
+        let own = draft(&game, false);
+        assert!(!own.id.is_empty() && own.based_on.is_none());
+        game.pack = own.clone();
+        assert_eq!(draft(&game, false).id, own.id, "my own pack keeps its ID");
+
+        game.pack = PackInfo { id: "abc".into(), author: "them".into(), version: "2.0".into(), ..PackInfo::default() };
+        game.origin = Some(Origin { id: "abc".into(), version: "2.0".into(), ..Origin::default() });
+        let fork = draft(&game, false);
+        assert_ne!(fork.id, "abc");
+        assert_eq!(fork.based_on, Some(PackRef { id: "abc".into(), name: "Doom".into(), author: "them".into(), version: "2.0".into() }));
+        assert_eq!(fork.author, "");
+        assert_eq!(draft(&game, true).id, "abc", "the library keeps its pack IDs");
+    }
+
+    #[test]
+    fn version_order_and_ids() {
+        use std::cmp::Ordering::*;
+        assert_eq!(compare_versions("1.10", "1.9"), Greater);
+        assert_eq!(compare_versions("1.0", "1"), Equal);
+        assert_eq!(compare_versions("v2", "1.9.9"), Greater);
+        let id = new_id();
+        assert_eq!(id.len(), 36);
+        assert_eq!(&id[14..15], "4");
+        assert_ne!(id, new_id());
+    }
+
+    #[test]
+    fn imported_games_can_become_active() {
+        let mut config = setup();
+        let mut pack = export(&config.games[0], &config.shared, &draft(&config.games[0], false)).pack;
+        pack.pack.name = "Quake".into();
+        pack.rules.clear();
+        let plan = plan(&config, pack, false);
+        let name = apply(&mut config, &plan, &Choices::default());
+        config.active = ProfileRef::new(Some(&name), "Play");
+        assert_eq!(config.active_ref(), ProfileRef::new(Some("Quake"), "Play"));
+        assert!(config.scope().menus.iter().any(|m| m.name == "Wheel (2)"));
+    }
+}

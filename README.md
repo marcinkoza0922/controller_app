@@ -4,7 +4,21 @@ Background service that remaps gamepad inputs, or turns them into mouse and keyb
 
 - **daemon**: grabs physical gamepads (evdev) so nothing else sees them, runs the active profile, and emits through virtual uinput devices (an Xbox 360-style pad plus a keyboard and a mouse).
 - **gui**: edits profiles and talks to the daemon over `$XDG_RUNTIME_DIR/controller_app.sock`.
-- **config**: `~/.config/controller_app/config.toml`. The daemon is the only writer while it runs; after editing by hand, run `controller_app reload`.
+- **config**: `~/.config/controller_app/config.toml`. The daemon is the only writer while it runs; after editing by hand, run `controller_app reload`. A config from before games existed can't be read: it's moved aside to `config.toml.old` and replaced with the defaults.
+
+## Games
+
+Everything is organized by game. A game holds its own profiles, macros, menus, info overlays and the auto-switch rules that activate it; all of its profiles can use all of its items. **General** is a built-in game with no rules, for the desktop and a plain gamepad. Its Macros, Menus and Info overlays tabs also hold the **shared** items, which every profile of every game can use. Names only need to be unique within a game, and a game's items can't reuse a shared item's name.
+
+The GUI's sidebar lists General and the games (with a search), and each game's page has sub-tabs: **Profiles**, **Macros**, **Menus**, **Info overlays** and **Details** (name, rules, export, delete). On the Macros, Menus and Info overlays tabs, "Copy from another game…" previews another game's (or a library game's) items and copies one in to adapt.
+
+## Packs and the library
+
+A game can be shared as a **pack**: **Details → Export…** writes it to a `.padpack` file (TOML), copying in any shared items it uses. The export dialog warns about references to missing items and about anything beyond a plain XInput pad (today, gyro), which players with simpler controllers won't get. Re-exporting your own game keeps its pack ID; exporting someone else's makes a fork with its own ID that credits the original.
+
+**+ Add game** opens the picker: the built-in library (games you have installed in Steam, Heroic or Lutris, or running, come first), an empty game from a template, or **Import a file…**. Importing shows a preview first: what's inside, what your controller lacks, a game with the same name (add under a new name, or replace yours), shared items it renames to avoid clashes, and other games' rules for the same window (the imported game takes over unless you keep yours). Nothing changes until Save & apply. Imported games are ordinary, editable games that remember their pack: importing a newer version of the same pack, or an app update shipping a newer library version (marked "update" in the sidebar), offers to update it and lists what you changed since. A pack made by a newer app version is refused with a request to update.
+
+The library is `packs/*.padpack` in this repository, embedded at build time; see `packs/README.md`.
 
 ## Install
 
@@ -40,7 +54,7 @@ On top of that:
 - **Gestures**: double tap, triple tap and long press per button. The final tap of a sequence fires on press and holds, so "double-tap and hold" works. A quick tap on a button with gestures fires once the gesture is decided; holding it past the tap window presses the button's own action right away and holds it until release (unless a long press is set).
 - **Zones**: extra actions held while a stick or trigger is within part of its travel. For example, Left Shift on a partial stick push gives walk/run with WASD, and a half versus full trigger pull can do different things. Zones are hidden for controllers whose triggers are on/off only (e.g. Switch pads).
 
-The defaults are **Gamepad** (1:1 passthrough) and **Desktop** (left stick moves the mouse, right stick scrolls, A/B click, LB+RB = Alt+Tab). Guide cycles between profiles in both.
+General's defaults are **Gamepad** (1:1 passthrough) and **Desktop** (left stick moves the mouse, right stick scrolls, A/B click, LB+RB = Alt+Tab). Guide cycles between the profiles of the active game in both.
 
 More templates are available under "New from template…" in the GUI:
 
@@ -50,7 +64,7 @@ More templates are available under "New from template…" in the GUI:
 
 ## Macros
 
-The Macros tab holds named input sequences, each in its own collapsible card ("+ New macro" adds one at the top). Each step is a **tap** (press, hold for N ms, release), **hold down**, **release**, **wait** (N ms), or **move stick** (a virtual-pad stick to a direction or custom position, held until the next stick step and recentered when the macro ends). Steps can press a key or key combo, mouse button, scroll wheel or gamepad button. "Insert motion…" adds fighting-game motions one frame apart: quarter circles, dragon punch and half circles, written facing right. Map a macro with the "Macro…" action:
+A game's Macros tab holds named input sequences, each in its own collapsible card ("+ New macro" adds one at the top). Each step is a **tap** (press, hold for N ms, release), **hold down**, **release**, **wait** (N ms), or **move stick** (a virtual-pad stick to a direction or custom position, held until the next stick step and recentered when the macro ends). Steps can press a key or key combo, mouse button, scroll wheel or gamepad button. "Insert motion…" adds fighting-game motions one frame apart: quarter circles, dragon punch and half circles, written facing right. Map a macro with the "Macro…" action:
 
 - **Play once**: each press plays it through to the end, even if you let go early.
 - **Repeat while held**: it loops until you let go, then stops at once.
@@ -72,11 +86,11 @@ The "On-screen keyboard" action (also a button on the Overview tab, and `control
 
 New Desktop profiles open it with a long press of Guide. It needs a compositor with layer-shell (KDE Plasma, Sway, Hyprland, …).
 
-The "On-screen numpad" action (or `controller_app numpad-toggle`) opens a smaller pad with the digits 0–9 and a dot, for codes and number fields: move with the D-pad or left stick, A presses a number, X is backspace, Start presses Enter, and holding B closes it. It types the top-row number keys, so it works whatever the Num Lock state. Both pads have their own position, size and colors on the Overlays tab, and opening one closes the other.
+The "On-screen numpad" action (or `controller_app numpad-toggle`) opens a smaller pad with the digits 0–9 and a dot, for codes and number fields: move with the D-pad or left stick, A presses a number, X is backspace, Start presses Enter, and holding B closes it. It types the top-row number keys, so it works whatever the Num Lock state. Both pads have their own position, size and colors on the Settings page, and opening one closes the other.
 
 ## Menus
 
-The Overlays tab also holds on-screen **action menus**, shared by all profiles. Open one from any button, gesture, combo, trigger or stick direction with the "Open menu…" action (or `controller_app menu <name>`). A menu is on screen only while that input is held, and letting go closes it. To keep a menu up without holding, wrap the action in "Toggle…": the menu then stays until the input is pressed again. Choosing an item taps its action like a button press, so items can be keys, macros, toggles or the keyboard, and the menu stays up for more picks.
+A game's Menus tab holds on-screen **action menus**. Open one from any button, gesture, combo, trigger or stick direction with the "Open menu…" action (or `controller_app menu <name>`). A menu is on screen only while that input is held, and letting go closes it. To keep a menu up without holding, wrap the action in "Toggle…": the menu then stays until the input is pressed again. Choosing an item taps its action like a button press, so items can be keys, macros, toggles or the keyboard, and the menu stays up for more picks.
 
 - **Radial**: aim a stick at an item; whatever is aimed at when you let go is chosen.
 - **Directional**: four slots on the D-pad or face buttons.
@@ -86,20 +100,16 @@ The Overlays tab also holds on-screen **action menus**, shared by all profiles. 
 
 An item can open another menu of the same kind (radial menus can't open menus). The new menu is a child of the first: letting go closes both. While a menu is open the controller drives it, and anything the mappings were holding is released. A quick tap can't hold a menu up, so a tap-triggered menu (e.g. on a double tap that isn't the button's last gesture) needs a Toggle. Menus opened from the command line or an analog zone, which can't be held, stay until an item is chosen or B is pressed (Select for face-button menus). The overlay window stays running invisibly between uses, so menus appear instantly.
 
-Each menu is a collapsible card on the Overlays tab, with a live preview; "Add a menu" adds another at the top. Under **Appearance**, each menu (and the keyboard) has its own screen position (a 3×3 grid of corners, edges and center, so it fits any monitor size or aspect ratio), size (50–200%), and color and opacity for the background, items and selected item. Text switches between light and dark to stay readable. Older configs with `cascade` menus still load.
+Each menu is a collapsible card on the Menus tab, with a live preview; "Add a menu" adds another at the top. Under **Appearance**, each menu (and the keyboard) has its own screen position (a 3×3 grid of corners, edges and center, so it fits any monitor size or aspect ratio), size (50–200%), and color and opacity for the background, items and selected item. Text switches between light and dark to stay readable. Older configs with `cascade` menus still load.
 
 ## Info overlays
 
 Info overlays put text on screen without taking the controller, mainly to show a game's controls. Each one is a grid of cells (rows of cells that line up in columns), with its own position, size and colors. Cells can hold tokens:
 
-- **Button glyphs** drawn the way the controller in use labels them: `{south}` is A on Xbox, ✕ on PlayStation and B on Nintendo; also `{east}` `{west}` `{north}` `{lb}` `{rb}` `{lt}` `{rt}` `{select}` `{start}` `{guide}` `{ls}` `{rs}` `{l3}` `{r3}` `{dpad}` `{up}` `{down}` `{left}` `{right}`. Controllers that can't be recognized get the "Fallback glyphs" kind chosen in the editor.
+- **Button glyphs** drawn the way the controller in use labels them: `{south}` is A on Xbox, ✕ on PlayStation and B on Nintendo; also `{east}` `{west}` `{north}` `{lb}` `{rb}` `{lt}` `{rt}` `{select}` `{start}` `{guide}` `{ls}` `{rs}` `{l3}` `{r3}` `{dpad}` `{up}` `{down}` `{left}` `{right}`. Controllers that can't be recognized get the "Fallback glyphs" kind chosen on the Settings page.
 - **Live values**, updated every second: `{time}` `{time12}` `{date}` `{profile}` `{app}` (the focused program's executable) `{title}` `{pid}` `{cpu}` `{ram}` `{gpu}` (AMD only) `{controller}`.
 
-An info overlay is either always shown while one of its profiles is active, or shown with the "Show info overlay…" action while that input is held (wrap it in Toggle to keep it up). Overlays at the same screen position stack.
-
-## Game-specific macros and overlays
-
-Macros, menus and info overlays are shared by all profiles unless "Used by" on their card names some. A profile can only use its own and shared ones, and its editor only offers those. "Show:" on the Macros and Overlays tabs lists what one profile can use, and anything added while a profile is picked there belongs to it. Renaming or duplicating a profile carries its macros and overlays along.
+An info overlay is either always shown while its game is active, or shown with the "Show info overlay…" action while that input is held (wrap it in Toggle to keep it up). Overlays at the same screen position stack.
 
 ## Gyro
 
@@ -113,27 +123,30 @@ Horizontal aim can come from yaw (turning), roll (tilting) or both, and either a
 
 ## Per-game profiles
 
-Rules switch the profile when a game's window gets focus, and an optional default profile is used for everything else. A rule matches on:
+Each game's rules (on its Details tab) switch to one of its profiles when the game's window gets focus, and an optional default profile (on the Settings page) is used for everything else. Rules are checked game by game, in order; a rule can be switched off without deleting it. A rule matches on:
 
 - **Executable**: the program's file name. For Wine/Proton games it's the Windows `.exe` (e.g. `eldenring.exe`), not the Wine loader.
 - **Steam App ID**: taken from the environment Steam sets, or from Proton's `steam_app_<id>` window class.
 - **Window class**.
 
-The GUI lists recently focused windows with a one-click "+ Rule". Switching with Guide or the GUI stays in effect until focus changes again. Focusing the settings window never switches profiles.
+A game's Details tab lists recently focused windows with a one-click "+ Rule". Switching with Guide or the GUI stays in effect until focus changes again. Focusing the settings window never switches profiles.
 
 Focus tracking uses a small KWin script (KDE Plasma, Wayland or X11). On other desktops, rules apply while a matching process is running.
 
 ## GUI
 
-- **Overview**: a live controller drawing labelled with the active profile's mappings, the controller list (Manage, Test rumble, Calibrate gyro), and per-game rules.
-- **Profile**: the profile being edited, with its own labelled drawing and sub-tabs for Buttons, Sticks & triggers, Combos and Gyro. Mappings collapse to one-line summaries ("A ▸ Left click"); click a name to edit it. **Find by pressing** jumps to whatever you press or push on the controller.
-- **Macros**: step editor with exact millisecond fields.
+- **Overview**: a live controller drawing labelled with the active profile's mappings, and the controller list (Manage, Test rumble, Calibrate gyro).
+- **Settings**: automatic switching and its default profile, the on-screen keyboard and numpad, and fallback glyphs.
+- **A game's Profiles tab**: the profile being edited, with its own labelled drawing and sub-tabs for Buttons, Sticks & triggers, Combos and Gyro. Mappings collapse to one-line summaries ("A ▸ Left click"); click a name to edit it. **Find by pressing** jumps to whatever you press or push on the controller.
+- **A game's Macros tab**: step editor with exact millisecond fields.
 
 Problems that would block saving (unknown keys, missing macros, incomplete combos) are flagged on the row and with ⚠ on its tab. Section explanations sit behind ⓘ tooltips, and keys can be picked from an on-screen keyboard.
 
 ## CLI
 
 `controller_app status | enable | disable | profile <name> | next-profile | reload | overlay-toggle | numpad-toggle | menu <name> | daemon`
+
+`profile <name>` looks in the active game, then General, then the first game with a profile of that name. `menu <name>` opens one of the active game's menus, or a shared one.
 
 When `controller_app daemon` runs in a terminal, it keeps a live status line showing each controller's input and what is being output.
 

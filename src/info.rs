@@ -432,7 +432,6 @@ mod tests {
     fn overlay(rows: &[&[&str]]) -> InfoOverlay {
         InfoOverlay {
             name: "Keys".into(),
-            profiles: None,
             always: true,
             style: OverlayStyle::info(),
             rows: rows.iter().map(|r| r.iter().map(|c| c.to_string()).collect()).collect(),

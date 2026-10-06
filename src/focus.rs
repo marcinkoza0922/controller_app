@@ -14,7 +14,7 @@ use anyhow::{Context, Result};
 use zbus::blocking::Connection;
 
 use crate::{
-    config::{AutoSwitch, RuleKind},
+    config::{Config, ProfileRef, Rule, RuleKind},
     ipc::{FocusBackend, WindowInfo},
     monitor::log,
 };
@@ -241,23 +241,31 @@ fn rule_matches(kind: RuleKind, value: &str, info: &WindowInfo) -> bool {
         }
 }
 
+/// Every game's switched-on rules, in order (games in order, then each game's rules).
+pub fn rules(config: &Config) -> impl Iterator<Item = (&str, &Rule)> {
+    config.games.iter().flat_map(|g| g.rules.iter().filter(|r| r.enabled).map(move |r| (g.name.as_str(), r)))
+}
+
 /// Profile for a focused window: the first matching rule's, else the default (if any).
-pub fn profile_for<'a>(auto: &'a AutoSwitch, info: &WindowInfo) -> Option<&'a str> {
-    auto.rules
-        .iter()
-        .find(|r| rule_matches(r.kind, &r.value, info))
-        .map(|r| r.profile.as_str())
-        .or(auto.default_profile.as_deref())
+pub fn profile_for(config: &Config, info: &WindowInfo) -> Option<ProfileRef> {
+    rules(config)
+        .find(|(_, r)| rule_matches(r.kind, &r.value, info))
+        .map(|(game, r)| ProfileRef::new(Some(game), &r.profile))
+        .or_else(|| config.auto_switch.default_profile.clone())
 }
 
 /// Profile from running processes, for desktops without focus information: the first rule
 /// (in rule order) that matches any running process, else the default.
-pub fn profile_for_processes<'a>(auto: &'a AutoSwitch, processes: &[WindowInfo]) -> Option<&'a str> {
-    auto.rules
-        .iter()
-        .find(|r| processes.iter().any(|p| rule_matches(r.kind, &r.value, p)))
-        .map(|r| r.profile.as_str())
-        .or(auto.default_profile.as_deref())
+pub fn profile_for_processes(config: &Config, processes: &[WindowInfo]) -> Option<ProfileRef> {
+    rules(config)
+        .find(|(_, r)| processes.iter().any(|p| rule_matches(r.kind, &r.value, p)))
+        .map(|(game, r)| ProfileRef::new(Some(game), &r.profile))
+        .or_else(|| config.auto_switch.default_profile.clone())
+}
+
+/// Whether a rule matches any of these windows or processes.
+pub fn rule_matches_any(rule: &Rule, seen: &[WindowInfo]) -> bool {
+    seen.iter().any(|w| rule_matches(rule.kind, &rule.value, w))
 }
 
 /// This user's running processes.
@@ -315,55 +323,63 @@ mod tests {
         assert_eq!(identify("steam_app_0".into(), String::new(), 0).steam_app_id, None);
     }
 
-    fn rule(kind: RuleKind, value: &str, profile: &str) -> Rule {
-        Rule { kind, value: value.into(), profile: profile.into() }
+    /// A config with one game per (game, rules) entry, each rule naming profile "P".
+    fn config(games: &[(&str, &[(RuleKind, &str)])]) -> Config {
+        let mut config = Config::default();
+        for (name, rules) in games {
+            let mut game = crate::config::Game::new(name, vec![crate::config::Profile::passthrough("P")]);
+            game.rules = rules.iter().map(|(kind, value)| Rule::new(*kind, *value, "P")).collect();
+            config.games.push(game);
+        }
+        config
+    }
+
+    fn at(game: &str) -> Option<ProfileRef> {
+        Some(ProfileRef::new(Some(game), "P"))
     }
 
     #[test]
     fn first_matching_rule_wins_else_default() {
-        let mut auto = AutoSwitch {
-            rules: vec![
-                rule(RuleKind::SteamAppId, "1245620", "Souls"),
-                rule(RuleKind::Executable, "ELDENRING.EXE", "Other"),
-                rule(RuleKind::WindowClass, "factorio", "Factorio"),
-            ],
-            ..Default::default()
-        };
+        let mut config = config(&[
+            ("Souls", &[(RuleKind::SteamAppId, "1245620")]),
+            ("Other", &[(RuleKind::Executable, "ELDENRING.EXE")]),
+            ("Factorio", &[(RuleKind::WindowClass, "factorio")]),
+        ]);
         let elden = WindowInfo {
             class: "steam_app_1245620".into(),
             exe: "eldenring.exe".into(),
             steam_app_id: Some("1245620".into()),
             ..Default::default()
         };
-        assert_eq!(profile_for(&auto, &elden), Some("Souls"));
+        assert_eq!(profile_for(&config, &elden), at("Souls"));
         let factorio = WindowInfo { class: "Factorio".into(), exe: "factorio".into(), ..Default::default() };
-        assert_eq!(profile_for(&auto, &factorio), Some("Factorio"));
+        assert_eq!(profile_for(&config, &factorio), at("Factorio"));
 
         let browser = WindowInfo { class: "firefox".into(), exe: "firefox".into(), ..Default::default() };
-        assert_eq!(profile_for(&auto, &browser), None);
-        auto.default_profile = Some("Desktop".into());
-        assert_eq!(profile_for(&auto, &browser), Some("Desktop"));
+        assert_eq!(profile_for(&config, &browser), None);
+        config.auto_switch.default_profile = Some(ProfileRef::new(None, "Desktop"));
+        assert_eq!(profile_for(&config, &browser), Some(ProfileRef::new(None, "Desktop")));
+
+        config.games[0].rules[0].enabled = false;
+        assert_eq!(profile_for(&config, &elden), at("Other"), "switched-off rules are skipped");
     }
 
     #[test]
     fn empty_rule_values_never_match() {
-        let auto = AutoSwitch { rules: vec![rule(RuleKind::WindowClass, " ", "X")], ..Default::default() };
-        assert_eq!(profile_for(&auto, &WindowInfo::default()), None);
+        let config = config(&[("X", &[(RuleKind::WindowClass, " ")])]);
+        assert_eq!(profile_for(&config, &WindowInfo::default()), None);
     }
 
     #[test]
     fn process_scan_uses_rule_order() {
-        let auto = AutoSwitch {
-            rules: vec![rule(RuleKind::Executable, "game.exe", "A"), rule(RuleKind::Executable, "bash", "B")],
-            default_profile: Some("D".into()),
-            ..Default::default()
-        };
+        let mut config = config(&[("A", &[(RuleKind::Executable, "game.exe")]), ("B", &[(RuleKind::Executable, "bash")])]);
+        config.auto_switch.default_profile = Some(ProfileRef::new(None, "D"));
         let procs = |names: &[&str]| -> Vec<WindowInfo> {
             names.iter().map(|n| WindowInfo { exe: n.to_string(), ..Default::default() }).collect()
         };
-        assert_eq!(profile_for_processes(&auto, &procs(&["bash", "game.exe"])), Some("A"));
-        assert_eq!(profile_for_processes(&auto, &procs(&["bash"])), Some("B"));
-        assert_eq!(profile_for_processes(&auto, &procs(&["zsh"])), Some("D"));
+        assert_eq!(profile_for_processes(&config, &procs(&["bash", "game.exe"])), at("A"));
+        assert_eq!(profile_for_processes(&config, &procs(&["bash"])), at("B"));
+        assert_eq!(profile_for_processes(&config, &procs(&["zsh"])), Some(ProfileRef::new(None, "D")));
     }
 
     #[test]

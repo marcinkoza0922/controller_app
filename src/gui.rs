@@ -14,28 +14,34 @@ use iced::{
 
 use crate::{
     config::{
-        Analog, Button, ButtonAction, CarouselControls, Cluster, Combo, Config, GestureKind, GyroActivation,
-        GyroConfig, GyroHorizontal, GyroInput, GyroMode, Macro, MacroStep, Menu, MenuItem, MenuKind, MenuKindTag,
-        MouseButton, OverlayStyle, Paint, Rule, RuleKind, ScreenPosition, WheelDirection, Zone, Profile, Stick, StickAction, StickConfig,
-        InfoOverlay, Trigger, TriggerAction, in_scope,
+        Analog, Button, ButtonAction, CarouselControls, Cluster, Combo, Config, Game, GestureKind, GyroActivation,
+        GyroConfig, GyroHorizontal, GyroInput, GyroMode, InfoOverlay, ItemKind, Macro, MacroStep, Menu, MenuItem,
+        MenuKind, MenuKindTag, MouseButton, OverlayStyle, Paint, Profile, ProfileRef, Rule, RuleKind, ScreenPosition,
+        Stick, StickAction, StickConfig, Trigger, TriggerAction, WheelDirection, Zone,
     },
     engine::Opener,
     info::PadFamily,
     ipc::{self, FocusBackend, InputSnapshot, Request, Response, Status, WindowInfo},
-    menu::MenuSession,
     keyboard::{self, Layout},
-    pad_svg, style,
+    launchers, library,
+    menu::MenuSession,
+    pack, pad_svg, style,
 };
+
+mod packs;
+
+use packs::{BrowseSource, Dialog, PackField};
 
 pub fn run() -> iced::Result {
     iced::application(App::boot, App::update, App::view)
         .title("Controller App")
         .subscription(App::subscription)
-        .window_size((860.0, 900.0))
+        .window_size((1100.0, 900.0))
         .run()
 }
 
 const LABEL_WIDTH: f32 = 170.0;
+const SIDEBAR_WIDTH: f32 = 210.0;
 const ERROR_COLOR: Color = Color::from_rgb(0.9, 0.3, 0.3);
 const MUTED_COLOR: Color = Color::from_rgb(0.55, 0.55, 0.6);
 
@@ -46,21 +52,31 @@ struct App {
     saved: Config,
     /// `None` while the daemon is unreachable.
     status: Option<Status>,
+    page: Page,
+    /// The profile being edited, by index in the current game's profiles.
     editing: usize,
+    game_tab: GameTab,
+    /// On General's Macros, Menus and Info overlays tabs: show the shared items (usable by
+    /// every game) instead of General's own.
+    shared_view: bool,
+    /// The read-only list of shared items under a game's own is open.
+    shared_open: bool,
+    /// Filters the sidebar's game list.
+    game_search: String,
     message: Option<(String, bool)>,
     /// Latest physical input streamed from the daemon.
     live: Option<InputSnapshot>,
     picker: Option<KeyPicker>,
-    tab: Tab,
+    dialog: Option<Dialog>,
     profile_tab: ProfileTab,
     /// Rows showing their full editor instead of a one-line summary.
     expanded: HashSet<Target>,
     /// Waiting for a controller button press to jump to its row.
     finding: bool,
     found: Option<Button>,
-    /// Macros whose cards are open, by index in `Config::macros`.
+    /// Macros whose cards are open, by index in the shown list.
     open_macros: HashSet<usize>,
-    /// Menus (by index) whose card is open in the Overlays tab.
+    /// Menus (by index) whose card is open.
     open_menus: HashSet<usize>,
     /// Appearance editors that are open: a menu's, or the keyboard's (`None`).
     open_appearance: HashSet<Option<usize>>,
@@ -69,55 +85,67 @@ struct App {
     /// Info overlays (by index) whose card, or Appearance section, is open.
     open_infos: HashSet<usize>,
     open_info_appearance: HashSet<usize>,
-    /// Which profile's macros and overlays the Macros and Overlays tabs list.
-    filter: ScopeFilter,
+    /// The built-in game library.
+    library: Vec<library::Entry>,
+    /// Installed and running games, once looked up for the library picker.
+    installed: Option<launchers::Installed>,
+    /// Games and profiles renamed since the last save. The daemon still reports the active
+    /// profile by its old name until then.
+    renames: Vec<Rename>,
 }
 
-/// Which macros, menus and info overlays the Macros and Overlays tabs list.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-enum ScopeFilter {
-    #[default]
-    All,
-    /// Only those shared by all profiles.
-    Shared,
-    /// What this profile can use: its own and shared ones.
-    Profile(String),
+/// What the sidebar shows on the right.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Page {
+    Overview,
+    Settings,
+    /// A game's page; `None` is General.
+    Game(Option<String>),
 }
 
-impl fmt::Display for ScopeFilter {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ScopeFilter::All => f.write_str("Everything"),
-            ScopeFilter::Shared => f.write_str("Shared by all profiles"),
-            ScopeFilter::Profile(p) => write!(f, "Usable in “{p}”"),
-        }
-    }
-}
-
-impl ScopeFilter {
-    fn shows(&self, scope: &Option<Vec<String>>) -> bool {
-        match self {
-            ScopeFilter::All => true,
-            ScopeFilter::Shared => scope.is_none(),
-            ScopeFilter::Profile(p) => in_scope(scope, p),
-        }
-    }
-
-    /// The scope new items get: the filtered profile's, so a game's things go with it.
-    fn new_scope(&self) -> Option<Vec<String>> {
-        match self {
-            ScopeFilter::Profile(p) => Some(vec![p.clone()]),
-            _ => None,
-        }
-    }
-}
-
-/// Something with a "Used by" profile list.
+/// Sections of a game's page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ScopeTarget {
-    Macro(usize),
-    Menu(usize),
-    Info(usize),
+enum GameTab {
+    Profiles,
+    Macros,
+    Menus,
+    Info,
+    Details,
+}
+
+impl GameTab {
+    const ALL: [GameTab; 5] = [GameTab::Profiles, GameTab::Macros, GameTab::Menus, GameTab::Info, GameTab::Details];
+}
+
+impl fmt::Display for GameTab {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            GameTab::Profiles => "Profiles",
+            GameTab::Macros => "Macros",
+            GameTab::Menus => "Menus",
+            GameTab::Info => "Info overlays",
+            GameTab::Details => "Details",
+        })
+    }
+}
+
+/// A rename not yet saved, for following the daemon's active profile.
+#[derive(Debug, Clone, PartialEq)]
+enum Rename {
+    Game { old: String, new: String },
+    Profile { game: Option<String>, old: String, new: String },
+}
+
+/// Where `at` is once these renames apply.
+fn follow_renames(renames: &[Rename], mut at: ProfileRef) -> ProfileRef {
+    for r in renames {
+        match r {
+            Rename::Game { old, new } if at.game.as_ref() == Some(old) => at.game = Some(new.clone()),
+            Rename::Profile { game, old, new } if &at.game == game && &at.profile == old => at.profile = new.clone(),
+            _ => {}
+        }
+    }
+    at
 }
 
 /// A token in an info cell's "Insert…" list.
@@ -137,18 +165,10 @@ enum Target {
     Combo(usize),
     Gesture(Button, GestureKind),
     Zone(Analog, usize),
-    /// Step `.1` of macro `.0` (in `Config::macros`), not part of any profile.
+    /// Step `.1` of macro `.0` (in the shown list), not part of any profile.
     MacroStep(usize, usize),
-    /// Item `.1` of menu `.0` (in `Config::menus`).
+    /// Item `.1` of menu `.0` (in the shown list).
     MenuItem(usize, usize),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Tab {
-    Overview,
-    Profile,
-    Macros,
-    Overlays,
 }
 
 /// Sections of the profile editor.
@@ -178,48 +198,12 @@ fn shift_removed(set: &HashSet<usize>, i: usize) -> HashSet<usize> {
     set.iter().filter(|j| **j != i).map(|j| if *j > i { j - 1 } else { *j }).collect()
 }
 
-/// "Used by": all profiles, or only those chosen (click a profile to add or remove it).
-fn scope_editor<'a>(target: ScopeTarget, scope: &Option<Vec<String>>, profiles: &[String]) -> Element<'a, Message> {
-    let mut line = row![
-        button(text("All profiles").size(13))
-            .style(if scope.is_none() { button::primary } else { button::secondary })
-            .on_press(Message::SetScope(target, None)),
-        text("or only:").size(13).color(MUTED_COLOR),
-    ]
-    .spacing(6)
-    .align_y(Alignment::Center);
-    for p in profiles {
-        let chosen = scope.as_ref().is_some_and(|list| list.contains(p));
-        let mut list = scope.clone().unwrap_or_default();
-        if chosen {
-            list.retain(|x| x != p);
-        } else {
-            list.push(p.clone());
-        }
-        // Taking the last one off goes back to all profiles.
-        let next = (!list.is_empty()).then_some(list);
-        line = line.push(
-            button(text(p.clone()).size(13))
-                .style(if chosen { button::primary } else { button::secondary })
-                .on_press(Message::SetScope(target, next)),
-        );
-    }
-    let mut col = column![line.wrap().vertical_spacing(6)].spacing(4);
-    if scope.as_ref().is_some_and(|list| !list.iter().any(|p| profiles.contains(p))) {
-        col = col.push(text("None of its profiles exist any more, so nothing can use it.").size(12).color(ERROR_COLOR));
-    }
-    labeled("Used by", col.into())
-}
-
-/// A short "for Elden Ring" note for card headers; nothing for shared items.
-fn scope_note(scope: &Option<Vec<String>>) -> Option<String> {
-    let list = scope.as_ref()?;
-    Some(match list.as_slice() {
-        [] => "no profile".into(),
-        [one] => format!("for {one}"),
-        [one, two] => format!("for {one}, {two}"),
-        [one, rest @ ..] => format!("for {one} +{}", rest.len()),
-    })
+/// `base`, or `base 2`, `base 3`, … whichever isn't taken.
+fn unique_name(base: &str, taken: impl Fn(&str) -> bool) -> String {
+    (1..)
+        .map(|i| if i == 1 { base.to_string() } else { format!("{base} {i}") })
+        .find(|n| !taken(n))
+        .unwrap()
 }
 
 /// The "add an info overlay" card.
@@ -232,7 +216,7 @@ fn view_new_info_card<'a>() -> Element<'a, Message> {
             help(
                 "An info overlay shows a grid of text on screen without taking the controller: a \
                  game's controls with glyphs that match the controller in use, the time, CPU load and \
-                 more. Show it always while its profiles are active, or with the \"Show info \
+                 more. Show it always while its game is active, or with the \"Show info \
                  overlay…\" action."
                     .into(),
             ),
@@ -444,12 +428,20 @@ fn info_has_problem(info: &[InfoOverlay]) -> bool {
     info.iter().enumerate().any(|(i, o)| o.name.trim().is_empty() || info[..i].iter().any(|other| other.name == o.name))
 }
 
-fn menus_have_problem(menus: &[Menu], names: &Names) -> bool {
+fn menus_have_problem(menus: &[Menu], reachable: &[Menu], names: &Names) -> bool {
     menus.iter().enumerate().any(|(i, m)| {
         m.name.trim().is_empty()
             || menus[..i].iter().any(|o| o.name == m.name)
-            || m.items.iter().any(|item| item_problem(m, &item.action, menus, names).is_some())
+            || m.items.iter().any(|item| item_problem(m, &item.action, reachable, names).is_some())
     })
+}
+
+/// "from <pack> 1.2 by <author>" for a game made from a pack.
+fn origin_note(game: &Game) -> Option<String> {
+    let origin = game.origin.as_ref()?;
+    let by = if game.pack.author.is_empty() { String::new() } else { format!(" by {}", game.pack.author) };
+    let source = if origin.library { "library" } else { "pack" };
+    Some(format!("from {source}, version {}{by}", origin.version))
 }
 
 /// Macro, menu and info overlay names, for the "Macro…"/"Open menu…"/"Show info overlay…"
@@ -459,44 +451,41 @@ struct Names {
     macros: Vec<String>,
     menus: Vec<String>,
     infos: Vec<String>,
-    /// Names that exist but belong to other profiles.
-    elsewhere: Vec<String>,
 }
 
 impl Names {
-    /// Everything, whichever profiles it belongs to.
-    fn of(config: &Config) -> Self {
+    fn of(macros: &[Macro], menus: &[Menu], info: &[InfoOverlay]) -> Self {
         Names {
-            macros: config.macros.iter().map(|m| m.name.clone()).collect(),
-            menus: config.menus.iter().map(|m| m.name.clone()).collect(),
-            infos: config.info.iter().map(|m| m.name.clone()).collect(),
-            elsewhere: Vec::new(),
+            macros: macros.iter().map(|m| m.name.clone()).collect(),
+            menus: menus.iter().map(|m| m.name.clone()).collect(),
+            infos: info.iter().map(|o| o.name.clone()).collect(),
         }
     }
 
-    /// What the profile named `profile` can use: shared items and its own.
-    fn for_profile(config: &Config, profile: &str) -> Self {
-        let mut names = Names::default();
-        let mut sort = |name: &String, scope: &Option<Vec<String>>, list: &mut Vec<String>| {
-            if in_scope(scope, profile) {
-                list.push(name.clone());
-            } else {
-                names.elsewhere.push(name.clone());
+    /// What a game's profiles and items can use: its own items, then shared ones.
+    fn for_game(config: &Config, game: &Game) -> Self {
+        let mut names = Names::of(&game.macros, &game.menus, &game.info);
+        let shared = Names::shared(config);
+        for (own, more) in [(&mut names.macros, shared.macros), (&mut names.menus, shared.menus), (&mut names.infos, shared.infos)] {
+            for name in more {
+                if !own.contains(&name) {
+                    own.push(name);
+                }
             }
-        };
-        let (mut macros, mut menus, mut infos) = (Vec::new(), Vec::new(), Vec::new());
-        config.macros.iter().for_each(|m| sort(&m.name, &m.profiles, &mut macros));
-        config.menus.iter().for_each(|m| sort(&m.name, &m.profiles, &mut menus));
-        config.info.iter().for_each(|m| sort(&m.name, &m.profiles, &mut infos));
-        Names { macros, menus, infos, ..names }
+        }
+        names
     }
 
-    /// Why `name` (a `kind` such as "macro") can't be used here.
-    fn why_missing(&self, kind: &str, name: &str) -> String {
-        if self.elsewhere.iter().any(|n| n == name) {
-            format!("{kind} {name:?} belongs to other profiles")
-        } else {
-            format!("missing {kind} {name:?}")
+    /// What shared items can use: only other shared items.
+    fn shared(config: &Config) -> Self {
+        Names::of(&config.shared.macros, &config.shared.menus, &config.shared.info)
+    }
+
+    fn list(&self, kind: ItemKind) -> &[String] {
+        match kind {
+            ItemKind::Macro => &self.macros,
+            ItemKind::Menu => &self.menus,
+            ItemKind::Info => &self.infos,
         }
     }
 }
@@ -729,8 +718,14 @@ enum Message {
     StatusLoaded(Result<Status, String>),
     ConfigLoaded(Box<Config>, Option<String>),
     SetEnabled(bool),
-    ActivateProfile(String),
+    ActivateProfile(ProfileRef),
     Done(Result<(), String>),
+    SelectPage(Page),
+    SetGameSearch(String),
+    SelectGameTab(GameTab),
+    SetSharedView(bool),
+    ToggleSharedSection,
+    RenameGame(String),
     EditProfile(String),
     RenameProfile(String),
     AddProfile(Template),
@@ -740,12 +735,13 @@ enum Message {
     SetTrigger(Trigger, TriggerAction),
     SetIgnored(String, bool),
     SetAutoSwitch(bool),
-    SetDefaultProfile(String),
+    SetDefaultProfile(DefaultChoice),
     AddRule(Option<WindowInfo>),
     RemoveRule(usize),
     SetRuleKind(usize, RuleKind),
     SetRuleValue(usize, String),
     SetRuleProfile(usize, String),
+    SetRuleEnabled(usize, bool),
     TestRumble(String),
     ToggleOverlay,
     ToggleNumpad,
@@ -766,7 +762,6 @@ enum Message {
     AddZone(Analog, ZonePreset),
     RemoveZone(Analog, usize),
     SetZoneRange(Analog, usize, f32, f32),
-    SelectTab(Tab),
     SelectProfileTab(ProfileTab),
     ToggleExpanded(Target),
     /// Expand (true) or collapse every row in the current profile section.
@@ -774,8 +769,6 @@ enum Message {
     StartFind,
     CancelFind,
     ToggleMacro(usize),
-    SetScope(ScopeTarget, Option<Vec<String>>),
-    SetFilter(ScopeFilter),
     NewInfo,
     ToggleInfo(usize),
     DeleteInfo(usize),
@@ -819,9 +812,53 @@ enum Message {
     PickerKey(&'static str),
     PickerClear,
     PickerClose { apply: bool },
+    /// "+ Add game": the library picker.
+    OpenAddGame,
+    CloseDialog,
+    SetLibrarySearch(String),
+    /// Library entry to show details of (index in `App::library`).
+    SelectLibrary(usize),
+    Installed(launchers::Installed),
+    AddEmptyGame(Template),
+    /// Preview adding the library entry at this index.
+    PreviewLibrary(usize),
+    /// Preview the library's newer version of this game.
+    UpdateFromLibrary(String),
+    ImportFile,
+    /// A pack file's text, or why it couldn't be read; `None` if the user cancelled.
+    PackFileRead(Option<Result<String, String>>),
+    SetReplaceGame(bool),
+    /// Keep the other game's rule in rule clash `.0`.
+    SetKeepMine(usize, bool),
+    ConfirmImport,
+    OpenExport,
+    SetPackField(PackField, String),
+    SetLibraryExport(bool),
+    SaveExport,
+    /// Where the pack was saved, or why not; `None` if the user cancelled.
+    Exported(Option<Result<String, String>>),
+    AskDeleteGame,
+    ConfirmDeleteGame,
+    OpenBrowse(ItemKind),
+    BrowseFrom(BrowseSource),
+    BrowseOpen(usize),
+    CopyItem(usize),
     Save,
     Saved(Result<(), String>),
     Revert,
+}
+
+/// An entry in the auto-switch "Otherwise use" list.
+#[derive(Debug, Clone, PartialEq)]
+struct DefaultChoice(Option<ProfileRef>);
+
+impl fmt::Display for DefaultChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.0 {
+            Some(at) => at.fmt(f),
+            None => f.write_str("(keep current profile)"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -842,6 +879,17 @@ enum Template {
 }
 
 impl Template {
+    /// A new profile from this template (Duplicate makes a passthrough one; copy instead).
+    fn make(self, name: &str) -> Profile {
+        match self {
+            Template::Gamepad | Template::Duplicate => Profile::passthrough(name),
+            Template::Desktop => Profile::desktop(name),
+            Template::Action => Profile::pc_action(name),
+            Template::Strategy => Profile::strategy(name),
+            Template::Platformer => Profile::platformer(name),
+        }
+    }
+
     /// Offered in the "New from template" list (Duplicate has its own button).
     const NEW: [Template; 5] = [
         Template::Gamepad,
@@ -894,11 +942,16 @@ impl App {
             saved: config.clone(),
             config,
             status: None,
+            page: Page::Overview,
             editing: 0,
+            game_tab: GameTab::Profiles,
+            shared_view: false,
+            shared_open: false,
+            game_search: String::new(),
             message: None,
             live: None,
             picker: None,
-            tab: Tab::Overview,
+            dialog: None,
             profile_tab: ProfileTab::Buttons,
             expanded: HashSet::new(),
             finding: false,
@@ -909,7 +962,9 @@ impl App {
             numpad_appearance: false,
             open_infos: HashSet::new(),
             open_info_appearance: HashSet::new(),
-            filter: ScopeFilter::All,
+            library: library::entries(),
+            installed: None,
+            renames: Vec::new(),
         };
         let load = Task::perform(
             async {
@@ -934,12 +989,139 @@ impl App {
         ])
     }
 
+    /// The game whose page is shown (General when it's not a game page).
+    fn game_key(&self) -> Option<&str> {
+        match &self.page {
+            Page::Game(key) => key.as_deref(),
+            _ => None,
+        }
+    }
+
+    fn game(&self) -> &Game {
+        self.config.game(self.game_key()).unwrap_or(&self.config.general)
+    }
+
+    fn game_mut(&mut self) -> &mut Game {
+        let index = self.game_key().and_then(|name| self.config.games.iter().position(|g| g.name == name));
+        match index {
+            Some(i) => &mut self.config.games[i],
+            None => &mut self.config.general,
+        }
+    }
+
+    /// The Macros, Menus and Info overlays tabs show shared items (on General's page).
+    fn on_shared(&self) -> bool {
+        self.shared_view && self.page == Page::Game(None)
+    }
+
+    fn macros(&self) -> &Vec<Macro> {
+        if self.on_shared() { &self.config.shared.macros } else { &self.game().macros }
+    }
+
+    fn macros_mut(&mut self) -> &mut Vec<Macro> {
+        if self.on_shared() { &mut self.config.shared.macros } else { &mut self.game_mut().macros }
+    }
+
+    fn menus(&self) -> &Vec<Menu> {
+        if self.on_shared() { &self.config.shared.menus } else { &self.game().menus }
+    }
+
+    fn menus_mut(&mut self) -> &mut Vec<Menu> {
+        if self.on_shared() { &mut self.config.shared.menus } else { &mut self.game_mut().menus }
+    }
+
+    fn infos(&self) -> &Vec<InfoOverlay> {
+        if self.on_shared() { &self.config.shared.info } else { &self.game().info }
+    }
+
+    fn infos_mut(&mut self) -> &mut Vec<InfoOverlay> {
+        if self.on_shared() { &mut self.config.shared.info } else { &mut self.game_mut().info }
+    }
+
+    /// What the shown profile and items can refer to.
+    fn names(&self) -> Names {
+        if self.on_shared() { Names::shared(&self.config) } else { Names::for_game(&self.config, self.game()) }
+    }
+
+    /// Points every reference to a renamed item at its new name: within its game, or for a
+    /// shared item, in shared items and every game that doesn't have its own of that name.
+    fn follow_item_rename(&mut self, kind: ItemKind, old: &str, new: &str) {
+        if !self.on_shared() {
+            self.game_mut().rename_refs(kind, old, new);
+            return;
+        }
+        self.config.shared.rename_refs(kind, old, new);
+        let own = |g: &Game| Names::of(&g.macros, &g.menus, &g.info).list(kind).iter().any(|n| n == old);
+        if !own(&self.config.general) {
+            self.config.general.rename_refs(kind, old, new);
+        }
+        for g in self.config.games.iter_mut().filter(|g| !own(g)) {
+            g.rename_refs(kind, old, new);
+        }
+    }
+
+    /// Whether `name` can be given to an item of `kind` in the shown list (other than the one
+    /// at `index`): unique there, and not clashing between any game's items and shared ones.
+    fn item_name_free(&self, kind: ItemKind, index: Option<usize>, name: &str) -> bool {
+        let list: Vec<&String> = match kind {
+            ItemKind::Macro => self.macros().iter().map(|m| &m.name).collect(),
+            ItemKind::Menu => self.menus().iter().map(|m| &m.name).collect(),
+            ItemKind::Info => self.infos().iter().map(|o| &o.name).collect(),
+        };
+        let taken_here = list.iter().enumerate().any(|(i, n)| Some(i) != index && *n == name);
+        // A game's item can't take a shared item's name, nor a shared item one a game uses.
+        let taken_elsewhere = if self.on_shared() {
+            self.config.all_games().any(|(_, g)| Names::of(&g.macros, &g.menus, &g.info).list(kind).iter().any(|n| n == name))
+        } else {
+            Names::shared(&self.config).list(kind).iter().any(|n| n == name)
+        };
+        !taken_here && !taken_elsewhere
+    }
+
+    /// A free name for a new item of `kind`, "Macro", "Macro 2", ….
+    fn new_item_name(&self, kind: ItemKind, base: &str) -> String {
+        unique_name(base, |n| !self.item_name_free(kind, None, n))
+    }
+
     fn profile(&self) -> Option<&Profile> {
-        self.config.profiles.get(self.editing)
+        self.game().profiles.get(self.editing)
     }
 
     fn profile_mut(&mut self) -> Option<&mut Profile> {
-        self.config.profiles.get_mut(self.editing)
+        let editing = self.editing;
+        self.game_mut().profiles.get_mut(editing)
+    }
+
+    /// The edited profile, as the daemon names it.
+    fn profile_ref(&self) -> Option<ProfileRef> {
+        self.profile().map(|p| ProfileRef::new(self.game_key(), &p.name))
+    }
+
+    /// Forgets per-page state when another page or list is shown.
+    fn reset_page_state(&mut self) {
+        self.open_macros.clear();
+        self.open_menus.clear();
+        self.open_infos.clear();
+        self.open_info_appearance.clear();
+        self.open_appearance.retain(Option::is_none);
+        self.expanded.clear();
+        self.found = None;
+        self.finding = false;
+    }
+
+    /// Shows a game's page, editing its active profile if it has it.
+    fn show_game(&mut self, key: Option<String>) {
+        self.page = Page::Game(key.clone());
+        let active = self.config.active_ref();
+        self.editing = if active.game == key {
+            self.game().profiles.iter().position(|p| p.name == active.profile).unwrap_or(0)
+        } else {
+            0
+        };
+        if key.is_some() {
+            self.shared_view = false;
+        }
+        self.reset_page_state();
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -962,22 +1144,22 @@ impl App {
             }
             Message::StatusLoaded(Ok(status)) => {
                 // Mirror daemon-owned fields so both copies stay comparable.
-                for c in [&mut self.config, &mut self.saved] {
-                    c.enabled = status.enabled;
-                    c.active_profile = status.active_profile.clone();
-                }
+                let active = ProfileRef { game: status.active_game.clone(), profile: status.active_profile.clone() };
+                self.saved.enabled = status.enabled;
+                self.saved.active = active.clone();
+                self.config.enabled = status.enabled;
+                self.config.active = follow_renames(&self.renames, active);
                 self.status = Some(status);
             }
             Message::StatusLoaded(Err(_)) => self.status = None,
             Message::ConfigLoaded(config, err) => {
                 let config = *config;
-                self.editing = config
-                    .profiles
-                    .iter()
-                    .position(|p| p.name == config.active_profile)
-                    .unwrap_or(0);
                 self.saved = config.clone();
                 self.config = config;
+                if let Page::Game(key) = self.page.clone() {
+                    let exists = key.as_deref().is_none_or(|k| self.config.games.iter().any(|g| g.name == k));
+                    self.show_game(if exists { key } else { None });
+                }
                 if let Some(e) = err {
                     self.message = Some((format!("Could not load config: {e}"), true));
                 }
@@ -1001,109 +1183,135 @@ impl App {
                     p.gyro = gyro;
                 }
             }
-            Message::ActivateProfile(name) => {
-                if self.saved.profiles.iter().any(|p| p.name == name) {
-                    return Task::batch([call_ok(Request::SetProfile(name)), Task::done(Message::Poll)]);
+            Message::ActivateProfile(at) => {
+                if self.saved.profile(&at).is_some() {
+                    return Task::batch([call_ok(Request::Activate(at)), Task::done(Message::Poll)]);
                 }
                 self.message = Some(("Save the new profile before activating it.".into(), true));
+            }
+            Message::SelectPage(page) => {
+                // Also how a dialog's "Open it" leaves it.
+                self.dialog = None;
+                match page {
+                    Page::Game(key) => self.show_game(key),
+                    other => {
+                        self.page = other;
+                        self.reset_page_state();
+                    }
+                }
+            }
+            Message::SetGameSearch(search) => self.game_search = search,
+            Message::SelectGameTab(tab) => {
+                self.game_tab = tab;
+                self.found = None;
+            }
+            Message::SetSharedView(shared) => {
+                self.shared_view = shared;
+                self.reset_page_state();
+            }
+            Message::ToggleSharedSection => self.shared_open = !self.shared_open,
+            Message::RenameGame(name) => {
+                let Some(old) = self.game_key().map(str::to_string) else { return Task::none() };
+                let taken = self.config.games.iter().any(|g| g.name == name && g.name != old);
+                if !taken {
+                    self.game_mut().name = name.clone();
+                    if let Some(d) = self.config.auto_switch.default_profile.as_mut().filter(|d| d.game.as_ref() == Some(&old)) {
+                        d.game = Some(name.clone());
+                    }
+                    let rename = Rename::Game { old, new: name.clone() };
+                    self.config.active = follow_renames(std::slice::from_ref(&rename), self.config.active.clone());
+                    self.renames.push(rename);
+                    self.page = Page::Game(Some(name));
+                }
             }
             Message::Done(Ok(())) => return Task::done(Message::Poll),
             Message::Done(Err(e)) => self.message = Some((e, true)),
             Message::EditProfile(name) => {
-                if let Some(i) = self.config.profiles.iter().position(|p| p.name == name) {
+                if let Some(i) = self.game().profiles.iter().position(|p| p.name == name) {
                     self.editing = i;
                 }
             }
             Message::RenameProfile(name) => {
-                let taken = self
-                    .config
-                    .profiles
-                    .iter()
-                    .enumerate()
-                    .any(|(i, p)| i != self.editing && p.name == name);
-                if !taken && let Some(p) = self.profile_mut() {
-                    let old = std::mem::replace(&mut p.name, name.clone());
-                    self.config.profile_renamed(&old, &name);
-                    if self.filter == ScopeFilter::Profile(old.clone()) {
-                        self.filter = ScopeFilter::Profile(name.clone());
-                    }
-                    // Keep per-game rules pointing at the renamed profile.
-                    let auto = &mut self.config.auto_switch;
-                    for rule in auto.rules.iter_mut().filter(|r| r.profile == old) {
-                        rule.profile = name.clone();
-                    }
-                    if auto.default_profile.as_ref() == Some(&old) {
-                        auto.default_profile = Some(name);
-                    }
+                let editing = self.editing;
+                let taken = self.game().profiles.iter().enumerate().any(|(i, p)| i != editing && p.name == name);
+                let Some(old) = self.profile().map(|p| p.name.clone()).filter(|_| !taken) else { return Task::none() };
+                let key = self.game_key().map(str::to_string);
+                let game = self.game_mut();
+                game.profiles[editing].name = name.clone();
+                // Keep the game's rules, and the auto-switch default, pointing at it.
+                for rule in game.rules.iter_mut().filter(|r| r.profile == old) {
+                    rule.profile = name.clone();
                 }
+                let rename = Rename::Profile { game: key.clone(), old: old.clone(), new: name.clone() };
+                if let Some(d) = self.config.auto_switch.default_profile.as_mut().filter(|d| d.game == key && d.profile == old) {
+                    d.profile = name;
+                }
+                self.config.active = follow_renames(std::slice::from_ref(&rename), self.config.active.clone());
+                self.renames.push(rename);
             }
             Message::SetAutoSwitch(on) => self.config.auto_switch.enabled = on,
-            Message::SetDefaultProfile(name) => {
-                self.config.auto_switch.default_profile = (name != KEEP_CURRENT).then_some(name);
-            }
+            Message::SetDefaultProfile(choice) => self.config.auto_switch.default_profile = choice.0,
             Message::AddRule(window) => {
                 let profile = self.profile().map(|p| p.name.clone()).unwrap_or_default();
                 let rule = match window {
                     Some(w) => rule_for_window(&w, profile),
-                    None => Rule { kind: RuleKind::Executable, value: String::new(), profile },
+                    None => Rule::new(RuleKind::Executable, "", profile),
                 };
-                self.config.auto_switch.rules.push(rule);
+                self.game_mut().rules.push(rule);
             }
             Message::RemoveRule(i) => {
-                if i < self.config.auto_switch.rules.len() {
-                    self.config.auto_switch.rules.remove(i);
+                if i < self.game().rules.len() {
+                    self.game_mut().rules.remove(i);
                 }
             }
             Message::SetRuleKind(i, kind) => {
-                if let Some(r) = self.config.auto_switch.rules.get_mut(i) {
+                if let Some(r) = self.game_mut().rules.get_mut(i) {
                     r.kind = kind;
                 }
             }
             Message::SetRuleValue(i, value) => {
-                if let Some(r) = self.config.auto_switch.rules.get_mut(i) {
+                if let Some(r) = self.game_mut().rules.get_mut(i) {
                     r.value = value;
                 }
             }
             Message::SetRuleProfile(i, profile) => {
-                if let Some(r) = self.config.auto_switch.rules.get_mut(i) {
+                if let Some(r) = self.game_mut().rules.get_mut(i) {
                     r.profile = profile;
                 }
             }
+            Message::SetRuleEnabled(i, on) => {
+                if let Some(r) = self.game_mut().rules.get_mut(i) {
+                    r.enabled = on;
+                }
+            }
             Message::AddProfile(template) => {
-                let name = self.unique_name(template.base_name());
+                let name = unique_name(template.base_name(), |n| self.game().profile(n).is_some());
                 let profile = match template {
-                    Template::Gamepad => Profile::passthrough(&name),
-                    Template::Desktop => Profile::desktop(&name),
-                    Template::Action => Profile::pc_action(&name),
-                    Template::Strategy => Profile::strategy(&name),
-                    Template::Platformer => Profile::platformer(&name),
                     Template::Duplicate => {
                         let mut p = self.profile().cloned().unwrap_or_else(|| Profile::passthrough(""));
-                        let from = std::mem::replace(&mut p.name, name.clone());
-                        self.config.profile_copied(&from, &name);
+                        p.name = name;
                         p
                     }
+                    other => other.make(&name),
                 };
-                self.config.profiles.push(profile);
-                self.editing = self.config.profiles.len() - 1;
+                self.game_mut().profiles.push(profile);
+                self.editing = self.game().profiles.len() - 1;
             }
             Message::DeleteProfile => {
-                if self.config.profiles.len() > 1 {
-                    let removed = self.config.profiles.remove(self.editing);
-                    self.config.profile_removed(&removed.name);
-                    if self.filter == ScopeFilter::Profile(removed.name) {
-                        self.filter = ScopeFilter::All;
-                    }
-                    self.editing = self.editing.min(self.config.profiles.len() - 1);
+                let editing = self.editing;
+                let game = self.game_mut();
+                if game.profiles.len() > 1 && editing < game.profiles.len() {
+                    game.profiles.remove(editing);
+                    self.editing = editing.min(self.game().profiles.len() - 1);
                 }
             }
             Message::SetAction(Target::MenuItem(m, i), action) => {
-                if let Some(item) = self.config.menus.get_mut(m).and_then(|m| m.items.get_mut(i)) {
+                if let Some(item) = self.menus_mut().get_mut(m).and_then(|m| m.items.get_mut(i)) {
                     item.action = action;
                 }
             }
             Message::SetAction(Target::MacroStep(m, s), action) => {
-                if let Some(slot) = self.config.macros.get_mut(m).and_then(|m| m.steps.get_mut(s)).and_then(|s| s.action_mut()) {
+                if let Some(slot) = self.macros_mut().get_mut(m).and_then(|m| m.steps.get_mut(s)).and_then(|s| s.action_mut()) {
                     *slot = action;
                 }
             }
@@ -1176,7 +1384,6 @@ impl App {
                     z.max = max;
                 }
             }
-            Message::SelectTab(tab) => self.tab = tab,
             Message::SelectProfileTab(tab) => {
                 self.profile_tab = tab;
                 self.found = None;
@@ -1219,40 +1426,18 @@ impl App {
                 self.found = None;
             }
             Message::CancelFind => self.finding = false,
-            Message::SetScope(target, scope) => match target {
-                ScopeTarget::Macro(i) => {
-                    if let Some(m) = self.config.macros.get_mut(i) {
-                        m.profiles = scope;
-                    }
-                }
-                ScopeTarget::Menu(i) => {
-                    if let Some(m) = self.config.menus.get_mut(i) {
-                        m.profiles = scope;
-                    }
-                }
-                ScopeTarget::Info(i) => {
-                    if let Some(o) = self.config.info.get_mut(i) {
-                        o.profiles = scope;
-                    }
-                }
-            },
-            Message::SetFilter(filter) => self.filter = filter,
             Message::SetInfoGlyphs(family) => self.config.info_glyphs = family,
             Message::NewInfo => {
-                let name = (1..)
-                    .map(|i| if i == 1 { "Info".to_string() } else { format!("Info {i}") })
-                    .find(|n| !self.config.info.iter().any(|o| &o.name == n))
-                    .unwrap();
+                let name = self.new_item_name(ItemKind::Info, "Info");
                 let cells = |a: &str, b: &str| vec![a.to_string(), b.to_string()];
                 let overlay = InfoOverlay {
                     name,
-                    profiles: self.filter.new_scope(),
                     always: true,
                     style: OverlayStyle::info(),
                     rows: vec![cells("{south}", "Jump"), cells("{west}", "Reload")],
                 };
                 // New ones go first, right under the button that made them, already open.
-                self.config.info.insert(0, overlay);
+                self.infos_mut().insert(0, overlay);
                 self.open_infos = self.open_infos.iter().map(|j| j + 1).collect();
                 self.open_infos.insert(0);
                 self.open_info_appearance = self.open_info_appearance.iter().map(|j| j + 1).collect();
@@ -1268,53 +1453,38 @@ impl App {
                 }
             }
             Message::DeleteInfo(i) => {
-                if i < self.config.info.len() {
-                    self.config.info.remove(i);
+                if i < self.infos().len() {
+                    self.infos_mut().remove(i);
                     self.open_infos = shift_removed(&self.open_infos, i);
                     self.open_info_appearance = shift_removed(&self.open_info_appearance, i);
                 }
             }
             Message::RenameInfo(i, name) => {
-                let taken = self.config.info.iter().enumerate().any(|(j, o)| j != i && o.name == name);
-                if let Some(o) = self.config.info.get_mut(i)
-                    && !taken
+                if self.item_name_free(ItemKind::Info, Some(i), &name)
+                    && let Some(o) = self.infos_mut().get_mut(i)
                 {
                     let old = std::mem::replace(&mut o.name, name.clone());
                     // Keep every "Show info overlay" (in profiles and menus) pointing at it.
-                    let mut follow = |a: &mut ButtonAction| {
-                        a.walk_mut(&mut |a| {
-                            if let ButtonAction::ShowInfo(n) = a
-                                && *n == old
-                            {
-                                *n = name.clone();
-                            }
-                        })
-                    };
-                    for p in &mut self.config.profiles {
-                        p.actions_mut().into_iter().for_each(&mut follow);
-                    }
-                    for menu in &mut self.config.menus {
-                        menu.items.iter_mut().for_each(|item| follow(&mut item.action));
-                    }
+                    self.follow_item_rename(ItemKind::Info, &old, &name);
                 }
             }
             Message::SetInfoAlways(i, always) => {
-                if let Some(o) = self.config.info.get_mut(i) {
+                if let Some(o) = self.infos_mut().get_mut(i) {
                     o.always = always;
                 }
             }
             Message::SetInfoStyle(i, style) => {
-                if let Some(o) = self.config.info.get_mut(i) {
+                if let Some(o) = self.infos_mut().get_mut(i) {
                     o.style = style;
                 }
             }
             Message::AddInfoRow(i) => {
-                if let Some(o) = self.config.info.get_mut(i) {
+                if let Some(o) = self.infos_mut().get_mut(i) {
                     o.rows.push(vec![String::new()]);
                 }
             }
             Message::MoveInfoRow(i, r, up) => {
-                if let Some(o) = self.config.info.get_mut(i) {
+                if let Some(o) = self.infos_mut().get_mut(i) {
                     let j = if up { r.checked_sub(1) } else { Some(r + 1).filter(|j| *j < o.rows.len()) };
                     if let Some(j) = j {
                         o.rows.swap(r, j);
@@ -1322,24 +1492,24 @@ impl App {
                 }
             }
             Message::RemoveInfoRow(i, r) => {
-                if let Some(o) = self.config.info.get_mut(i)
+                if let Some(o) = self.infos_mut().get_mut(i)
                     && r < o.rows.len()
                 {
                     o.rows.remove(r);
                 }
             }
             Message::AddInfoCell(i, r) => {
-                if let Some(row) = self.config.info.get_mut(i).and_then(|o| o.rows.get_mut(r)) {
+                if let Some(row) = self.infos_mut().get_mut(i).and_then(|o| o.rows.get_mut(r)) {
                     row.push(String::new());
                 }
             }
             Message::SetInfoCell(i, r, c, value) => {
-                if let Some(cell) = self.config.info.get_mut(i).and_then(|o| o.rows.get_mut(r)).and_then(|row| row.get_mut(c)) {
+                if let Some(cell) = self.infos_mut().get_mut(i).and_then(|o| o.rows.get_mut(r)).and_then(|row| row.get_mut(c)) {
                     *cell = value;
                 }
             }
             Message::InsertInfoToken(i, r, c, token) => {
-                if let Some(cell) = self.config.info.get_mut(i).and_then(|o| o.rows.get_mut(r)).and_then(|row| row.get_mut(c)) {
+                if let Some(cell) = self.infos_mut().get_mut(i).and_then(|o| o.rows.get_mut(r)).and_then(|row| row.get_mut(c)) {
                     if !cell.is_empty() && !cell.ends_with(' ') {
                         cell.push(' ');
                     }
@@ -1347,7 +1517,7 @@ impl App {
                 }
             }
             Message::RemoveInfoCell(i, r, c) => {
-                if let Some(row) = self.config.info.get_mut(i).and_then(|o| o.rows.get_mut(r))
+                if let Some(row) = self.infos_mut().get_mut(i).and_then(|o| o.rows.get_mut(r))
                     && c < row.len()
                 {
                     row.remove(c);
@@ -1359,54 +1529,40 @@ impl App {
                 }
             }
             Message::NewMacro => {
-                let name = (1..)
-                    .map(|i| if i == 1 { "Macro".to_string() } else { format!("Macro {i}") })
-                    .find(|n| !self.config.macros.iter().any(|m| &m.name == n))
-                    .unwrap();
+                let name = self.new_item_name(ItemKind::Macro, "Macro");
                 let tap = MacroStep::Tap { action: ButtonAction::Keys(Vec::new()), hold_ms: DEFAULT_TAP_MS };
                 // New macros go first, right under the button that made them, already open.
-                self.config.macros.insert(0, Macro { name, profiles: self.filter.new_scope(), steps: vec![tap] });
+                self.macros_mut().insert(0, Macro { name, steps: vec![tap] });
                 self.open_macros = self.open_macros.iter().map(|j| j + 1).collect();
                 self.open_macros.insert(0);
             }
             Message::DeleteMacro(i) => {
-                if i < self.config.macros.len() {
-                    self.config.macros.remove(i);
+                if i < self.macros().len() {
+                    self.macros_mut().remove(i);
                     self.open_macros = shift_removed(&self.open_macros, i);
                 }
             }
             Message::RenameMacro(mi, name) => {
-                let taken = self.config.macros.iter().enumerate().any(|(i, m)| i != mi && m.name == name);
-                if let Some(m) = self.config.macros.get_mut(mi)
-                    && !taken
+                if self.item_name_free(ItemKind::Macro, Some(mi), &name)
+                    && let Some(m) = self.macros_mut().get_mut(mi)
                 {
                     let old = std::mem::replace(&mut m.name, name.clone());
                     // Keep every mapping of this macro pointing at it.
-                    for p in &mut self.config.profiles {
-                        for action in p.actions_mut() {
-                            action.walk_mut(&mut |a| {
-                                if let ButtonAction::Macro { name: n, .. } = a
-                                    && *n == old
-                                {
-                                    *n = name.clone();
-                                }
-                            });
-                        }
-                    }
+                    self.follow_item_rename(ItemKind::Macro, &old, &name);
                 }
             }
             Message::AddMacroStep(mi, kind) => {
-                if let Some(m) = self.config.macros.get_mut(mi) {
+                if let Some(m) = self.macros_mut().get_mut(mi) {
                     m.steps.push(convert_step(&MacroStep::Wait(0), kind));
                 }
             }
             Message::SetMacroStep(mi, i, step) => {
-                if let Some(s) = self.config.macros.get_mut(mi).and_then(|m| m.steps.get_mut(i)) {
+                if let Some(s) = self.macros_mut().get_mut(mi).and_then(|m| m.steps.get_mut(i)) {
                     *s = step;
                 }
             }
             Message::MoveMacroStep(mi, i, up) => {
-                if let Some(m) = self.config.macros.get_mut(mi) {
+                if let Some(m) = self.macros_mut().get_mut(mi) {
                     let j = if up { i.checked_sub(1) } else { Some(i + 1).filter(|j| *j < m.steps.len()) };
                     if let Some(j) = j {
                         m.steps.swap(i, j);
@@ -1424,25 +1580,22 @@ impl App {
                 }
             }
             Message::NewMenu(kind) => {
-                let name = (1..)
-                    .map(|i| if i == 1 { "Menu".to_string() } else { format!("Menu {i}") })
-                    .find(|n| !self.config.menus.iter().any(|m| &m.name == n))
-                    .unwrap();
+                let name = self.new_item_name(ItemKind::Menu, "Menu");
                 let kind = MenuKind::default_for(kind);
-                let mut menu = Menu { name, profiles: self.filter.new_scope(), kind, items: Vec::new(), cancel: None, style: OverlayStyle::default() };
+                let mut menu = Menu { name, kind, items: Vec::new(), cancel: None, style: OverlayStyle::default() };
                 fit_items(&mut menu);
                 if menu.items.is_empty() {
                     menu.items.push(MenuItem { label: "Item 1".into(), action: ButtonAction::Keys(Vec::new()), button: None });
                 }
                 // New menus go first, right under the button that made them, already open.
-                self.config.menus.insert(0, menu);
+                self.menus_mut().insert(0, menu);
                 self.open_menus = self.open_menus.iter().map(|j| j + 1).collect();
                 self.open_menus.insert(0);
                 self.open_appearance = self.open_appearance.iter().map(|a| a.map(|j| j + 1)).collect();
             }
             Message::DeleteMenu(i) => {
-                if i < self.config.menus.len() {
-                    self.config.menus.remove(i);
+                if i < self.menus().len() {
+                    self.menus_mut().remove(i);
                     // Later menus move up one place, and so do their open cards.
                     self.open_menus = shift_removed(&self.open_menus, i);
                     let menus_open: HashSet<usize> = self.open_appearance.iter().filter_map(|a| *a).collect();
@@ -1454,56 +1607,41 @@ impl App {
                 }
             }
             Message::RenameMenu(i, name) => {
-                let taken = self.config.menus.iter().enumerate().any(|(j, m)| j != i && m.name == name);
-                if let Some(m) = self.config.menus.get_mut(i)
-                    && !taken
+                if self.item_name_free(ItemKind::Menu, Some(i), &name)
+                    && let Some(m) = self.menus_mut().get_mut(i)
                 {
                     let old = std::mem::replace(&mut m.name, name.clone());
                     // Keep every "Open menu" (in profiles and in other menus) pointing at it.
-                    let mut follow = |a: &mut ButtonAction| {
-                        a.walk_mut(&mut |a| {
-                            if let ButtonAction::OpenMenu(n) = a
-                                && *n == old
-                            {
-                                *n = name.clone();
-                            }
-                        })
-                    };
-                    for p in &mut self.config.profiles {
-                        p.actions_mut().into_iter().for_each(&mut follow);
-                    }
-                    for menu in &mut self.config.menus {
-                        menu.items.iter_mut().for_each(|item| follow(&mut item.action));
-                    }
+                    self.follow_item_rename(ItemKind::Menu, &old, &name);
                 }
             }
             Message::SetMenuKind(i, kind) => {
-                if let Some(m) = self.config.menus.get_mut(i) {
+                if let Some(m) = self.menus_mut().get_mut(i) {
                     m.kind = kind;
                     fit_items(m);
                 }
             }
             Message::SetMenuStyle(i, style) => {
-                if let Some(m) = self.config.menus.get_mut(i) {
+                if let Some(m) = self.menus_mut().get_mut(i) {
                     m.style = style;
                 }
             }
             Message::SetKeyboardStyle(style) => self.config.keyboard_style = style,
             Message::AddMenuItem(i) => {
-                if let Some(m) = self.config.menus.get_mut(i) {
+                if let Some(m) = self.menus_mut().get_mut(i) {
                     let label = format!("Item {}", m.items.len() + 1);
                     m.items.push(MenuItem { label, action: ButtonAction::Keys(Vec::new()), button: None });
                 }
             }
             Message::RemoveMenuItem(i, item) => {
-                if let Some(m) = self.config.menus.get_mut(i)
+                if let Some(m) = self.menus_mut().get_mut(i)
                     && item < m.items.len()
                 {
                     m.items.remove(item);
                 }
             }
             Message::MoveMenuItem(i, item, up) => {
-                if let Some(m) = self.config.menus.get_mut(i) {
+                if let Some(m) = self.menus_mut().get_mut(i) {
                     let j = if up { item.checked_sub(1) } else { Some(item + 1).filter(|j| *j < m.items.len()) };
                     if let Some(j) = j {
                         m.items.swap(item, j);
@@ -1511,22 +1649,22 @@ impl App {
                 }
             }
             Message::SetMenuItemLabel(i, item, label) => {
-                if let Some(it) = self.config.menus.get_mut(i).and_then(|m| m.items.get_mut(item)) {
+                if let Some(it) = self.menus_mut().get_mut(i).and_then(|m| m.items.get_mut(item)) {
                     it.label = label;
                 }
             }
             Message::SetMenuItemButton(i, item, choice) => {
-                if let Some(it) = self.config.menus.get_mut(i).and_then(|m| m.items.get_mut(item)) {
+                if let Some(it) = self.menus_mut().get_mut(i).and_then(|m| m.items.get_mut(item)) {
                     it.button = choice.0;
                 }
             }
             Message::InsertMotion(mi, motion) => {
-                if let Some(m) = self.config.macros.get_mut(mi) {
+                if let Some(m) = self.macros_mut().get_mut(mi) {
                     m.steps.extend(motion.steps());
                 }
             }
             Message::RemoveMacroStep(mi, i) => {
-                if let Some(m) = self.config.macros.get_mut(mi)
+                if let Some(m) = self.macros_mut().get_mut(mi)
                     && i < m.steps.len()
                 {
                     m.steps.remove(i);
@@ -1637,15 +1775,22 @@ impl App {
             }
             Message::Saved(Ok(())) => {
                 self.saved = self.config.clone();
+                self.renames.clear();
                 self.message = Some(("Saved and applied.".into(), false));
                 return Task::done(Message::Poll);
             }
             Message::Saved(Err(e)) => self.message = Some((e, true)),
             Message::Revert => {
                 self.config = self.saved.clone();
-                self.editing = self.editing.min(self.config.profiles.len().saturating_sub(1));
+                self.renames.clear();
+                let exists = self.game_key().is_none_or(|k| self.config.games.iter().any(|g| g.name == k));
+                if !exists {
+                    self.show_game(None);
+                }
+                self.editing = self.editing.min(self.game().profiles.len().saturating_sub(1));
                 self.message = None;
             }
+            other => return self.update_packs(other),
         }
         Task::none()
     }
@@ -1671,14 +1816,14 @@ impl App {
     /// Writes keys chosen in the on-screen keyboard into the field it was opened for.
     fn apply_keys(&mut self, field: KeyField, keys: Vec<String>) {
         if let KeyField::Action { target: Target::MenuItem(m, i), path } = &field {
-            let item = self.config.menus.get_mut(*m).and_then(|m| m.items.get_mut(*i));
+            let item = self.menus_mut().get_mut(*m).and_then(|m| m.items.get_mut(*i));
             if let Some(action) = item.and_then(|item| action_at(&mut item.action, path)) {
                 *action = ButtonAction::Keys(keys);
             }
             return;
         }
         if let KeyField::Action { target: Target::MacroStep(m, s), path } = &field {
-            let step = self.config.macros.get_mut(*m).and_then(|m| m.steps.get_mut(*s));
+            let step = self.macros_mut().get_mut(*m).and_then(|m| m.steps.get_mut(*s));
             if let Some(action) = step.and_then(|s| s.action_mut()).and_then(|a| action_at(a, path)) {
                 *action = ButtonAction::Keys(keys);
             }
@@ -1734,7 +1879,7 @@ impl App {
     fn jump_to(&mut self, b: Button) -> Task<Message> {
         self.finding = false;
         self.found = Some(b);
-        self.tab = Tab::Profile;
+        self.game_tab = GameTab::Profiles;
         let (tab, position) = match Button::ALL.iter().position(|x| *x == b) {
             Some(i) => (ProfileTab::Buttons, i as f32 / Button::ALL.len() as f32),
             None => {
@@ -1746,153 +1891,226 @@ impl App {
         iced::widget::operation::snap_to("main", scrollable::RelativeOffset { x: Some(0.0), y: Some(position) })
     }
 
-    fn unique_name(&self, base: &str) -> String {
-        (1..)
-            .map(|i| if i == 1 { base.to_string() } else { format!("{base} {i}") })
-            .find(|n| !self.config.profiles.iter().any(|p| &p.name == n))
-            .unwrap()
-    }
-
     fn validate(&self) -> Option<String> {
-        let macros = &self.config.macros;
-        for (i, m) in macros.iter().enumerate() {
-            if m.name.trim().is_empty() {
-                return Some("Macro names cannot be empty.".into());
+        let config = &self.config;
+        let shared = Names::shared(config);
+        let reachable = reachable_menus(config, None);
+        if let Some(problem) = items_problem(&config.shared.macros, &config.shared.menus, &config.shared.info, &shared, &reachable, None) {
+            return Some(format!("Shared: {problem}"));
+        }
+        for (i, g) in config.games.iter().enumerate() {
+            if g.name.trim().is_empty() {
+                return Some("Game names cannot be empty.".into());
             }
-            if macros[..i].iter().any(|o| o.name == m.name) {
-                return Some(format!("Two macros are named {:?}.", m.name));
-            }
-            let keys = m.steps.iter().filter_map(MacroStep::action).flat_map(|a| a.key_names());
-            if let Some(bad) = keys.into_iter().find(|k| KeyCode::from_str(k).is_err()) {
-                return Some(format!("Macro {:?}: unknown key {:?}", m.name, short_key(bad)));
+            if config.games[..i].iter().any(|o| o.name == g.name) {
+                return Some(format!("Two games are named {:?}.", g.name));
             }
         }
-        let names = Names::of(&self.config);
-        for (i, m) in self.config.menus.iter().enumerate() {
-            if m.name.trim().is_empty() {
-                return Some("Menu names cannot be empty.".into());
-            }
-            if self.config.menus[..i].iter().any(|o| o.name == m.name) {
-                return Some(format!("Two menus are named {:?}.", m.name));
-            }
-            if let Some(problem) = m.items.iter().find_map(|item| item_problem(m, &item.action, &self.config.menus, &names)) {
-                return Some(format!("Menu {:?}: {problem}", m.name));
+        for (key, g) in config.all_games() {
+            let label = key.unwrap_or("General");
+            if let Some(problem) = game_problem(config, g) {
+                return Some(format!("{label}: {problem}"));
             }
         }
-        for (i, o) in self.config.info.iter().enumerate() {
-            if o.name.trim().is_empty() {
-                return Some("Info overlay names cannot be empty.".into());
-            }
-            if self.config.info[..i].iter().any(|other| other.name == o.name) {
-                return Some(format!("Two info overlays are named {:?}.", o.name));
-            }
-        }
-        // Each profile may only use what is shared or its own.
-        for p in &self.config.profiles {
-            let available = Names::for_profile(&self.config, &p.name);
-            if let Some(problem) = p.actions().into_iter().find_map(|a| {
-                action_problem(a, &available).filter(|problem| !problem.starts_with("unknown key"))
-            }) {
-                return Some(format!("Profile {:?}: {problem}.", p.name));
-            }
-        }
-        let auto = &self.config.auto_switch;
-        let exists = |name: &str| self.config.profiles.iter().any(|p| p.name == name);
-        if let Some(r) = auto.rules.iter().find(|r| r.value.trim().is_empty()) {
-            return Some(format!("A per-game rule for profile {:?} has no {} to match.", r.profile, r.kind));
-        }
-        if let Some(r) = auto.rules.iter().find(|r| !exists(&r.profile)) {
-            return Some(format!("A per-game rule points to missing profile {:?}.", r.profile));
-        }
-        if let Some(d) = auto.default_profile.as_deref().filter(|d| !exists(d)) {
-            return Some(format!("The per-game default profile {d:?} no longer exists."));
-        }
-        for p in &self.config.profiles {
-            if p.name.trim().is_empty() {
-                return Some("Profile names cannot be empty.".into());
-            }
-            if let Some(c) = p.combos.iter().find(|c| c.buttons.len() < 2) {
-                return Some(format!(
-                    "Profile {:?}: a combo needs at least two buttons (has {}).",
-                    p.name,
-                    c.buttons.len()
-                ));
-            }
-            let analogs = [
-                Analog::Stick(Stick::Left),
-                Analog::Stick(Stick::Right),
-                Analog::Trigger(Trigger::Left),
-                Analog::Trigger(Trigger::Right),
-            ];
-            for a in analogs {
-                if p.zones(a).iter().any(|z| z.min >= z.max) {
-                    return Some(format!("Profile {:?}: a zone's range must start below where it ends.", p.name));
-                }
-            }
-            let mut keys: Vec<&String> = p.actions().into_iter().flat_map(|a| a.key_names()).collect();
-            for s in [Stick::Left, Stick::Right] {
-                if let StickAction::Keys { up, down, left, right } = &p.stick(s).action {
-                    keys.extend([up, down, left, right]);
-                }
-            }
-            if let Some(bad) = keys.iter().find(|k| KeyCode::from_str(k).is_err()) {
-                return Some(format!("Profile {:?}: unknown key {:?}", p.name, short_key(bad)));
-            }
+        if let Some(d) = config.auto_switch.default_profile.as_ref().filter(|d| config.profile(d).is_none()) {
+            return Some(format!("The per-game default profile {d} no longer exists."));
         }
         None
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let names = Names::of(&self.config);
-        // The profile editor offers only what the profile can use.
-        let profile_names = self.profile().map(|p| Names::for_profile(&self.config, &p.name)).unwrap_or_default();
-        let profile_issue =
-            self.profile().is_some_and(|p| ProfileTab::ALL.iter().any(|t| section_has_problem(p, *t, &profile_names)));
-        let tab = |label: &'static str, tab: Tab, issue: bool| -> Element<'_, Message> {
-            let label = if issue { format!("{label}  ⚠") } else { label.to_string() };
-            let selected = self.tab == tab;
-            column![
-                button(text(label).size(17)).style(style::page_tab(selected)).padding([6, 14]).on_press(Message::SelectTab(tab)),
-                container(space()).width(Length::Fill).height(3).style(style::page_tab_underline(selected)),
-            ]
-            .width(Length::Shrink)
-            .into()
+        let page: Element<'_, Message> = match &self.page {
+            Page::Overview => column![self.view_live(self.config.active()), rule::horizontal(1), self.view_devices()]
+                .spacing(16)
+                .into(),
+            Page::Settings => self.view_settings(),
+            Page::Game(_) => self.view_game(),
         };
-        let content = column![
-            self.view_header(),
-            column![
-                row![
-                    tab("Overview", Tab::Overview, false),
-                    tab("Profile", Tab::Profile, profile_issue),
-                    tab("Macros", Tab::Macros, macros_have_problem(&self.config.macros)),
-                    tab("Overlays", Tab::Overlays, menus_have_problem(&self.config.menus, &names) || info_has_problem(&self.config.info)),
-                ]
-                .spacing(4),
-                rule::horizontal(1),
-            ],
-        ]
-        .spacing(16)
-        .padding(20);
-
-        let content = match self.tab {
-            Tab::Overview => content.extend([
-                self.view_live(self.config.active()),
-                rule::horizontal(1).into(),
-                self.view_devices(),
-                rule::horizontal(1).into(),
-                self.view_auto_switch(),
-            ]),
-            Tab::Profile => content.push(self.view_profile_tab(&profile_names)),
-            Tab::Macros => content.push(self.view_macros()),
-            Tab::Overlays => content.push(self.view_overlays(&names)),
-        };
-
-        let base: Element<'_, Message> =
-            column![scrollable(content).id("main").height(Length::Fill), self.view_footer()].into();
-        match &self.picker {
-            Some(picker) => stack![base, view_picker(picker)].into(),
+        let content = column![self.view_header(), rule::horizontal(1), page].spacing(16).padding(20);
+        let main = column![scrollable(content).id("main").height(Length::Fill), self.view_footer()].width(Length::Fill);
+        let base: Element<'_, Message> = row![self.view_sidebar(), rule::vertical(1), main].into();
+        if let Some(picker) = &self.picker {
+            return stack![base, view_picker(picker)].into();
+        }
+        match &self.dialog {
+            Some(dialog) => stack![base, self.view_dialog(dialog)].into(),
             None => base,
         }
+    }
+
+    /// Overview and Settings, then General and the games, with a search over the games.
+    fn view_sidebar(&self) -> Element<'_, Message> {
+        let entry = |label: String, page: Page, note: Option<&'static str>| -> Element<'_, Message> {
+            let selected = self.page == page;
+            let mut line = row![text(label).size(15).width(Length::Fill)].spacing(6).align_y(Alignment::Center);
+            if let Some(note) = note {
+                line = line.push(text(note).size(12).color(style_accent()));
+            }
+            button(line)
+                .width(Length::Fill)
+                .padding([6, 10])
+                .style(style::nav(selected))
+                .on_press(Message::SelectPage(page))
+                .into()
+        };
+        let active_game = self.config.active_ref().game;
+        let playing = |key: &Option<String>| (&active_game == key && self.status.is_some()).then_some("●");
+        let updates: Vec<String> = library::updates(&self.config, &self.library).into_iter().map(|(name, _)| name).collect();
+
+        let mut col = column![
+            entry("Overview".into(), Page::Overview, None),
+            entry("Settings".into(), Page::Settings, None),
+            rule::horizontal(1),
+            entry("General".into(), Page::Game(None), playing(&None)),
+            text("Games").size(13).color(MUTED_COLOR),
+            field("Search games", &self.game_search).on_input(Message::SetGameSearch).size(14),
+        ]
+        .spacing(6);
+        let search = self.game_search.trim().to_lowercase();
+        let mut games: Vec<&Game> = self.config.games.iter().filter(|g| g.name.to_lowercase().contains(&search)).collect();
+        games.sort_by_key(|g| g.name.to_lowercase());
+        for g in games {
+            let key = Some(g.name.clone());
+            let note = if updates.contains(&g.name) { Some("update") } else { playing(&key) };
+            let label = if g.name.is_empty() { "(unnamed)".to_string() } else { g.name.clone() };
+            col = col.push(entry(label, Page::Game(key), note));
+        }
+        if self.config.games.is_empty() {
+            col = col.push(text("No games yet.").size(13).color(MUTED_COLOR));
+        }
+        col = col.push(button(text("+ Add game").size(14)).width(Length::Fill).style(button::secondary).on_press(Message::OpenAddGame));
+        container(scrollable(col.padding(12)).height(Length::Fill)).width(SIDEBAR_WIDTH).into()
+    }
+
+    /// A game's (or General's) page: its name and sub-tabs.
+    fn view_game(&self) -> Element<'_, Message> {
+        let general = self.game_key().is_none();
+        let game = self.game();
+        let names = self.names();
+        let mut title = row![text(if general { "General" } else { game.name.as_str() }).size(26)]
+            .spacing(12)
+            .align_y(Alignment::Center);
+        if let Some(note) = origin_note(game) {
+            title = title.push(text(note).size(13).color(MUTED_COLOR));
+        }
+        if general {
+            title = title.push(help(
+                "Profiles for no particular game, such as the desktop or a plain gamepad. Its \
+                 Macros, Menus and Info overlays tabs also hold the shared items every game can use."
+                    .into(),
+            ));
+        }
+
+        let profile_issue = self.profile().is_some_and(|p| ProfileTab::ALL.iter().any(|t| section_has_problem(p, *t, &names)));
+        let reachable = reachable_menus(&self.config, (!self.on_shared()).then_some(game));
+        let issue = |tab: GameTab| match tab {
+            GameTab::Profiles => profile_issue,
+            GameTab::Macros => macros_have_problem(self.macros(), &names),
+            GameTab::Menus => menus_have_problem(self.menus(), &reachable, &names),
+            GameTab::Info => info_has_problem(self.infos()),
+            GameTab::Details => !general && game_problem(&self.config, game).is_some_and(|p| p.contains("rule")),
+        };
+        let mut segments = row![].spacing(2);
+        for tab in GameTab::ALL.into_iter().filter(|t| !(general && *t == GameTab::Details)) {
+            let label = if issue(tab) { format!("{tab}  ⚠") } else { tab.to_string() };
+            segments = segments.push(
+                button(text(label).size(15))
+                    .style(style::segment(self.game_tab == tab))
+                    .padding([6, 16])
+                    .on_press(Message::SelectGameTab(tab)),
+            );
+        }
+        let tab = if general && self.game_tab == GameTab::Details { GameTab::Profiles } else { self.game_tab };
+        let mut col = column![title, container(segments).padding(3).style(style::segments)].spacing(16);
+
+        let item_tab = matches!(tab, GameTab::Macros | GameTab::Menus | GameTab::Info);
+        if general && item_tab {
+            let choice = |label: &'static str, shared: bool| {
+                button(text(label).size(14))
+                    .style(style::segment(self.shared_view == shared))
+                    .padding([5, 14])
+                    .on_press(Message::SetSharedView(shared))
+            };
+            col = col.push(
+                row![
+                    container(row![choice("General's own", false), choice("Shared by all games", true)].spacing(2))
+                        .padding(3)
+                        .style(style::segments),
+                    help(
+                        "Shared macros, menus and info overlays can be used by every profile of every game. \
+                         A game's own items can't reuse a shared item's name."
+                            .into(),
+                    ),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            );
+        }
+
+        let body = match tab {
+            GameTab::Profiles => self.view_profile_tab(&names),
+            GameTab::Macros => self.view_macros(&names),
+            GameTab::Menus => self.view_menus(&names),
+            GameTab::Info => self.view_infos(),
+            GameTab::Details => self.view_details(),
+        };
+        col = col.push(body);
+        if item_tab && !self.on_shared() {
+            col = col.push(self.view_shared_section(match tab {
+                GameTab::Macros => ItemKind::Macro,
+                GameTab::Menus => ItemKind::Menu,
+                _ => ItemKind::Info,
+            }));
+        }
+        col.into()
+    }
+
+    /// The shared items a game's profiles can also use, read-only.
+    fn view_shared_section(&self, kind: ItemKind) -> Element<'_, Message> {
+        let names = Names::shared(&self.config).list(kind).to_vec();
+        let mut col = column![disclosure(
+            &format!("Shared {}s usable here ({})", kind.noun(), names.len()),
+            self.shared_open,
+            Message::ToggleSharedSection
+        )]
+        .spacing(6);
+        if self.shared_open {
+            if names.is_empty() {
+                col = col.push(text(format!("No shared {}s.", kind.noun())).size(13).color(MUTED_COLOR));
+            }
+            for name in names {
+                col = col.push(text(format!("• {name}")).size(14));
+            }
+            col = col.push(
+                button(text("Edit shared items under General").size(13))
+                    .style(button::text)
+                    .on_press(Message::SelectPage(Page::Game(None))),
+            );
+        }
+        col.into()
+    }
+
+    fn view_settings(&self) -> Element<'_, Message> {
+        let glyphs = section(
+            "Info overlays",
+            None,
+            vec![labeled(
+                "Fallback glyphs",
+                row![
+                    dropdown(PadFamily::ALL, Some(self.config.info_glyphs), Message::SetInfoGlyphs).width(170),
+                    help(
+                        "Glyphs follow the controller in use: Xbox, PlayStation or Nintendo labels. For a \
+                         controller that can't be recognized, they're drawn like this kind instead. Also \
+                         used for previews."
+                            .into(),
+                    ),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center)
+                .into(),
+            )],
+        );
+        column![self.view_auto_switch(), self.view_keyboard_card(), self.view_numpad_card(), glyphs].spacing(16).into()
     }
 
     fn view_profile_tab<'a>(&'a self, names: &Names) -> Element<'a, Message> {
@@ -1953,7 +2171,11 @@ impl App {
             Some(_) => ("● Daemon running".to_string(), Color::from_rgb(0.3, 0.8, 0.4)),
             None => ("○ Daemon not running".to_string(), ERROR_COLOR),
         };
-        let names: Vec<String> = self.saved.profiles.iter().map(|p| p.name.clone()).collect();
+        let profiles: Vec<ProfileRef> = self
+            .saved
+            .all_games()
+            .flat_map(|(key, g)| g.profiles.iter().map(move |p| ProfileRef::new(key, &p.name)))
+            .collect();
         let running = self.status.is_some();
 
         let mut header = column![
@@ -1969,8 +2191,7 @@ impl App {
                     .on_toggle_maybe(running.then_some(Message::SetEnabled)),
                 space::horizontal(),
                 text("Active profile"),
-                dropdown(names, Some(self.config.active_profile.clone()), Message::ActivateProfile)
-                    .width(200),
+                dropdown(profiles, Some(self.saved.active.clone()), Message::ActivateProfile).width(280),
             ]
             .spacing(12)
             .align_y(Alignment::Center),
@@ -2090,7 +2311,6 @@ impl App {
 
     fn view_auto_switch(&self) -> Element<'_, Message> {
         let auto = &self.config.auto_switch;
-        let names: Vec<String> = self.config.profiles.iter().map(|p| p.name.clone()).collect();
         let how = match self.status.as_ref().map(|s| s.focus_backend) {
             Some(FocusBackend::Kwin) => "Follows the focused window (KWin).",
             Some(FocusBackend::ProcessScan) => {
@@ -2099,31 +2319,42 @@ impl App {
             }
             None => "Needs the daemon to be running.",
         };
-        let mut defaults = vec![KEEP_CURRENT.to_string()];
-        defaults.extend(names.iter().cloned());
-        let default = auto.default_profile.clone().unwrap_or_else(|| KEEP_CURRENT.into());
+        let mut defaults = vec![DefaultChoice(None)];
+        defaults.extend(
+            self.config.all_games().flat_map(|(key, g)| g.profiles.iter().map(move |p| DefaultChoice(Some(ProfileRef::new(key, &p.name))))),
+        );
+        let default = DefaultChoice(auto.default_profile.clone());
+        section(
+            "Per-game profiles",
+            Some("Each game's rules (on its Details tab) say which windows switch to which of its profiles.".into()),
+            vec![
+                row![
+                    toggler(auto.enabled).label("Switch profiles automatically").on_toggle(Message::SetAutoSwitch),
+                    space::horizontal(),
+                    text("Otherwise use"),
+                    dropdown(defaults, Some(default), Message::SetDefaultProfile).width(280),
+                ]
+                .spacing(12)
+                .align_y(Alignment::Center)
+                .into(),
+                text(how).size(13).color(MUTED_COLOR).into(),
+            ],
+        )
+    }
 
-        let mut col = column![
-            text("Per-game profiles").size(20),
-            row![
-                toggler(auto.enabled).label("Switch profiles automatically").on_toggle(Message::SetAutoSwitch),
-                space::horizontal(),
-                text("Otherwise use"),
-                dropdown(defaults, Some(default), Message::SetDefaultProfile).width(200),
-            ]
-            .spacing(12)
-            .align_y(Alignment::Center),
-            text(how).size(13).color(MUTED_COLOR),
-        ]
-        .spacing(10);
-
-        for (i, r) in auto.rules.iter().enumerate() {
+    /// A game's name, rules, pack details, export and deletion.
+    fn view_details(&self) -> Element<'_, Message> {
+        let game = self.game();
+        let names: Vec<String> = game.profiles.iter().map(|p| p.name.clone()).collect();
+        let mut rules = column![].spacing(8);
+        for (i, r) in game.rules.iter().enumerate() {
             let placeholder = match r.kind {
                 RuleKind::Executable => "e.g. eldenring.exe",
                 RuleKind::SteamAppId => "e.g. 1245620",
                 RuleKind::WindowClass => "e.g. steam_app_1245620",
             };
             let mut line = row![
+                checkbox(r.enabled).on_toggle(move |on| Message::SetRuleEnabled(i, on)),
                 text("When").size(14),
                 dropdown(RuleKind::ALL, Some(r.kind), move |k| Message::SetRuleKind(i, k)).width(150),
                 text("is").size(14),
@@ -2137,14 +2368,19 @@ impl App {
             if !names.contains(&r.profile) {
                 line = line.push(text("missing profile").size(12).color(ERROR_COLOR));
             }
-            col = col.push(line);
+            if let Some(other) = self.config.games.iter().find(|g| g.name != game.name && g.rules.iter().any(|o| o.enabled && o.same_match(r))) {
+                line = line.push(text(format!("also in {}", other.name)).size(12).color(MUTED_COLOR));
+            }
+            rules = rules.push(line);
         }
-        col = col.push(button(text("+ Add rule").size(13)).style(button::secondary).on_press(Message::AddRule(None)));
-
+        if game.rules.is_empty() {
+            rules = rules.push(text("No rules: this game is only used when picked by hand.").size(13).color(MUTED_COLOR));
+        }
+        rules = rules.push(button(text("+ Add rule").size(13)).style(button::secondary).on_press(Message::AddRule(None)));
         let recent = self.status.as_ref().map(|s| s.recent_windows.as_slice()).unwrap_or_default();
         if !recent.is_empty() {
             let mut list = column![
-                text("Recently focused (adds a rule for the profile being edited below)").size(13).color(MUTED_COLOR)
+                text("Recently focused (adds a rule for the profile being edited on the Profiles tab)").size(13).color(MUTED_COLOR)
             ]
             .spacing(6);
             for w in recent {
@@ -2158,27 +2394,80 @@ impl App {
                 let title: String = w.title.chars().take(60).collect();
                 list = list.push(
                     row![
-                        column![text(title).size(14), text(details.join(" · ")).size(12).color(MUTED_COLOR)]
-                            .width(Length::Fill),
-                        button(text("+ Rule").size(13))
-                            .style(button::secondary)
-                            .on_press(Message::AddRule(Some(w.clone()))),
+                        column![text(title).size(14), text(details.join(" · ")).size(12).color(MUTED_COLOR)].width(Length::Fill),
+                        button(text("+ Rule").size(13)).style(button::secondary).on_press(Message::AddRule(Some(w.clone()))),
                     ]
                     .spacing(8)
                     .align_y(Alignment::Center),
                 );
             }
-            col = col.push(list);
+            rules = rules.push(list);
         }
-        col.into()
+
+        let mut pack_rows: Vec<Element<'_, Message>> = Vec::new();
+        if let Some(origin) = &game.origin {
+            let source = if origin.library { "the built-in library" } else { "a pack file" };
+            let by = if game.pack.author.is_empty() { String::new() } else { format!(" by {}", game.pack.author) };
+            pack_rows.push(text(format!("Added from {source}: version {}{by}.", origin.version)).into());
+            let edited = pack::edited_items(game);
+            if !edited.is_empty() {
+                pack_rows.push(text(format!("Changed since: {}.", edited.join(", "))).size(13).color(MUTED_COLOR).into());
+            }
+            if let Some((_, entry)) = library::updates(&self.config, &self.library).into_iter().find(|(n, _)| *n == game.name) {
+                pack_rows.push(
+                    row![
+                        text(format!("The library has version {}.", entry.pack.pack.version)).color(style_accent()),
+                        button(text("Update…").size(13)).on_press(Message::UpdateFromLibrary(game.name.clone())),
+                    ]
+                    .spacing(10)
+                    .align_y(Alignment::Center)
+                    .into(),
+                );
+            }
+        } else if !game.pack.id.is_empty() {
+            pack_rows.push(text(format!("You've exported this game (version {}).", game.pack.version)).into());
+        } else {
+            pack_rows.push(text("Export this game to share it as a .padpack file.").size(13).color(MUTED_COLOR).into());
+        }
+        if let Some(b) = &game.pack.based_on {
+            pack_rows.push(text(format!("Based on {} {} by {}.", b.name, b.version, b.author)).size(13).color(MUTED_COLOR).into());
+        }
+        if !game.pack.description.is_empty() {
+            pack_rows.push(text(game.pack.description.clone()).size(13).into());
+        }
+        pack_rows.push(
+            row![
+                button(text("Export…")).on_press(Message::OpenExport),
+                space::horizontal(),
+                button(text("Delete game")).style(button::danger).on_press(Message::AskDeleteGame),
+            ]
+            .spacing(8)
+            .into(),
+        );
+
+        column![
+            labeled(
+                "Name",
+                field("Game name", &game.name).on_input(Message::RenameGame).width(260).into(),
+            ),
+            section(
+                "Auto-switch rules",
+                Some("When the focused window (or a running process) matches a rule, its profile becomes active. Untick a rule to switch it off.".into()),
+                vec![rules.into()],
+            ),
+            section("Pack", None, pack_rows),
+        ]
+        .spacing(16)
+        .into()
     }
 
-    fn view_macros(&self) -> Element<'_, Message> {
+    fn view_macros(&self, names: &Names) -> Element<'_, Message> {
         let add = container(
             row![
                 button(text("+ New macro")).style(button::secondary).on_press(Message::NewMacro),
                 text("A macro plays a sequence of inputs.").size(13).color(MUTED_COLOR),
                 space::horizontal(),
+                button(text("Copy from another game…").size(13)).style(button::text).on_press(Message::OpenBrowse(ItemKind::Macro)),
                 help(
                     "A macro plays a sequence of inputs. Map it to any button, gesture, combo, trigger, \
                      zone or menu item with the \"Macro…\" action."
@@ -2191,45 +2480,25 @@ impl App {
         .padding(14)
         .width(Length::Fill)
         .style(style::card);
-        let mut col = column![self.view_filter_bar(), add].spacing(16);
-        for (i, m) in self.config.macros.iter().enumerate().filter(|(_, m)| self.filter.shows(&m.profiles)) {
-            col = col.push(self.view_macro_card(i, m));
+        let mut col = column![add].spacing(16);
+        for (i, m) in self.macros().iter().enumerate() {
+            col = col.push(self.view_macro_card(i, m, names));
         }
         col.into()
     }
 
-    fn profile_names(&self) -> Vec<String> {
-        self.config.profiles.iter().map(|p| p.name.clone()).collect()
-    }
-
-    /// "Show: …" for the Macros and Overlays tabs, to work on one game's things at a time.
-    fn view_filter_bar(&self) -> Element<'_, Message> {
-        let mut options = vec![ScopeFilter::All, ScopeFilter::Shared];
-        options.extend(self.config.profiles.iter().map(|p| ScopeFilter::Profile(p.name.clone())));
-        row![
-            text("Show:"),
-            dropdown(options, Some(self.filter.clone()), Message::SetFilter).width(280),
-            help(
-                "Macros, menus and info overlays can be shared by all profiles or belong to some \
-                 (\"Used by\" on each card); a profile can only use its own and shared ones. Pick a \
-                 profile here to see what it can use. New ones you add then belong to it."
-                    .into(),
-            ),
-        ]
-        .spacing(10)
-        .align_y(Alignment::Center)
-        .into()
-    }
-
     /// A macro as its own collapsible card: a summary line, or its steps when open.
-    fn view_macro_card<'a>(&'a self, mi: usize, m: &'a Macro) -> Element<'a, Message> {
+    fn view_macro_card<'a>(&'a self, mi: usize, m: &'a Macro, names: &Names) -> Element<'a, Message> {
         let open = self.open_macros.contains(&mi);
+        let macros = self.macros();
         let problem = if m.name.trim().is_empty() {
             Some("needs a name".to_string())
-        } else if self.config.macros[..mi].iter().chain(&self.config.macros[mi + 1..]).any(|o| o.name == m.name) {
+        } else if macros[..mi].iter().chain(&macros[mi + 1..]).any(|o| o.name == m.name) {
             Some("name used twice".to_string())
+        } else if !self.item_name_free(ItemKind::Macro, Some(mi), &m.name) {
+            Some("a shared macro has this name".to_string())
         } else {
-            m.steps.iter().filter_map(MacroStep::action).find_map(|a| action_problem(a, &Names::default()))
+            m.steps.iter().filter_map(MacroStep::action).find_map(|a| action_problem(a, names))
         };
         let chevron = if open { "▾" } else { "▸" };
         let title = text(format!("{chevron}  {}", if m.name.is_empty() { "(unnamed)" } else { &m.name })).size(18);
@@ -2238,11 +2507,7 @@ impl App {
         let n = m.steps.len();
         let mut header = row![
             button(title).style(button::text).padding(0).on_press(Message::ToggleMacro(mi)),
-            text(format!(
-                "{n} step{} · {total} ms{}",
-                if n == 1 { "" } else { "s" },
-                scope_note(&m.profiles).map(|s| format!(" · {s}")).unwrap_or_default()
-            ))
+            text(format!("{n} step{} · {total} ms", if n == 1 { "" } else { "s" }))
             .size(13)
             .color(MUTED_COLOR),
             space::horizontal(),
@@ -2255,12 +2520,12 @@ impl App {
         header = header.push(button(text("Delete").size(13)).style(button::danger).on_press(Message::DeleteMacro(mi)));
         let mut col = column![header].spacing(12);
         if open {
-            col = col.push(self.view_macro_editor(mi, m));
+            col = col.push(self.view_macro_editor(mi, m, names));
         }
         container(col).padding(14).width(Length::Fill).style(style::card).into()
     }
 
-    fn view_macro_editor<'a>(&'a self, mi: usize, m: &'a Macro) -> Element<'a, Message> {
+    fn view_macro_editor<'a>(&'a self, mi: usize, m: &'a Macro, names: &Names) -> Element<'a, Message> {
         let last = m.steps.len().saturating_sub(1);
         let mut steps = column![].spacing(8);
         for (i, step) in m.steps.iter().enumerate() {
@@ -2283,7 +2548,7 @@ impl App {
                     let hold_ms = *hold_ms;
                     let held = action.clone();
                     column![
-                        action_editor(action, Button::South, MACRO_STEP_KINDS, set_action(Target::MacroStep(mi, i)), KeyField::root(Target::MacroStep(mi, i)), &Names::default()),
+                        action_editor(action, Button::South, MACRO_STEP_KINDS, set_action(Target::MacroStep(mi, i)), KeyField::root(Target::MacroStep(mi, i)), names),
                         row![
                             text("held for").size(13),
                             slider(10.0..=1000.0, hold_ms as f32, move |v| {
@@ -2344,7 +2609,7 @@ impl App {
                     MACRO_STEP_KINDS,
                     set_action(Target::MacroStep(mi, i)),
                     KeyField::root(Target::MacroStep(mi, i)),
-                    &Names::default(),
+                    names,
                 ),
             };
             let small = |label: &'static str, msg: Option<Message>| {
@@ -2400,7 +2665,6 @@ impl App {
                 "Name",
                 field("Macro name", &m.name).on_input(move |n| Message::RenameMacro(mi, n)).width(220).into(),
             ),
-            scope_editor(ScopeTarget::Macro(mi), &m.profiles, &self.profile_names()),
             text("Steps").size(16),
             steps,
             footer,
@@ -2409,22 +2673,17 @@ impl App {
         .into()
     }
 
-    fn view_overlays<'a>(&'a self, names: &Names) -> Element<'a, Message> {
-        // The keyboard and numpad are always there, so they stay on top. Menus and info
-        // overlays each get a section, with the add button above the list.
-        let mut col = column![
-            self.view_keyboard_card(),
-            self.view_numpad_card(),
-            self.view_filter_bar(),
-            text("Menus").size(20),
-            view_new_menu_card(),
-        ]
-        .spacing(16);
-        for (i, menu) in self.config.menus.iter().enumerate().filter(|(_, m)| self.filter.shows(&m.profiles)) {
+    fn view_menus<'a>(&'a self, names: &Names) -> Element<'a, Message> {
+        let mut col = column![view_new_menu_card()].spacing(16);
+        for (i, menu) in self.menus().iter().enumerate() {
             col = col.push(self.view_menu_card(i, menu, names));
         }
-        col = col.push(text("Info overlays").size(20)).push(view_new_info_card());
-        for (i, o) in self.config.info.iter().enumerate().filter(|(_, o)| self.filter.shows(&o.profiles)) {
+        col.into()
+    }
+
+    fn view_infos(&self) -> Element<'_, Message> {
+        let mut col = column![view_new_info_card()].spacing(16);
+        for (i, o) in self.infos().iter().enumerate() {
             col = col.push(self.view_info_card(i, o));
         }
         col.into()
@@ -2435,8 +2694,10 @@ impl App {
         let open = self.open_infos.contains(&i);
         let problem = if o.name.trim().is_empty() {
             Some("needs a name")
-        } else if self.config.info.iter().enumerate().any(|(j, other)| j != i && other.name == o.name) {
+        } else if self.infos().iter().enumerate().any(|(j, other)| j != i && other.name == o.name) {
             Some("name used twice")
+        } else if !self.item_name_free(ItemKind::Info, Some(i), &o.name) {
+            Some("a shared info overlay has this name")
         } else {
             None
         };
@@ -2445,10 +2706,9 @@ impl App {
         let title = if problem.is_some() { title.color(ERROR_COLOR) } else { title };
         let rows = o.rows.len();
         let summary = format!(
-            "{rows} row{} · {}{}",
+            "{rows} row{} · {}",
             if rows == 1 { "" } else { "s" },
-            if o.always { "always shown" } else { "shown by an action" },
-            scope_note(&o.profiles).map(|s| format!(" · {s}")).unwrap_or_default()
+            if o.always { "always shown" } else { "shown by an action" }
         );
         let mut header = row![
             button(title).style(button::text).padding(0).on_press(Message::ToggleInfo(i)),
@@ -2471,11 +2731,12 @@ impl App {
     fn view_info_editor<'a>(&'a self, i: usize, o: &'a InfoOverlay) -> Element<'a, Message> {
         let mut rows: Vec<Element<'a, Message>> = vec![
             labeled("Name", field("Info overlay name", &o.name).on_input(move |n| Message::RenameInfo(i, n)).width(240).into()),
-            scope_editor(ScopeTarget::Info(i), &o.profiles, &self.profile_names()),
             labeled(
                 "Shown",
                 column![
-                    checkbox(o.always).label("Always, while one of its profiles is active").on_toggle(move |a| Message::SetInfoAlways(i, a)),
+                    checkbox(o.always)
+                        .label(if self.on_shared() { "Always, in every game" } else { "Always, while this game is active" })
+                        .on_toggle(move |a| Message::SetInfoAlways(i, a)),
                     text(
                         "Or map \"Show info overlay…\" to a button: shown while held, or until pressed again \
                          if wrapped in Toggle."
@@ -2496,21 +2757,6 @@ impl App {
         }
         let sample = InfoOverlay { style: preview_style(&o.style), ..o.clone() };
         let view = crate::info::resolve(&sample, &crate::info::Live::sample(self.config.info_glyphs));
-        rows.push(labeled(
-            "Fallback glyphs",
-            row![
-                dropdown(PadFamily::ALL, Some(self.config.info_glyphs), Message::SetInfoGlyphs).width(170),
-                help(
-                    "Glyphs follow the controller in use: Xbox, PlayStation or Nintendo labels. For a \
-                     controller that can't be recognized, they're drawn like this kind instead. Shared \
-                     by all info overlays, and used for the preview below."
-                        .into(),
-                ),
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center)
-            .into(),
-        ));
         rows.push(preview(crate::overlay::draw::info_panel(&view)));
 
         // The grid: rows of cells, which line up in columns on screen.
@@ -2650,19 +2896,19 @@ impl App {
     /// A menu as its own collapsible card: a summary line, or the full editor when open.
     fn view_menu_card<'a>(&'a self, mi: usize, menu: &'a Menu, names: &Names) -> Element<'a, Message> {
         let open = self.open_menus.contains(&mi);
-        let problem = menu.items.iter().find_map(|item| item_problem(menu, &item.action, &self.config.menus, names));
+        let reachable = reachable_menus(&self.config, (!self.on_shared()).then(|| self.game()));
+        let problem = if !self.item_name_free(ItemKind::Menu, Some(mi), &menu.name) {
+            Some("another menu, or a shared one, has this name".to_string())
+        } else {
+            menu.items.iter().find_map(|item| item_problem(menu, &item.action, &reachable, names))
+        };
         let chevron = if open { "▾" } else { "▸" };
         let title = text(format!("{chevron}  {}", if menu.name.is_empty() { "(unnamed)" } else { &menu.name })).size(18);
         let title = if problem.is_some() { title.color(ERROR_COLOR) } else { title };
         let items = menu.items.iter().filter(|i| !i.label.is_empty() || !matches!(i.action, ButtonAction::Disabled)).count();
         let mut header = row![
             button(title).style(button::text).padding(0).on_press(Message::ToggleMenu(mi)),
-            text(format!(
-                "{} · {items} item{}{}",
-                menu.kind.tag().short(),
-                if items == 1 { "" } else { "s" },
-                scope_note(&menu.profiles).map(|s| format!(" · {s}")).unwrap_or_default()
-            ))
+            text(format!("{} · {items} item{}", menu.kind.tag().short(), if items == 1 { "" } else { "s" }))
                 .size(13)
                 .color(MUTED_COLOR),
             space::horizontal(),
@@ -2685,7 +2931,6 @@ impl App {
             "Name",
             field("Menu name", &menu.name).on_input(move |n| Message::RenameMenu(mi, n)).width(240).into(),
         )];
-        rows.push(scope_editor(ScopeTarget::Menu(mi), &menu.profiles, &self.profile_names()));
 
         // Kind and its settings.
         let mut kind_row = row![dropdown(MenuKindTag::ALL, Some(menu.kind.tag()), move |t| Message::SetMenuKind(mi, MenuKind::default_for(t))).width(280)]
@@ -2737,11 +2982,10 @@ impl App {
         // Items open only other menus of the same kind; radial menus open none.
         let radial = matches!(menu.kind, MenuKind::Radial { .. });
         let item_kinds = if radial { RADIAL_ITEM_KINDS } else { MENU_ITEM_KINDS };
+        let reachable = reachable_menus(&self.config, (!self.on_shared()).then(|| self.game()));
         let item_names = Names {
             macros: names.macros.clone(),
-            menus: self
-                .config
-                .menus
+            menus: reachable
                 .iter()
                 .filter(|m| m.name != menu.name && m.kind.tag() == menu.kind.tag())
                 .map(|m| m.name.clone())
@@ -2783,7 +3027,7 @@ impl App {
                     .push(small("✕", Some(Message::RemoveMenuItem(mi, i))));
             }
             let mut boxed = column![line].spacing(4);
-            if let Some(problem) = item_problem(menu, &item.action, &self.config.menus, names) {
+            if let Some(problem) = item_problem(menu, &item.action, &reachable, names) {
                 boxed = boxed.push(text(format!("⚠ {problem}")).size(12).color(ERROR_COLOR));
             }
             items = items.push(container(boxed).padding(8).style(style::inset));
@@ -2800,11 +3044,19 @@ impl App {
     }
 
     fn view_profile_bar(&self) -> Element<'_, Message> {
-        let names: Vec<String> = self.config.profiles.iter().map(|p| p.name.clone()).collect();
+        let names: Vec<String> = self.game().profiles.iter().map(|p| p.name.clone()).collect();
         let current = self.profile().map(|p| p.name.clone());
-        let can_delete = self.config.profiles.len() > 1;
+        let can_delete = names.len() > 1;
+        let active = self.profile_ref().is_some_and(|at| at == self.saved.active);
+        let activate: Element<'_, Message> = match self.profile_ref() {
+            Some(at) if !active && self.status.is_some() => {
+                button(text("Make active").size(13)).style(button::secondary).on_press(Message::ActivateProfile(at)).into()
+            }
+            _ if active => text("● active").size(13).color(style_accent()).into(),
+            _ => space().into(),
+        };
         column![
-            text("Edit profile").size(20),
+            row![text("Edit profile").size(20), activate].spacing(12).align_y(Alignment::Center),
             row![
                 dropdown(names, current.clone(), Message::EditProfile).width(170),
                 field("Profile name", current.as_deref().unwrap_or(""))
@@ -2978,9 +3230,6 @@ fn field<'a>(placeholder: &str, value: &str) -> iced::widget::TextInput<'a, Mess
     text_input(placeholder, value).style(style::text_field).padding([6, 10])
 }
 
-/// Shown in the "Otherwise use" list for "don't change the profile".
-const KEEP_CURRENT: &str = "(keep current profile)";
-
 /// Rule for a window using its most specific identifier: Steam App ID, then a Windows `.exe`
 /// name, then the window class, then the native executable name.
 fn rule_for_window(w: &WindowInfo, profile: String) -> Rule {
@@ -2993,7 +3242,7 @@ fn rule_for_window(w: &WindowInfo, profile: String) -> Rule {
     } else {
         (RuleKind::Executable, w.exe.clone())
     };
-    Rule { kind, value, profile }
+    Rule::new(kind, value, profile)
 }
 
 /// The controller SVG with button letters and mapping-label pills placed over it. (iced's
@@ -3231,13 +3480,13 @@ fn action_problem(action: &ButtonAction, names: &Names) -> Option<String> {
                 }
             }
             ButtonAction::Macro { name, .. } if !names.macros.contains(name) => {
-                problem = Some(names.why_missing("macro", name));
+                problem = Some(format!("missing macro {name:?}"));
             }
             ButtonAction::OpenMenu(name) if !names.menus.contains(name) => {
-                problem = Some(names.why_missing("menu", name));
+                problem = Some(format!("missing menu {name:?}"));
             }
             ButtonAction::ShowInfo(name) if !names.infos.contains(name) => {
-                problem = Some(names.why_missing("info overlay", name));
+                problem = Some(format!("missing info overlay {name:?}"));
             }
             _ => {}
         }
@@ -3272,12 +3521,124 @@ fn section_has_problem(p: &Profile, tab: ProfileTab, names: &Names) -> bool {
     }
 }
 
-fn macros_have_problem(macros: &[Macro]) -> bool {
+fn macros_have_problem(macros: &[Macro], names: &Names) -> bool {
     macros.iter().enumerate().any(|(i, m)| {
         m.name.trim().is_empty()
             || macros[..i].iter().any(|o| o.name == m.name)
-            || m.steps.iter().filter_map(MacroStep::action).any(|a| action_problem(a, &Names::default()).is_some())
+            || m.steps.iter().filter_map(MacroStep::action).any(|a| action_problem(a, names).is_some())
     })
+}
+
+/// The menus a game's items can open: its own, then shared ones (only shared ones for
+/// `None`, the shared items themselves).
+fn reachable_menus(config: &Config, game: Option<&Game>) -> Vec<Menu> {
+    let mut menus = game.map(|g| g.menus.clone()).unwrap_or_default();
+    menus.extend(config.shared.menus.iter().filter(|s| !menus.iter().any(|m| m.name == s.name)).cloned().collect::<Vec<_>>());
+    menus
+}
+
+/// The first thing saving would reject in a list of macros, menus and info overlays.
+/// `names` is what they may refer to; `shared` holds the shared items' names, which a game's
+/// items may not reuse.
+fn items_problem(macros: &[Macro], menus: &[Menu], info: &[InfoOverlay], names: &Names, reachable: &[Menu], shared: Option<&Names>) -> Option<String> {
+    let clash = |kind: ItemKind, name: &str| shared.is_some_and(|s| s.list(kind).iter().any(|n| n == name));
+    for (i, m) in macros.iter().enumerate() {
+        if m.name.trim().is_empty() {
+            return Some("Macro names cannot be empty.".into());
+        }
+        if macros[..i].iter().any(|o| o.name == m.name) {
+            return Some(format!("Two macros are named {:?}.", m.name));
+        }
+        if clash(ItemKind::Macro, &m.name) {
+            return Some(format!("Macro {:?} has the same name as a shared macro.", m.name));
+        }
+        let keys = m.steps.iter().filter_map(MacroStep::action).flat_map(|a| a.key_names());
+        if let Some(bad) = keys.into_iter().find(|k| KeyCode::from_str(k).is_err()) {
+            return Some(format!("Macro {:?}: unknown key {:?}", m.name, short_key(bad)));
+        }
+        if let Some(problem) = m.steps.iter().filter_map(MacroStep::action).find_map(|a| action_problem(a, names)) {
+            return Some(format!("Macro {:?}: {problem}", m.name));
+        }
+    }
+    for (i, m) in menus.iter().enumerate() {
+        if m.name.trim().is_empty() {
+            return Some("Menu names cannot be empty.".into());
+        }
+        if menus[..i].iter().any(|o| o.name == m.name) {
+            return Some(format!("Two menus are named {:?}.", m.name));
+        }
+        if clash(ItemKind::Menu, &m.name) {
+            return Some(format!("Menu {:?} has the same name as a shared menu.", m.name));
+        }
+        if let Some(problem) = m.items.iter().find_map(|item| item_problem(m, &item.action, reachable, names)) {
+            return Some(format!("Menu {:?}: {problem}", m.name));
+        }
+    }
+    for (i, o) in info.iter().enumerate() {
+        if o.name.trim().is_empty() {
+            return Some("Info overlay names cannot be empty.".into());
+        }
+        if info[..i].iter().any(|other| other.name == o.name) {
+            return Some(format!("Two info overlays are named {:?}.", o.name));
+        }
+        if clash(ItemKind::Info, &o.name) {
+            return Some(format!("Info overlay {:?} has the same name as a shared one.", o.name));
+        }
+    }
+    None
+}
+
+/// The first thing saving would reject in a game (or General).
+fn game_problem(config: &Config, g: &Game) -> Option<String> {
+    if g.profiles.is_empty() {
+        return Some("needs at least one profile.".into());
+    }
+    let names = Names::for_game(config, g);
+    let reachable = reachable_menus(config, Some(g));
+    if let Some(problem) = items_problem(&g.macros, &g.menus, &g.info, &names, &reachable, Some(&Names::shared(config))) {
+        return Some(problem);
+    }
+    for (i, p) in g.profiles.iter().enumerate() {
+        if p.name.trim().is_empty() {
+            return Some("Profile names cannot be empty.".into());
+        }
+        if g.profiles[..i].iter().any(|o| o.name == p.name) {
+            return Some(format!("Two profiles are named {:?}.", p.name));
+        }
+        if let Some(problem) = p.actions().into_iter().find_map(|a| {
+            action_problem(a, &names).filter(|problem| !problem.starts_with("unknown key"))
+        }) {
+            return Some(format!("Profile {:?}: {problem}.", p.name));
+        }
+        if let Some(c) = p.combos.iter().find(|c| c.buttons.len() < 2) {
+            return Some(format!("Profile {:?}: a combo needs at least two buttons (has {}).", p.name, c.buttons.len()));
+        }
+        let analogs = [
+            Analog::Stick(Stick::Left),
+            Analog::Stick(Stick::Right),
+            Analog::Trigger(Trigger::Left),
+            Analog::Trigger(Trigger::Right),
+        ];
+        if analogs.into_iter().any(|a| p.zones(a).iter().any(|z| z.min >= z.max)) {
+            return Some(format!("Profile {:?}: a zone's range must start below where it ends.", p.name));
+        }
+        let mut keys: Vec<&String> = p.actions().into_iter().flat_map(|a| a.key_names()).collect();
+        for s in [Stick::Left, Stick::Right] {
+            if let StickAction::Keys { up, down, left, right } = &p.stick(s).action {
+                keys.extend([up, down, left, right]);
+            }
+        }
+        if let Some(bad) = keys.iter().find(|k| KeyCode::from_str(k).is_err()) {
+            return Some(format!("Profile {:?}: unknown key {:?}", p.name, short_key(bad)));
+        }
+    }
+    if let Some(r) = g.rules.iter().find(|r| r.value.trim().is_empty()) {
+        return Some(format!("A per-game rule for profile {:?} has no {} to match.", r.profile, r.kind));
+    }
+    if let Some(r) = g.rules.iter().find(|r| g.profile(&r.profile).is_none()) {
+        return Some(format!("A per-game rule points to missing profile {:?}.", r.profile));
+    }
+    None
 }
 
 /// A button pressed (or stick pushed firmly) in `now` that wasn't in `before`, for
@@ -4432,9 +4793,21 @@ fn trigger_editor<'a>(
 mod tests {
     use super::*;
 
+    /// The app on General's page, editing its "Gamepad" profile.
     fn app() -> App {
         let mut app = App::boot().0;
-        app.editing = 0; // default "Gamepad" profile
+        let _ = app.update(Message::SelectPage(Page::Game(None)));
+        app.editing = 0;
+        app
+    }
+
+    /// The app with a game "Doom" (profiles "Play" and "Menus") shown.
+    fn with_game() -> App {
+        let mut app = app();
+        let mut game = Game::new("Doom", vec![Profile::pc_action("Play"), Profile::desktop("Menus")]);
+        game.rules.push(Rule::new(RuleKind::Executable, "doom.exe", "Play"));
+        app.config.games.push(game);
+        let _ = app.update(Message::SelectPage(Page::Game(Some("Doom".into()))));
         app
     }
 
@@ -4452,12 +4825,12 @@ mod tests {
     fn picker_writes_chord_into_nested_multi_entry() {
         let mut app = app();
         let multi = ButtonAction::Multi(vec![ButtonAction::Gamepad(Button::South), ButtonAction::Keys(vec![])]);
-        app.config.profiles[0].set_button(Button::South, multi);
+        app.config.general.profiles[0].set_button(Button::South, multi);
         let field = KeyField::root(Target::Button(Button::South)).child(1);
         // Toggling a key twice removes it again.
         pick(&mut app, field, false, &["KEY_LEFTSHIFT", "KEY_A", "KEY_B", "KEY_B"]);
         assert_eq!(
-            app.config.profiles[0].button(Button::South),
+            app.config.general.profiles[0].button(Button::South),
             &ButtonAction::Multi(vec![
                 ButtonAction::Gamepad(Button::South),
                 ButtonAction::Keys(vec!["KEY_LEFTSHIFT".into(), "KEY_A".into()]),
@@ -4469,12 +4842,12 @@ mod tests {
     #[test]
     fn single_picker_sets_stick_direction() {
         let mut app = app();
-        app.config.profiles[0].left_stick.action = wasd();
+        app.config.general.profiles[0].left_stick.action = wasd();
         let _ = app.update(Message::OpenKeyPicker(KeyField::StickDir { stick: Stick::Left, dir: 2 }, vec![], true));
         // Single mode closes itself by scheduling PickerClose; run it like the runtime would.
         let _ = app.update(Message::PickerKey("KEY_LEFT"));
         let _ = app.update(Message::PickerClose { apply: true });
-        let StickAction::Keys { left, up, .. } = &app.config.profiles[0].left_stick.action else { panic!() };
+        let StickAction::Keys { left, up, .. } = &app.config.general.profiles[0].left_stick.action else { panic!() };
         assert_eq!((left.as_str(), up.as_str()), ("KEY_LEFT", "KEY_W"));
     }
 
@@ -4522,24 +4895,38 @@ mod tests {
     }
 
     #[test]
-    fn renaming_a_profile_updates_rules_and_default() {
-        let mut app = app();
-        app.config.auto_switch.rules.push(Rule { kind: RuleKind::SteamAppId, value: "1".into(), profile: "Gamepad".into() });
-        app.config.auto_switch.default_profile = Some("Gamepad".into());
-        let _ = app.update(Message::RenameProfile("Pad".into()));
-        assert_eq!(app.config.auto_switch.rules[0].profile, "Pad");
-        assert_eq!(app.config.auto_switch.default_profile.as_deref(), Some("Pad"));
+    fn renaming_a_profile_updates_rules_default_and_the_active_one() {
+        let mut app = with_game();
+        app.config.auto_switch.default_profile = Some(ProfileRef::new(Some("Doom"), "Play"));
+        // The daemon says Doom › Play is active.
+        let status = Status { active_profile: "Play".into(), active_game: Some("Doom".into()), ..Default::default() };
+        let _ = app.update(Message::StatusLoaded(Ok(status.clone())));
+        let _ = app.update(Message::RenameProfile("Fight".into()));
+        assert_eq!(app.game().rules[0].profile, "Fight");
+        assert_eq!(app.config.auto_switch.default_profile, Some(ProfileRef::new(Some("Doom"), "Fight")));
+        // Until saved, the daemon keeps reporting the old name; it's followed.
+        let _ = app.update(Message::StatusLoaded(Ok(status)));
+        assert_eq!(app.config.active, ProfileRef::new(Some("Doom"), "Fight"));
+        assert_eq!(app.saved.active, ProfileRef::new(Some("Doom"), "Play"));
         assert_eq!(app.validate(), None);
 
-        let _ = app.update(Message::SetDefaultProfile(KEEP_CURRENT.into()));
+        let _ = app.update(Message::SetDefaultProfile(DefaultChoice(None)));
         assert_eq!(app.config.auto_switch.default_profile, None);
     }
 
     #[test]
     fn rules_must_point_at_existing_profiles() {
-        let mut app = app();
-        app.config.auto_switch.rules.push(Rule { kind: RuleKind::Executable, value: "x".into(), profile: "Gone".into() });
-        assert!(app.validate().unwrap().contains("missing profile"));
+        let mut app = with_game();
+        let _ = app.update(Message::AddRule(None));
+        assert!(app.validate().unwrap().contains("no Executable to match"), "{:?}", app.validate());
+        let _ = app.update(Message::SetRuleValue(1, "x".into()));
+        let _ = app.update(Message::SetRuleProfile(1, "Gone".into()));
+        let err = app.validate().unwrap();
+        assert!(err.starts_with("Doom: ") && err.contains("missing profile"), "{err}");
+        let _ = app.update(Message::RemoveRule(1));
+        let _ = app.update(Message::SetRuleEnabled(0, false));
+        assert!(!app.game().rules[0].enabled);
+        assert_eq!(app.validate(), None);
     }
 
     #[test]
@@ -4547,7 +4934,7 @@ mod tests {
         let mut app = app();
         let _ = app.update(Message::AddProfile(Template::Action));
         let _ = app.update(Message::AddProfile(Template::Action));
-        let names: Vec<&str> = app.config.profiles.iter().map(|p| p.name.as_str()).collect();
+        let names: Vec<&str> = app.config.general.profiles.iter().map(|p| p.name.as_str()).collect();
         assert_eq!(names, ["Gamepad", "Desktop", "PC Action", "PC Action 2"]);
         assert_eq!(app.profile().unwrap().name, "PC Action 2");
         assert_eq!(app.validate(), None);
@@ -4556,14 +4943,14 @@ mod tests {
     #[test]
     fn wrapping_in_toggle_keeps_the_action_and_picker_writes_inside_it() {
         let mut app = app();
-        app.config.profiles[0].set_button(Button::RightStick, ButtonAction::Keys(vec!["KEY_C".into()]));
+        app.config.general.profiles[0].set_button(Button::RightStick, ButtonAction::Keys(vec!["KEY_C".into()]));
         // What choosing "Toggle" in the kind list produces for an existing key action.
         let wrapped = ButtonAction::Toggle(Box::new(ButtonAction::Keys(vec!["KEY_C".into()])));
         let _ = app.update(Message::SetAction(Target::Button(Button::RightStick), wrapped));
         let field = KeyField::root(Target::Button(Button::RightStick)).child(0);
         pick(&mut app, field, false, &["KEY_LEFTCTRL"]);
         assert_eq!(
-            app.config.profiles[0].button(Button::RightStick),
+            app.config.general.profiles[0].button(Button::RightStick),
             &ButtonAction::Toggle(Box::new(ButtonAction::Keys(vec!["KEY_LEFTCTRL".into()])))
         );
     }
@@ -4588,24 +4975,24 @@ mod tests {
         let _ = app.update(Message::AddMacroStep(0, StepKind::Press));
         let _ = app.update(Message::MoveMacroStep(0, 2, true));
         assert_eq!(
-            app.config.macros[0].steps.iter().map(step_kind).collect::<Vec<_>>(),
+            app.config.general.macros[0].steps.iter().map(step_kind).collect::<Vec<_>>(),
             [StepKind::Tap, StepKind::Press, StepKind::Wait]
         );
         // The on-screen keyboard writes into a macro step.
         pick(&mut app, KeyField::root(Target::MacroStep(0, 0)), false, &["KEY_SPACE"]);
-        assert_eq!(app.config.macros[0].steps[0].action(), Some(&ButtonAction::Keys(vec!["KEY_SPACE".into()])));
+        assert_eq!(app.config.general.macros[0].steps[0].action(), Some(&ButtonAction::Keys(vec!["KEY_SPACE".into()])));
 
         let mapped = ButtonAction::Toggle(Box::new(ButtonAction::Macro { name: "Macro".into(), repeat: true }));
-        app.config.profiles[1].set_button(Button::West, mapped);
+        app.config.general.profiles[1].set_button(Button::West, mapped);
         let _ = app.update(Message::RenameMacro(0, "Jump spam".into()));
         // A second macro goes on top, and the first one's open card moves down with it.
         let _ = app.update(Message::NewMacro);
-        assert_eq!(app.config.macros[1].name, "Jump spam");
+        assert_eq!(app.config.general.macros[1].name, "Jump spam");
         assert_eq!(app.open_macros, HashSet::from([0, 1]));
         let _ = app.update(Message::DeleteMacro(0));
         assert_eq!(app.open_macros, HashSet::from([0]));
         assert_eq!(
-            app.config.profiles[1].button(Button::West),
+            app.config.general.profiles[1].button(Button::West),
             &ButtonAction::Toggle(Box::new(ButtonAction::Macro { name: "Jump spam".into(), repeat: true }))
         );
         // Step 2 (Hold down) has no key yet, so saving is blocked until it gets one.
@@ -4646,25 +5033,25 @@ mod tests {
         let _ = app.update(Message::SetAction(up, ButtonAction::Macro { name: "Macro".into(), repeat: false }));
         let _ = app.update(Message::RenameMacro(0, "Hadouken".into()));
         assert_eq!(
-            app.config.profiles[0].button(Button::RightStickUp),
+            app.config.general.profiles[0].button(Button::RightStickUp),
             &ButtonAction::Macro { name: "Hadouken".into(), repeat: false }
         );
         // The key picker writes into a direction, and validation sees direction keys.
         let down = Target::Button(Button::RightStickDown);
         let _ = app.update(Message::SetAction(down, ButtonAction::Keys(vec![])));
         pick(&mut app, KeyField::root(down), false, &["KEY_C"]);
-        assert_eq!(app.config.profiles[0].button(Button::RightStickDown), &ButtonAction::Keys(vec!["KEY_C".into()]));
+        assert_eq!(app.config.general.profiles[0].button(Button::RightStickDown), &ButtonAction::Keys(vec!["KEY_C".into()]));
         // Combos accept stick directions as members.
         let _ = app.update(Message::AddCombo);
         let _ = app.update(Message::RemoveComboButton(0, Button::RightBumper));
         let _ = app.update(Message::AddComboButton(0, Button::RightStickRight));
-        assert_eq!(app.config.profiles[0].combos[0].buttons, [Button::LeftBumper, Button::RightStickRight]);
+        assert_eq!(app.config.general.profiles[0].combos[0].buttons, [Button::LeftBumper, Button::RightStickRight]);
 
         let _ = app.update(Message::SetAction(
             Target::Button(Button::RightStickLeft),
             ButtonAction::Keys(vec!["KEY_NOPE".into()]),
         ));
-        app.config.macros[0].steps = vec![MacroStep::Wait(10)];
+        app.config.general.macros[0].steps = vec![MacroStep::Wait(10)];
         assert!(app.validate().unwrap().contains("NOPE"), "{:?}", app.validate());
     }
 
@@ -4736,7 +5123,7 @@ mod tests {
         assert!(app.finding);
         let _ = app.update(Message::LiveInput(Some(snapshot(&[Button::West], (0.0, 0.0)))));
         assert!(!app.finding, "one press ends find mode");
-        assert_eq!((app.tab, app.profile_tab, app.found), (Tab::Profile, ProfileTab::Buttons, Some(Button::West)));
+        assert_eq!((app.game_tab, app.profile_tab, app.found), (GameTab::Profiles, ProfileTab::Buttons, Some(Button::West)));
         let names = Names::default();
         let ui = Ui { names: &names, expanded: &app.expanded, found: app.found, analog_triggers: true, any_gyro: false };
         assert!(ui.is_open(Target::Button(Button::West)));
@@ -4770,28 +5157,28 @@ mod tests {
     fn menu_editor_creates_fits_renames_and_validates() {
         let mut app = app();
         let _ = app.update(Message::NewMenu(MenuKindTag::Directional));
-        assert_eq!(app.config.menus[0].items.len(), 4, "a directional menu has four slots");
+        assert_eq!(app.config.general.menus[0].items.len(), 4, "a directional menu has four slots");
         assert!(app.open_menus.contains(&0), "a new menu opens as its own card");
         let _ = app.update(Message::SetMenuKind(0, MenuKind::List));
         let _ = app.update(Message::AddMenuItem(0));
-        assert_eq!(app.config.menus[0].items.len(), 5);
+        assert_eq!(app.config.general.menus[0].items.len(), 5);
         let _ = app.update(Message::SetMenuKind(0, MenuKind::Directional { cluster: Cluster::FaceButtons }));
-        assert_eq!(app.config.menus[0].items.len(), 4, "switching back trims to four slots");
+        assert_eq!(app.config.general.menus[0].items.len(), 4, "switching back trims to four slots");
 
         // Items take any action; the key picker writes into them.
         let _ = app.update(Message::SetAction(Target::MenuItem(0, 0), ButtonAction::Keys(vec![])));
         pick(&mut app, KeyField::root(Target::MenuItem(0, 0)), false, &["KEY_M"]);
-        assert_eq!(app.config.menus[0].items[0].action, ButtonAction::Keys(vec!["KEY_M".into()]));
+        assert_eq!(app.config.general.menus[0].items[0].action, ButtonAction::Keys(vec!["KEY_M".into()]));
 
         // A second menu goes on top; opened from the first and from a profile, it follows a rename.
         let _ = app.update(Message::NewMenu(MenuKindTag::Directional));
         assert_eq!(app.open_menus, HashSet::from([0, 1]), "the older card moved down, still open");
         let _ = app.update(Message::RenameMenu(0, "Weapons".into()));
-        app.config.menus[1].items[1].action = ButtonAction::OpenMenu("Weapons".into());
-        app.config.profiles[0].set_button(Button::Select, ButtonAction::OpenMenu("Weapons".into()));
+        app.config.general.menus[1].items[1].action = ButtonAction::OpenMenu("Weapons".into());
+        app.config.general.profiles[0].set_button(Button::Select, ButtonAction::OpenMenu("Weapons".into()));
         let _ = app.update(Message::RenameMenu(0, "Wheel".into()));
-        assert_eq!(app.config.menus[1].items[1].action, ButtonAction::OpenMenu("Wheel".into()));
-        assert_eq!(app.config.profiles[0].button(Button::Select), &ButtonAction::OpenMenu("Wheel".into()));
+        assert_eq!(app.config.general.menus[1].items[1].action, ButtonAction::OpenMenu("Wheel".into()));
+        assert_eq!(app.config.general.profiles[0].button(Button::Select), &ButtonAction::OpenMenu("Wheel".into()));
         assert_eq!(app.validate(), None);
         // Submenus must be the same kind as the menu opening them.
         let _ = app.update(Message::SetMenuKind(0, MenuKind::List));
@@ -4804,7 +5191,7 @@ mod tests {
         let _ = app.update(Message::ToggleMenu(0));
         let _ = app.update(Message::ToggleAppearance(Some(1)));
         let _ = app.update(Message::DeleteMenu(0));
-        assert_eq!(app.config.menus[0].name, "Menu");
+        assert_eq!(app.config.general.menus[0].name, "Menu");
         assert!(app.open_menus.contains(&0) && app.open_appearance.contains(&Some(0)));
         let _ = app.update(Message::DeleteMenu(0));
         let err = app.validate().unwrap();
@@ -4812,35 +5199,177 @@ mod tests {
     }
 
     #[test]
-    fn scoped_items_follow_profiles_and_are_checked_per_profile() {
-        let mut app = app();
-        let gamepad = app.config.profiles[0].name.clone();
-        let desktop = app.config.profiles[1].name.clone();
-        // With a profile picked in the filter, new things belong to it.
-        let _ = app.update(Message::SetFilter(ScopeFilter::Profile(gamepad.clone())));
+    fn games_own_their_items_and_can_use_shared_ones() {
+        let mut app = with_game();
         let _ = app.update(Message::NewMacro);
-        assert_eq!(app.config.macros[0].profiles, Some(vec![gamepad.clone()]));
-        assert_eq!(Names::for_profile(&app.config, &gamepad).macros, ["Macro"]);
-        assert!(Names::for_profile(&app.config, &desktop).macros.is_empty());
-
-        // Another profile using it can't be saved.
-        app.config.profiles[1].set_button(Button::West, ButtonAction::Macro { name: "Macro".into(), repeat: false });
+        assert_eq!(app.config.games[0].macros[0].name, "Macro");
+        assert!(app.config.general.macros.is_empty(), "a game's new items are its own");
+        // General's profiles can't use it.
+        app.config.general.profiles[0].set_button(Button::West, ButtonAction::Macro { name: "Macro".into(), repeat: false });
         let err = app.validate().unwrap();
-        assert!(err.contains("belongs to other profiles"), "{err}");
-        let _ = app.update(Message::SetScope(ScopeTarget::Macro(0), None));
-        assert_eq!(app.validate(), None, "shared again");
+        assert!(err.starts_with("General: ") && err.contains("missing macro"), "{err}");
 
-        // Renaming and duplicating the profile carry its things along.
-        let _ = app.update(Message::SetScope(ScopeTarget::Macro(0), Some(vec![gamepad.clone()])));
-        let _ = app.update(Message::RenameProfile("Pad".into()));
-        assert_eq!(app.config.macros[0].profiles, Some(vec!["Pad".to_string()]));
-        assert_eq!(app.filter, ScopeFilter::Profile("Pad".into()));
-        let _ = app.update(Message::AddProfile(Template::Duplicate));
-        let copy = app.config.profiles.last().unwrap().name.clone();
-        assert_eq!(app.config.macros[0].profiles, Some(vec!["Pad".to_string(), copy.clone()]));
-        let _ = app.update(Message::DeleteProfile);
-        assert_eq!(app.config.macros[0].profiles, Some(vec!["Pad".to_string()]));
-        assert!(ScopeFilter::Shared.shows(&None) && !ScopeFilter::Shared.shows(&Some(vec!["Pad".into()])));
+        // A shared macro is usable everywhere.
+        let _ = app.update(Message::SelectPage(Page::Game(None)));
+        let _ = app.update(Message::SelectGameTab(GameTab::Macros));
+        let _ = app.update(Message::SetSharedView(true));
+        let _ = app.update(Message::NewMacro);
+        let _ = app.update(Message::RenameMacro(0, "Screenshot".into()));
+        app.config.general.profiles[0].set_button(Button::West, ButtonAction::Macro { name: "Screenshot".into(), repeat: false });
+        app.config.games[0].profiles[0].set_button(Button::West, ButtonAction::Macro { name: "Screenshot".into(), repeat: false });
+        assert_eq!(app.validate(), None);
+        // Renaming a shared item follows into every game.
+        let _ = app.update(Message::RenameMacro(0, "Snap".into()));
+        let snap = ButtonAction::Macro { name: "Snap".into(), repeat: false };
+        assert_eq!(app.config.general.profiles[0].button(Button::West), &snap);
+        assert_eq!(app.config.games[0].profiles[0].button(Button::West), &snap);
+        // A shared name can't be taken by a game's item, and a game's name isn't taken twice.
+        let _ = app.update(Message::RenameMacro(0, "Macro".into()));
+        assert_eq!(app.config.shared.macros[0].name, "Snap", "Doom has a macro named that");
+        let _ = app.update(Message::SelectPage(Page::Game(Some("Doom".into()))));
+        let _ = app.update(Message::RenameMacro(0, "Snap".into()));
+        assert_eq!(app.config.games[0].macros[0].name, "Macro");
+        let _ = app.update(Message::NewMacro);
+        assert_eq!(app.config.games[0].macros[0].name, "Macro 2");
+    }
+
+    #[test]
+    fn games_are_renamed_deleted_and_added_empty() {
+        let mut app = with_game();
+        app.config.auto_switch.default_profile = Some(ProfileRef::new(Some("Doom"), "Menus"));
+        let _ = app.update(Message::RenameGame("Doom II".into()));
+        assert_eq!(app.page, Page::Game(Some("Doom II".into())));
+        assert_eq!(app.config.auto_switch.default_profile, Some(ProfileRef::new(Some("Doom II"), "Menus")));
+        assert_eq!(app.game().name, "Doom II");
+
+        let _ = app.update(Message::AskDeleteGame);
+        assert!(matches!(app.dialog, Some(Dialog::DeleteGame(ref n)) if n == "Doom II"));
+        let _ = app.update(Message::ConfirmDeleteGame);
+        assert!(app.config.games.is_empty() && app.dialog.is_none());
+        assert_eq!(app.page, Page::Game(None));
+        assert_eq!(app.config.auto_switch.default_profile, None);
+
+        let _ = app.update(Message::AddEmptyGame(Template::Strategy));
+        assert_eq!(app.page, Page::Game(Some("New game".into())));
+        assert_eq!(app.game().profiles[0].name, "Strategy");
+        assert_eq!(app.game_tab, GameTab::Details);
+        let _ = app.update(Message::AddEmptyGame(Template::Gamepad));
+        assert_eq!(app.config.games[1].name, "New game 2");
+    }
+
+    #[test]
+    fn importing_a_pack_file_previews_then_adds_the_game() {
+        let mut app = with_game();
+        app.config.shared.macros.push(Macro { name: "Heal".into(), steps: vec![MacroStep::Wait(10)] });
+        app.config.games[0].profiles[0].set_button(Button::North, ButtonAction::Macro { name: "Heal".into(), repeat: false });
+        let text = pack::export(&app.config.games[0], &app.config.shared, &pack::draft(&app.config.games[0], false))
+            .pack
+            .to_toml()
+            .unwrap();
+
+        let _ = app.update(Message::PackFileRead(Some(Ok(text))));
+        let Some(Dialog::Import { plan, .. }) = &app.dialog else { panic!("no preview") };
+        assert!(plan.name_clash && plan.shared_clashes.len() == 1 && plan.rule_clashes.len() == 1);
+        assert_eq!(app.config.games.len(), 1, "nothing changes before confirming");
+        let _ = app.update(Message::SetKeepMine(0, true));
+        let _ = app.update(Message::ConfirmImport);
+        assert_eq!(app.page, Page::Game(Some("Doom (2)".into())));
+        let imported = app.game();
+        assert_eq!(imported.macros[0].name, "Heal (2)");
+        assert!(!imported.rules[0].enabled && app.config.games[0].rules[0].enabled, "kept mine");
+        assert_eq!(app.validate(), None);
+
+        let _ = app.update(Message::PackFileRead(Some(Ok("format = 9".into()))));
+        assert!(app.message.as_ref().is_some_and(|(m, err)| *err && m.contains("newer version")));
+    }
+
+    #[test]
+    fn export_drafts_fork_and_remember_their_details() {
+        let mut app = with_game();
+        let _ = app.update(Message::OpenExport);
+        let Some(Dialog::Export { info, .. }) = &app.dialog else { panic!("no export dialog") };
+        let id = info.id.clone();
+        assert_eq!(info.version, "1.0");
+        let _ = app.update(Message::SetPackField(PackField::Author, "me".into()));
+        let _ = app.update(Message::Exported(Some(Ok("/tmp/doom.padpack".into()))));
+        assert!(app.dialog.is_none());
+        assert_eq!((app.game().pack.id.as_str(), app.game().pack.author.as_str()), (id.as_str(), "me"));
+        let _ = app.update(Message::OpenExport);
+        let Some(Dialog::Export { info, .. }) = &app.dialog else { panic!() };
+        assert_eq!(info.id, id, "my own pack keeps its ID");
+
+        // General has no Details tab, so nothing to export.
+        let _ = app.update(Message::CloseDialog);
+        let _ = app.update(Message::SelectPage(Page::Game(None)));
+        let _ = app.update(Message::OpenExport);
+        assert!(app.dialog.is_none());
+    }
+
+    #[test]
+    fn items_are_copied_from_other_games() {
+        let mut app = with_game();
+        let mut quake = Game::new("Quake", vec![Profile::passthrough("P")]);
+        quake.info.push(InfoOverlay { name: "Controls".into(), always: true, style: OverlayStyle::info(), rows: vec![] });
+        app.config.games.push(quake);
+        app.config.games[0].info.push(InfoOverlay { name: "Controls".into(), always: false, style: OverlayStyle::info(), rows: vec![] });
+        let _ = app.update(Message::OpenBrowse(ItemKind::Info));
+        let _ = app.update(Message::BrowseFrom(BrowseSource::Game(Some("Quake".into()))));
+        let _ = app.update(Message::CopyItem(0));
+        assert!(app.dialog.is_none());
+        let names: Vec<&str> = app.game().info.iter().map(|o| o.name.as_str()).collect();
+        assert_eq!(names, ["Controls 2", "Controls"]);
+        assert!(app.game().info[0].always);
+        assert!(app.open_infos.contains(&0));
+    }
+
+    #[test]
+    fn every_page_tab_and_dialog_builds() {
+        let mut app = with_game();
+        app.config.shared.menus.push(Menu { name: "Wheel".into(), kind: MenuKind::List, items: vec![], cancel: None, style: OverlayStyle::default() });
+        app.config.games[0].info.push(InfoOverlay { name: "Controls".into(), always: true, style: OverlayStyle::info(), rows: vec![vec!["{south}".into()]] });
+        app.config.games[0].macros.push(Macro { name: "Dodge".into(), steps: vec![MacroStep::Wait(5)] });
+        app.status = Some(Status { devices: vec![device("Pad", true, false)], ..Default::default() });
+        let _ = app.view();
+        for page in [Page::Overview, Page::Settings, Page::Game(None), Page::Game(Some("Doom".into()))] {
+            let _ = app.update(Message::SelectPage(page));
+            for tab in GameTab::ALL {
+                let _ = app.update(Message::SelectGameTab(tab));
+                let _ = app.update(Message::ToggleMacro(0));
+                let _ = app.update(Message::ToggleMenu(0));
+                let _ = app.update(Message::ToggleInfo(0));
+                let _ = app.update(Message::ToggleSharedSection);
+                let _ = app.view();
+            }
+        }
+        let _ = app.update(Message::SetSharedView(true));
+        let _ = app.view();
+        let _ = app.update(Message::SelectPage(Page::Game(Some("Doom".into()))));
+        let text = pack::export(app.game(), &app.config.shared, &pack::draft(app.game(), false)).pack.to_toml().unwrap();
+        let dialogs = [
+            Message::OpenAddGame,
+            Message::Installed(launchers::Installed::default()),
+            Message::PackFileRead(Some(Ok(text))),
+            Message::OpenExport,
+            Message::AskDeleteGame,
+            Message::OpenBrowse(ItemKind::Menu),
+            Message::BrowseFrom(BrowseSource::Game(None)),
+        ];
+        for m in dialogs {
+            let _ = app.update(m);
+            let _ = app.view();
+        }
+        let _ = app.update(Message::BrowseOpen(0));
+        let _ = app.view();
+    }
+
+    #[test]
+    fn the_add_game_picker_and_page_changes_close_dialogs() {
+        let mut app = app();
+        let _ = app.update(Message::OpenAddGame);
+        let _ = app.update(Message::SetLibrarySearch("doo".into()));
+        assert!(matches!(&app.dialog, Some(Dialog::AddGame { search, .. }) if search == "doo"));
+        let _ = app.update(Message::SelectPage(Page::Settings));
+        assert!(app.dialog.is_none() && app.page == Page::Settings);
     }
 
     #[test]
@@ -4852,16 +5381,16 @@ mod tests {
         let _ = app.update(Message::SetInfoCell(0, 2, 0, "Time".into()));
         let _ = app.update(Message::InsertInfoToken(0, 2, 0, TokenChoice("time", "")));
         let _ = app.update(Message::AddInfoCell(0, 2));
-        assert_eq!(app.config.info[0].rows[2], ["Time {time}", ""]);
+        assert_eq!(app.config.general.info[0].rows[2], ["Time {time}", ""]);
         let _ = app.update(Message::MoveInfoRow(0, 2, true));
-        assert_eq!(app.config.info[0].rows[1][0], "Time {time}");
+        assert_eq!(app.config.general.info[0].rows[1][0], "Time {time}");
         let _ = app.update(Message::RemoveInfoCell(0, 1, 1));
-        assert_eq!(app.config.info[0].rows[1].len(), 1);
+        assert_eq!(app.config.general.info[0].rows[1].len(), 1);
 
         // "Show info overlay" mappings follow a rename; a missing one blocks saving.
-        app.config.profiles[0].set_button(Button::Select, ButtonAction::ShowInfo("Info".into()));
+        app.config.general.profiles[0].set_button(Button::Select, ButtonAction::ShowInfo("Info".into()));
         let _ = app.update(Message::RenameInfo(0, "Controls".into()));
-        assert_eq!(app.config.profiles[0].button(Button::Select), &ButtonAction::ShowInfo("Controls".into()));
+        assert_eq!(app.config.general.profiles[0].button(Button::Select), &ButtonAction::ShowInfo("Controls".into()));
         assert_eq!(app.validate(), None);
         let _ = app.update(Message::DeleteInfo(0));
         assert!(app.validate().unwrap().contains("missing info overlay"));
@@ -4879,7 +5408,7 @@ mod tests {
             ..OverlayStyle::default()
         };
         let _ = app.update(Message::SetMenuStyle(0, style.clone()));
-        assert_eq!(app.config.menus[0].style, style);
+        assert_eq!(app.config.general.menus[0].style, style);
         let _ = app.update(Message::SetKeyboardStyle(OverlayStyle::default()));
         assert_eq!(app.config.keyboard_style.position, ScreenPosition::Center);
         // Previews keep colors but never grow past 100% so they fit the window.

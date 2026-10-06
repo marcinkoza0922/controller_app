@@ -10,7 +10,7 @@ use std::{
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::config::{Button, Config};
+use crate::config::{Button, Config, ProfileRef};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Request {
@@ -21,7 +21,10 @@ pub enum Request {
     /// Re-read the config file from disk.
     Reload,
     SetEnabled(bool),
+    /// Switch to a profile found by name (see `Config::find_profile`).
     SetProfile(String),
+    /// Switch to exactly this profile.
+    Activate(ProfileRef),
     NextProfile,
     /// Keep the connection open; the daemon streams one `Option<InputSnapshot>` JSON line per
     /// update (at most ~60/s). `null` means no controller is active.
@@ -41,6 +44,8 @@ pub enum Request {
     WatchOverlay,
 }
 
+// One reply per connection, so the size difference doesn't matter.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Response {
     Ok,
@@ -53,6 +58,9 @@ pub enum Response {
 pub struct Status {
     pub enabled: bool,
     pub active_profile: String,
+    /// The active profile's game; `None` is General.
+    #[serde(default)]
+    pub active_game: Option<String>,
     pub devices: Vec<DeviceInfo>,
     #[serde(default)]
     pub focus_backend: FocusBackend,

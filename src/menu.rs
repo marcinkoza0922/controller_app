@@ -560,7 +560,7 @@ mod tests {
     }
 
     fn menu(name: &str, kind: MenuKind, items: Vec<MenuItem>) -> Menu {
-        Menu { name: name.into(), profiles: None, kind, items, cancel: None, style: OverlayStyle::default() }
+        Menu { name: name.into(), kind, items, cancel: None, style: OverlayStyle::default() }
     }
 
     fn numbers(n: usize) -> Vec<MenuItem> {

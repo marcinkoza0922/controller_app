@@ -53,30 +53,25 @@ pub fn tooltip(theme: &Theme) -> container::Style {
     }
 }
 
-/// Top-level page tabs: plain text over an underline, so they read as navigation rather
-/// than as buttons like the section switches inside a page.
-pub fn page_tab(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+/// Sidebar entries: plain text, with the open page (and the hovered one) on a tinted
+/// background, so they read as navigation rather than as buttons.
+pub fn nav(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |theme, status| {
         let p = theme.extended_palette();
-        let text_color = if selected {
-            p.primary.base.color
-        } else if matches!(status, button::Status::Hovered | button::Status::Pressed) {
-            p.background.base.text
+        let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+        let background = if selected {
+            Some(p.primary.weak.color.into())
+        } else if hovered {
+            Some(p.background.weak.color.into())
         } else {
-            muted(p.background.base.text)
+            None
         };
-        button::Style { background: None, text_color, ..button::Style::default() }
-    }
-}
-
-/// The bar under a page tab: the accent color under the open page.
-pub fn page_tab_underline(selected: bool) -> impl Fn(&Theme) -> container::Style {
-    move |theme| {
-        let p = theme.extended_palette();
-        container::Style {
-            background: selected.then(|| p.primary.base.color.into()),
-            border: Border { radius: 2.0.into(), ..Border::default() },
-            ..container::Style::default()
+        let text_color = if selected { p.primary.weak.text } else { p.background.base.text };
+        button::Style {
+            background,
+            text_color,
+            border: Border { radius: 6.0.into(), ..Border::default() },
+            ..button::Style::default()
         }
     }
 }

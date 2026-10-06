@@ -2036,7 +2036,7 @@ mod tests {
 
     fn macro_engine(steps: Vec<MacroStep>) -> Engine {
         let mut e = Engine::default();
-        e.set_macros(&[Macro { name: "m".into(), profiles: None, steps }]);
+        e.set_macros(&[Macro { name: "m".into(), steps }]);
         e
     }
 
