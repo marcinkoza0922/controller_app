@@ -16,8 +16,8 @@ use crate::{
     config::{
         Analog, Button, ButtonAction, CarouselControls, Cluster, Combo, Config, Game, GestureKind, GyroActivation,
         GyroConfig, GyroHorizontal, GyroInput, GyroMode, InfoOverlay, ItemKind, Macro, MacroStep, Menu, MenuItem,
-        MenuKind, MenuKindTag, MouseButton, OverlayStyle, Paint, Profile, ProfileRef, Rule, RuleKind, ScreenPosition,
-        Stick, StickAction, StickConfig, Trigger, TriggerAction, WheelDirection, Zone,
+        MenuKind, MenuKindTag, MouseButton, OverlayStyle, Paint, Profile, ProfileRef, Rule, RuleKind, ScopeRef,
+        ScreenPosition, Stick, StickAction, StickConfig, Trigger, TriggerAction, WheelDirection, Zone, free_name,
     },
     engine::Opener,
     info::PadFamily,
@@ -92,6 +92,9 @@ struct App {
     /// Games and profiles renamed since the last save. The daemon still reports the active
     /// profile by its old name until then.
     renames: Vec<Rename>,
+    /// The shown game's items changed since it was imported (see `pack::edited_items`),
+    /// worked out after each edit rather than every frame.
+    edited: Vec<String>,
 }
 
 /// What the sidebar shows on the right.
@@ -404,7 +407,7 @@ fn fit_items(menu: &mut Menu) {
 
 /// What's wrong with a menu item's action: the usual checks, plus which menus it may open
 /// (see [`crate::menu::can_open`]).
-fn item_problem(menu: &Menu, action: &ButtonAction, menus: &[Menu], names: &Names) -> Option<String> {
+fn item_problem(menu: &Menu, action: &ButtonAction, menus: &[&Menu], names: &Names) -> Option<String> {
     action_problem(action, names).or_else(|| {
         let mut problem = None;
         action.walk(&mut |a| {
@@ -428,7 +431,7 @@ fn info_has_problem(info: &[InfoOverlay]) -> bool {
     info.iter().enumerate().any(|(i, o)| o.name.trim().is_empty() || info[..i].iter().any(|other| other.name == o.name))
 }
 
-fn menus_have_problem(menus: &[Menu], reachable: &[Menu], names: &Names) -> bool {
+fn menus_have_problem(menus: &[Menu], reachable: &[&Menu], names: &Names) -> bool {
     menus.iter().enumerate().any(|(i, m)| {
         m.name.trim().is_empty()
             || menus[..i].iter().any(|o| o.name == m.name)
@@ -454,31 +457,19 @@ struct Names {
 }
 
 impl Names {
-    fn of(macros: &[Macro], menus: &[Menu], info: &[InfoOverlay]) -> Self {
-        Names {
-            macros: macros.iter().map(|m| m.name.clone()).collect(),
-            menus: menus.iter().map(|m| m.name.clone()).collect(),
-            infos: info.iter().map(|o| o.name.clone()).collect(),
-        }
+    fn of(scope: &ScopeRef) -> Self {
+        let list = |kind| scope.names(kind).into_iter().map(str::to_string).collect();
+        Names { macros: list(ItemKind::Macro), menus: list(ItemKind::Menu), infos: list(ItemKind::Info) }
     }
 
     /// What a game's profiles and items can use: its own items, then shared ones.
     fn for_game(config: &Config, game: &Game) -> Self {
-        let mut names = Names::of(&game.macros, &game.menus, &game.info);
-        let shared = Names::shared(config);
-        for (own, more) in [(&mut names.macros, shared.macros), (&mut names.menus, shared.menus), (&mut names.infos, shared.infos)] {
-            for name in more {
-                if !own.contains(&name) {
-                    own.push(name);
-                }
-            }
-        }
-        names
+        Names::of(&config.scope_of(Some(game)))
     }
 
     /// What shared items can use: only other shared items.
     fn shared(config: &Config) -> Self {
-        Names::of(&config.shared.macros, &config.shared.menus, &config.shared.info)
+        Names::of(&config.scope_of(None))
     }
 
     fn list(&self, kind: ItemKind) -> &[String] {
@@ -965,6 +956,7 @@ impl App {
             library: library::entries(),
             installed: None,
             renames: Vec::new(),
+            edited: Vec::new(),
         };
         let load = Task::perform(
             async {
@@ -1011,7 +1003,8 @@ impl App {
 
     /// The Macros, Menus and Info overlays tabs show shared items (on General's page).
     fn on_shared(&self) -> bool {
-        self.shared_view && self.page == Page::Game(None)
+        let item_tab = matches!(self.game_tab, GameTab::Macros | GameTab::Menus | GameTab::Info);
+        self.shared_view && item_tab && self.page == Page::Game(None)
     }
 
     fn macros(&self) -> &Vec<Macro> {
@@ -1051,7 +1044,7 @@ impl App {
             return;
         }
         self.config.shared.rename_refs(kind, old, new);
-        let own = |g: &Game| Names::of(&g.macros, &g.menus, &g.info).list(kind).iter().any(|n| n == old);
+        let own = |g: &Game| g.names(kind).contains(&old);
         if !own(&self.config.general) {
             self.config.general.rename_refs(kind, old, new);
         }
@@ -1060,22 +1053,37 @@ impl App {
         }
     }
 
-    /// Whether `name` can be given to an item of `kind` in the shown list (other than the one
-    /// at `index`): unique there, and not clashing between any game's items and shared ones.
-    fn item_name_free(&self, kind: ItemKind, index: Option<usize>, name: &str) -> bool {
+    /// Why an item of `kind` in the shown list (other than the one at `index`) can't be named
+    /// `name`: taken there, or clashing between a game's items and shared ones.
+    fn name_clash(&self, kind: ItemKind, index: Option<usize>, name: &str) -> Option<String> {
         let list: Vec<&String> = match kind {
             ItemKind::Macro => self.macros().iter().map(|m| &m.name).collect(),
             ItemKind::Menu => self.menus().iter().map(|m| &m.name).collect(),
             ItemKind::Info => self.infos().iter().map(|o| &o.name).collect(),
         };
-        let taken_here = list.iter().enumerate().any(|(i, n)| Some(i) != index && *n == name);
-        // A game's item can't take a shared item's name, nor a shared item one a game uses.
-        let taken_elsewhere = if self.on_shared() {
-            self.config.all_games().any(|(_, g)| Names::of(&g.macros, &g.menus, &g.info).list(kind).iter().any(|n| n == name))
+        if list.iter().enumerate().any(|(i, n)| Some(i) != index && *n == name) {
+            return Some("name used twice".into());
+        }
+        let noun = kind.noun();
+        if self.on_shared() {
+            // A shared item can't take a name a game's own item uses.
+            let (game, _) = self.config.all_games().find(|(_, g)| g.names(kind).contains(&name))?;
+            Some(format!("{} has its own {noun} with this name", game.unwrap_or("General")))
         } else {
-            Names::shared(&self.config).list(kind).iter().any(|n| n == name)
-        };
-        !taken_here && !taken_elsewhere
+            self.config.shared.names(kind).contains(&name).then(|| format!("a shared {noun} has this name"))
+        }
+    }
+
+    fn item_name_free(&self, kind: ItemKind, index: Option<usize>, name: &str) -> bool {
+        self.name_clash(kind, index, name).is_none()
+    }
+
+    /// What's wrong with the name of the item of `kind` at `index`, for its card.
+    fn name_problem(&self, kind: ItemKind, index: usize, name: &str) -> Option<String> {
+        if name.trim().is_empty() {
+            return Some("needs a name".into());
+        }
+        self.name_clash(kind, Some(index), name)
     }
 
     /// A free name for a new item of `kind`, "Macro", "Macro 2", ….
@@ -1125,6 +1133,16 @@ impl App {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        // Polling and live input don't change the config, and arrive many times a second.
+        let edits = !matches!(message, Message::Poll | Message::LiveInput(_) | Message::StatusLoaded(_));
+        let task = self.handle(message);
+        if edits {
+            self.edited = if self.page == Page::Game(None) { Vec::new() } else { pack::edited_items(self.game()) };
+        }
+        task
+    }
+
+    fn handle(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Poll => {
                 return Task::perform(call(Request::Status), |r| {
@@ -1928,14 +1946,20 @@ impl App {
         };
         let content = column![self.view_header(), rule::horizontal(1), page].spacing(16).padding(20);
         let main = column![scrollable(content).id("main").height(Length::Fill), self.view_footer()].width(Length::Fill);
-        let base: Element<'_, Message> = row![self.view_sidebar(), rule::vertical(1), main].into();
-        if let Some(picker) = &self.picker {
-            return stack![base, view_picker(picker)].into();
+        // Always a stack with the page first, popups or not: iced keeps widget state (such as
+        // the page's scroll position) by place in the tree, so the shape must not change when
+        // a popup opens or closes.
+        let base = row![self.view_sidebar(), rule::vertical(1), main];
+        let popup = match (&self.picker, &self.dialog) {
+            (Some(picker), _) => Some(view_picker(picker)),
+            (None, Some(dialog)) => Some(self.view_dialog(dialog)),
+            (None, None) => None,
+        };
+        let mut layers = stack![base];
+        if let Some(popup) = popup {
+            layers = layers.push(popup);
         }
-        match &self.dialog {
-            Some(dialog) => stack![base, self.view_dialog(dialog)].into(),
-            None => base,
-        }
+        layers.into()
     }
 
     /// Overview and Settings, then General and the games, with a search over the games.
@@ -1955,7 +1979,7 @@ impl App {
         };
         let active_game = self.config.active_ref().game;
         let playing = |key: &Option<String>| (&active_game == key && self.status.is_some()).then_some("●");
-        let updates: Vec<String> = library::updates(&self.config, &self.library).into_iter().map(|(name, _)| name).collect();
+        let updates: Vec<&str> = library::updates(&self.config, &self.library).into_iter().map(|(name, _)| name).collect();
 
         let mut col = column![
             entry("Overview".into(), Page::Overview, None),
@@ -1971,7 +1995,7 @@ impl App {
         games.sort_by_key(|g| g.name.to_lowercase());
         for g in games {
             let key = Some(g.name.clone());
-            let note = if updates.contains(&g.name) { Some("update") } else { playing(&key) };
+            let note = if updates.contains(&g.name.as_str()) { Some("update") } else { playing(&key) };
             let label = if g.name.is_empty() { "(unnamed)".to_string() } else { g.name.clone() };
             col = col.push(entry(label, Page::Game(key), note));
         }
@@ -2008,7 +2032,7 @@ impl App {
             GameTab::Macros => macros_have_problem(self.macros(), &names),
             GameTab::Menus => menus_have_problem(self.menus(), &reachable, &names),
             GameTab::Info => info_has_problem(self.infos()),
-            GameTab::Details => !general && game_problem(&self.config, game).is_some_and(|p| p.contains("rule")),
+            GameTab::Details => !general && (rules_problem(game).is_some() || game.name.trim().is_empty()),
         };
         let mut segments = row![].spacing(2);
         for tab in GameTab::ALL.into_iter().filter(|t| !(general && *t == GameTab::Details)) {
@@ -2050,7 +2074,7 @@ impl App {
         let body = match tab {
             GameTab::Profiles => self.view_profile_tab(&names),
             GameTab::Macros => self.view_macros(&names),
-            GameTab::Menus => self.view_menus(&names),
+            GameTab::Menus => self.view_menus(&names, &reachable),
             GameTab::Info => self.view_infos(),
             GameTab::Details => self.view_details(),
         };
@@ -2409,11 +2433,11 @@ impl App {
             let source = if origin.library { "the built-in library" } else { "a pack file" };
             let by = if game.pack.author.is_empty() { String::new() } else { format!(" by {}", game.pack.author) };
             pack_rows.push(text(format!("Added from {source}: version {}{by}.", origin.version)).into());
-            let edited = pack::edited_items(game);
-            if !edited.is_empty() {
-                pack_rows.push(text(format!("Changed since: {}.", edited.join(", "))).size(13).color(MUTED_COLOR).into());
+            if !self.edited.is_empty() {
+                pack_rows.push(text(format!("Changed since: {}.", self.edited.join(", "))).size(13).color(MUTED_COLOR).into());
             }
-            if let Some((_, entry)) = library::updates(&self.config, &self.library).into_iter().find(|(n, _)| *n == game.name) {
+            let update = library::updates(&self.config, &self.library).into_iter().find(|(n, _)| *n == game.name);
+            if let Some(entry) = update.map(|(_, i)| &self.library[i]) {
                 pack_rows.push(
                     row![
                         text(format!("The library has version {}.", entry.pack.pack.version)).color(style_accent()),
@@ -2490,16 +2514,9 @@ impl App {
     /// A macro as its own collapsible card: a summary line, or its steps when open.
     fn view_macro_card<'a>(&'a self, mi: usize, m: &'a Macro, names: &Names) -> Element<'a, Message> {
         let open = self.open_macros.contains(&mi);
-        let macros = self.macros();
-        let problem = if m.name.trim().is_empty() {
-            Some("needs a name".to_string())
-        } else if macros[..mi].iter().chain(&macros[mi + 1..]).any(|o| o.name == m.name) {
-            Some("name used twice".to_string())
-        } else if !self.item_name_free(ItemKind::Macro, Some(mi), &m.name) {
-            Some("a shared macro has this name".to_string())
-        } else {
-            m.steps.iter().filter_map(MacroStep::action).find_map(|a| action_problem(a, names))
-        };
+        let problem = self
+            .name_problem(ItemKind::Macro, mi, &m.name)
+            .or_else(|| m.steps.iter().filter_map(MacroStep::action).find_map(|a| action_problem(a, names)));
         let chevron = if open { "▾" } else { "▸" };
         let title = text(format!("{chevron}  {}", if m.name.is_empty() { "(unnamed)" } else { &m.name })).size(18);
         let title = if problem.is_some() { title.color(ERROR_COLOR) } else { title };
@@ -2673,10 +2690,10 @@ impl App {
         .into()
     }
 
-    fn view_menus<'a>(&'a self, names: &Names) -> Element<'a, Message> {
+    fn view_menus<'a>(&'a self, names: &Names, reachable: &[&Menu]) -> Element<'a, Message> {
         let mut col = column![view_new_menu_card()].spacing(16);
         for (i, menu) in self.menus().iter().enumerate() {
-            col = col.push(self.view_menu_card(i, menu, names));
+            col = col.push(self.view_menu_card(i, menu, names, reachable));
         }
         col.into()
     }
@@ -2692,15 +2709,7 @@ impl App {
     /// An info overlay as its own collapsible card.
     fn view_info_card<'a>(&'a self, i: usize, o: &'a InfoOverlay) -> Element<'a, Message> {
         let open = self.open_infos.contains(&i);
-        let problem = if o.name.trim().is_empty() {
-            Some("needs a name")
-        } else if self.infos().iter().enumerate().any(|(j, other)| j != i && other.name == o.name) {
-            Some("name used twice")
-        } else if !self.item_name_free(ItemKind::Info, Some(i), &o.name) {
-            Some("a shared info overlay has this name")
-        } else {
-            None
-        };
+        let problem = self.name_problem(ItemKind::Info, i, &o.name);
         let chevron = if open { "▾" } else { "▸" };
         let title = text(format!("{chevron}  {}", if o.name.is_empty() { "(unnamed)" } else { &o.name })).size(18);
         let title = if problem.is_some() { title.color(ERROR_COLOR) } else { title };
@@ -2894,14 +2903,11 @@ impl App {
     }
 
     /// A menu as its own collapsible card: a summary line, or the full editor when open.
-    fn view_menu_card<'a>(&'a self, mi: usize, menu: &'a Menu, names: &Names) -> Element<'a, Message> {
+    fn view_menu_card<'a>(&'a self, mi: usize, menu: &'a Menu, names: &Names, reachable: &[&Menu]) -> Element<'a, Message> {
         let open = self.open_menus.contains(&mi);
-        let reachable = reachable_menus(&self.config, (!self.on_shared()).then(|| self.game()));
-        let problem = if !self.item_name_free(ItemKind::Menu, Some(mi), &menu.name) {
-            Some("another menu, or a shared one, has this name".to_string())
-        } else {
-            menu.items.iter().find_map(|item| item_problem(menu, &item.action, &reachable, names))
-        };
+        let problem = self
+            .name_problem(ItemKind::Menu, mi, &menu.name)
+            .or_else(|| menu.items.iter().find_map(|item| item_problem(menu, &item.action, reachable, names)));
         let chevron = if open { "▾" } else { "▸" };
         let title = text(format!("{chevron}  {}", if menu.name.is_empty() { "(unnamed)" } else { &menu.name })).size(18);
         let title = if problem.is_some() { title.color(ERROR_COLOR) } else { title };
@@ -2921,12 +2927,12 @@ impl App {
         header = header.push(button(text("Delete").size(13)).style(button::danger).on_press(Message::DeleteMenu(mi)));
         let mut col = column![header].spacing(12);
         if open {
-            col = col.push(self.view_menu_editor(mi, menu, names));
+            col = col.push(self.view_menu_editor(mi, menu, names, reachable));
         }
         container(col).padding(14).width(Length::Fill).style(style::card).into()
     }
 
-    fn view_menu_editor<'a>(&'a self, mi: usize, menu: &'a Menu, names: &Names) -> Element<'a, Message> {
+    fn view_menu_editor<'a>(&'a self, mi: usize, menu: &'a Menu, names: &Names, reachable: &[&Menu]) -> Element<'a, Message> {
         let mut rows: Vec<Element<'a, Message>> = vec![labeled(
             "Name",
             field("Menu name", &menu.name).on_input(move |n| Message::RenameMenu(mi, n)).width(240).into(),
@@ -2982,7 +2988,6 @@ impl App {
         // Items open only other menus of the same kind; radial menus open none.
         let radial = matches!(menu.kind, MenuKind::Radial { .. });
         let item_kinds = if radial { RADIAL_ITEM_KINDS } else { MENU_ITEM_KINDS };
-        let reachable = reachable_menus(&self.config, (!self.on_shared()).then(|| self.game()));
         let item_names = Names {
             macros: names.macros.clone(),
             menus: reachable
@@ -3027,7 +3032,7 @@ impl App {
                     .push(small("✕", Some(Message::RemoveMenuItem(mi, i))));
             }
             let mut boxed = column![line].spacing(4);
-            if let Some(problem) = item_problem(menu, &item.action, &reachable, names) {
+            if let Some(problem) = item_problem(menu, &item.action, reachable, names) {
                 boxed = boxed.push(text(format!("⚠ {problem}")).size(12).color(ERROR_COLOR));
             }
             items = items.push(container(boxed).padding(8).style(style::inset));
@@ -3531,16 +3536,14 @@ fn macros_have_problem(macros: &[Macro], names: &Names) -> bool {
 
 /// The menus a game's items can open: its own, then shared ones (only shared ones for
 /// `None`, the shared items themselves).
-fn reachable_menus(config: &Config, game: Option<&Game>) -> Vec<Menu> {
-    let mut menus = game.map(|g| g.menus.clone()).unwrap_or_default();
-    menus.extend(config.shared.menus.iter().filter(|s| !menus.iter().any(|m| m.name == s.name)).cloned().collect::<Vec<_>>());
-    menus
+fn reachable_menus<'a>(config: &'a Config, game: Option<&'a Game>) -> Vec<&'a Menu> {
+    config.scope_of(game).menus
 }
 
 /// The first thing saving would reject in a list of macros, menus and info overlays.
 /// `names` is what they may refer to; `shared` holds the shared items' names, which a game's
 /// items may not reuse.
-fn items_problem(macros: &[Macro], menus: &[Menu], info: &[InfoOverlay], names: &Names, reachable: &[Menu], shared: Option<&Names>) -> Option<String> {
+fn items_problem(macros: &[Macro], menus: &[Menu], info: &[InfoOverlay], names: &Names, reachable: &[&Menu], shared: Option<&Names>) -> Option<String> {
     let clash = |kind: ItemKind, name: &str| shared.is_some_and(|s| s.list(kind).iter().any(|n| n == name));
     for (i, m) in macros.iter().enumerate() {
         if m.name.trim().is_empty() {
@@ -3632,6 +3635,11 @@ fn game_problem(config: &Config, g: &Game) -> Option<String> {
             return Some(format!("Profile {:?}: unknown key {:?}", p.name, short_key(bad)));
         }
     }
+    rules_problem(g)
+}
+
+/// What's wrong with a game's auto-switch rules, if anything.
+fn rules_problem(g: &Game) -> Option<String> {
     if let Some(r) = g.rules.iter().find(|r| r.value.trim().is_empty()) {
         return Some(format!("A per-game rule for profile {:?} has no {} to match.", r.profile, r.kind));
     }
@@ -5317,7 +5325,7 @@ mod tests {
         let _ = app.update(Message::CopyItem(0));
         assert!(app.dialog.is_none());
         let names: Vec<&str> = app.game().info.iter().map(|o| o.name.as_str()).collect();
-        assert_eq!(names, ["Controls 2", "Controls"]);
+        assert_eq!(names, ["Controls (2)", "Controls"]);
         assert!(app.game().info[0].always);
         assert!(app.open_infos.contains(&0));
     }
@@ -5360,6 +5368,61 @@ mod tests {
         }
         let _ = app.update(Message::BrowseOpen(0));
         let _ = app.view();
+    }
+
+    #[test]
+    fn copying_a_menu_brings_the_macros_it_runs() {
+        let mut app = with_game();
+        let heal = |steps: usize| Macro { name: "Heal".into(), steps: vec![MacroStep::Wait(1); steps] };
+        let mut quake = Game::new("Quake", vec![Profile::passthrough("P")]);
+        quake.macros = vec![heal(1), Macro { name: "Taunt".into(), steps: vec![] }];
+        quake.menus.push(Menu {
+            name: "Wheel".into(),
+            kind: MenuKind::List,
+            items: ["Heal", "Taunt"].map(|n| MenuItem { label: n.into(), action: ButtonAction::Macro { name: n.into(), repeat: false }, button: None }).into(),
+            cancel: None,
+            style: OverlayStyle::default(),
+        });
+        app.config.games.push(quake);
+        // Doom has its own "Taunt", which the copy can use, but no "Heal".
+        app.config.games[0].macros.push(Macro { name: "Taunt".into(), steps: vec![MacroStep::Wait(9)] });
+        app.config.games[0].menus.push(Menu { name: "Wheel".into(), kind: MenuKind::List, items: vec![], cancel: None, style: OverlayStyle::default() });
+        let _ = app.update(Message::SelectGameTab(GameTab::Menus));
+        let _ = app.update(Message::OpenBrowse(ItemKind::Menu));
+        let _ = app.update(Message::BrowseFrom(BrowseSource::Game(Some("Quake".into()))));
+        let _ = app.update(Message::CopyItem(0));
+        let doom = app.game();
+        assert_eq!(doom.menus.iter().map(|m| m.name.as_str()).collect::<Vec<_>>(), ["Wheel (2)", "Wheel"]);
+        assert_eq!(doom.macros.iter().map(|m| m.name.as_str()).collect::<Vec<_>>(), ["Heal", "Taunt"]);
+        assert!(app.open_menus.contains(&0));
+        assert!(app.message.as_ref().is_some_and(|(m, _)| m.contains("with macro “Heal”")), "{:?}", app.message);
+        assert_eq!(app.validate(), None);
+    }
+
+    #[test]
+    fn the_shared_switch_only_applies_to_item_tabs() {
+        let mut app = app();
+        app.config.general.macros.push(Macro { name: "Mine".into(), steps: vec![] });
+        app.config.general.profiles[0].set_button(Button::West, ButtonAction::Macro { name: "Mine".into(), repeat: false });
+        let _ = app.update(Message::SelectGameTab(GameTab::Macros));
+        let _ = app.update(Message::SetSharedView(true));
+        assert!(app.on_shared() && app.macros().is_empty());
+        let _ = app.update(Message::SelectGameTab(GameTab::Profiles));
+        assert!(!app.on_shared());
+        assert!(app.names().macros.contains(&"Mine".to_string()), "General's profiles see General's macros");
+    }
+
+    #[test]
+    fn name_clashes_say_where_the_other_item_is() {
+        let mut app = with_game();
+        app.config.games[0].macros.push(Macro { name: "Dodge".into(), steps: vec![] });
+        app.config.shared.macros.push(Macro { name: "Dodge".into(), steps: vec![] });
+        assert_eq!(app.name_problem(ItemKind::Macro, 0, "Dodge").as_deref(), Some("a shared macro has this name"));
+        let _ = app.update(Message::SelectPage(Page::Game(None)));
+        let _ = app.update(Message::SelectGameTab(GameTab::Macros));
+        let _ = app.update(Message::SetSharedView(true));
+        assert_eq!(app.name_problem(ItemKind::Macro, 0, "Dodge").as_deref(), Some("Doom has its own macro with this name"));
+        assert_eq!(app.name_problem(ItemKind::Macro, 0, " ").as_deref(), Some("needs a name"));
     }
 
     #[test]

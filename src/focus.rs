@@ -199,7 +199,7 @@ fn exe_name(cmdline: &[u8], exe_path: Option<&Path>) -> String {
 }
 
 /// Last component of a Unix or Windows path.
-fn base_name(path: &str) -> String {
+pub fn base_name(path: &str) -> String {
     path.rsplit(['/', '\\']).next().unwrap_or(path).to_string()
 }
 

@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{
     ButtonAction, Config, Game, GyroMode, InfoOverlay, ItemKind, Macro, Menu, MacroStep, Origin, PackInfo, PackRef,
-    Profile, Rule, Shared,
+    Profile, Rule, Shared, free_name,
 };
 
 /// The pack format this app writes, and the newest it reads.
@@ -146,8 +146,8 @@ fn check(pack: &Pack) -> Result<()> {
     }
     let game = pack.to_game();
     for kind in ItemKind::ALL {
-        let names = names(&game, kind);
-        let unique: BTreeSet<&String> = names.iter().copied().collect();
+        let names = game.names(kind);
+        let unique: BTreeSet<&str> = names.iter().copied().collect();
         if unique.len() != names.len() {
             bail!("the pack has two {}s with the same name", kind.noun());
         }
@@ -179,22 +179,6 @@ pub fn new_id() -> String {
     format!("{}-{}-{}-{}-{}", &hex[..8], &hex[8..12], &hex[12..16], &hex[16..20], &hex[20..])
 }
 
-fn names(game: &Game, kind: ItemKind) -> Vec<&String> {
-    match kind {
-        ItemKind::Macro => game.macros.iter().map(|m| &m.name).collect(),
-        ItemKind::Menu => game.menus.iter().map(|m| &m.name).collect(),
-        ItemKind::Info => game.info.iter().map(|o| &o.name).collect(),
-    }
-}
-
-fn shared_has(shared: &Shared, kind: ItemKind, name: &str) -> bool {
-    match kind {
-        ItemKind::Macro => shared.macros.iter().any(|m| m.name == name),
-        ItemKind::Menu => shared.menus.iter().any(|m| m.name == name),
-        ItemKind::Info => shared.info.iter().any(|o| o.name == name),
-    }
-}
-
 /// Every (kind, name) reference in these profiles, menus and macros, nested ones included.
 fn references(profiles: &[Profile], menus: &[Menu], macros: &[Macro]) -> BTreeSet<(ItemKind, String)> {
     let mut refs = BTreeSet::new();
@@ -217,6 +201,33 @@ fn references(profiles: &[Profile], menus: &[Menu], macros: &[Macro]) -> BTreeSe
         m.steps.iter().filter_map(MacroStep::action).for_each(&mut visit);
     }
     refs
+}
+
+/// What copying the `kind` item `name` out of `source` has to bring: the item itself (first)
+/// and, followed through menu items and macro steps, every item of `source` it refers to
+/// that `resolves` can't already find where it's going.
+pub fn dependencies(source: &Shared, kind: ItemKind, name: &str, resolves: impl Fn(ItemKind, &str) -> bool) -> Vec<(ItemKind, String)> {
+    if !source.names(kind).contains(&name) {
+        return Vec::new();
+    }
+    let mut needed = vec![(kind, name.to_string())];
+    let mut i = 0;
+    while i < needed.len() {
+        let (k, n) = needed[i].clone();
+        let refs = match k {
+            ItemKind::Macro => source.macros.iter().find(|m| m.name == n).map(|m| references(&[], &[], std::slice::from_ref(m))),
+            ItemKind::Menu => source.menus.iter().find(|m| m.name == n).map(|m| references(&[], std::slice::from_ref(m), &[])),
+            ItemKind::Info => None,
+        };
+        for (rk, rn) in refs.unwrap_or_default() {
+            let item = (rk, rn);
+            if !needed.contains(&item) && !resolves(rk, &item.1) && source.names(rk).contains(&item.1.as_str()) {
+                needed.push(item);
+            }
+        }
+        i += 1;
+    }
+    needed
 }
 
 /// Inputs beyond the XInput baseline that the profiles use, and where.
@@ -248,9 +259,10 @@ pub fn draft(game: &Game, library: bool) -> PackInfo {
         && !library
         && (info.id.is_empty() || info.id == origin.id)
     {
+        let name = if origin.name.is_empty() { &game.name } else { &origin.name };
         info.based_on = Some(PackRef {
             id: origin.id.clone(),
-            name: game.name.clone(),
+            name: name.clone(),
             author: info.author.clone(),
             version: origin.version.clone(),
         });
@@ -278,10 +290,10 @@ pub fn export(game: &Game, shared: &Shared, info: &PackInfo) -> Export {
         let refs = references(&pack_game.profiles, &pack_game.menus, &pack_game.macros);
         let mut added = false;
         for (kind, name) in refs {
-            if names(&pack_game, kind).contains(&&name) {
+            if pack_game.names(kind).contains(&name.as_str()) {
                 continue;
             }
-            if !shared_has(shared, kind, &name) {
+            if !shared.names(kind).contains(&name.as_str()) {
                 dangling.insert(format!("{} {name:?}", kind.noun()));
                 continue;
             }
@@ -385,12 +397,22 @@ impl UpdateKind {
 }
 
 /// Compares dotted versions number by number ("1.10" is newer than "1.9"); anything that
-/// isn't a number compares as text.
+/// isn't a number compares as text. A pre-release ("1.0-beta") comes before its release.
 pub fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
-    let parts = |v: &str| v.trim().trim_start_matches(['v', 'V']).split('.').map(str::to_string).collect::<Vec<_>>();
-    let (a, b) = (parts(a), parts(b));
+    use std::cmp::Ordering;
+    let split = |v: &str| {
+        let v = v.trim().trim_start_matches(['v', 'V']);
+        // Build metadata ("+linux") doesn't order versions.
+        let v = v.split('+').next().unwrap_or(v);
+        match v.split_once('-') {
+            Some((core, pre)) => (core.to_string(), Some(pre.to_string())),
+            None => (v.to_string(), None),
+        }
+    };
+    let ((a, a_pre), (b, b_pre)) = (split(a), split(b));
+    let (a, b): (Vec<&str>, Vec<&str>) = (a.split('.').collect(), b.split('.').collect());
     for i in 0..a.len().max(b.len()) {
-        let (x, y) = (a.get(i).map_or("0", String::as_str), b.get(i).map_or("0", String::as_str));
+        let (x, y) = (a.get(i).copied().unwrap_or("0"), b.get(i).copied().unwrap_or("0"));
         let order = match (x.parse::<u64>(), y.parse::<u64>()) {
             (Ok(x), Ok(y)) => x.cmp(&y),
             _ => x.cmp(y),
@@ -399,7 +421,12 @@ pub fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
             return order;
         }
     }
-    std::cmp::Ordering::Equal
+    match (a_pre, b_pre) {
+        (None, None) => Ordering::Equal,
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (Some(x), Some(y)) => compare_versions(&x, &y),
+    }
 }
 
 /// An imported rule matching the same window as another game's (switched-on) rule.
@@ -438,10 +465,6 @@ pub struct Choices {
     pub keep_mine: Vec<bool>,
 }
 
-fn unique(base: &str, taken: impl Fn(&str) -> bool) -> String {
-    (2..).map(|i| format!("{base} ({i})")).find(|n| !taken(n)).unwrap_or_else(|| base.to_string())
-}
-
 /// Works out what importing `pack` would do to `config`.
 pub fn plan(config: &Config, pack: Pack, library: bool) -> Plan {
     let installed = config.games.iter().find(|g| g.origin.as_ref().is_some_and(|o| o.id == pack.pack.id));
@@ -452,15 +475,16 @@ pub fn plan(config: &Config, pack: Pack, library: bool) -> Plan {
     });
     let name = &pack.pack.name;
     let name_clash = installed.is_none() && config.games.iter().any(|g| &g.name == name);
-    let renamed = unique(name, |n| config.games.iter().any(|g| g.name == n));
+    let renamed = free_name(name, |n| config.games.iter().any(|g| g.name == n));
 
     let game = pack.to_game();
     let mut shared_clashes = Vec::new();
     for kind in ItemKind::ALL {
-        for item in names(&game, kind) {
-            if shared_has(&config.shared, kind, item) {
-                let taken = |n: &str| shared_has(&config.shared, kind, n) || names(&game, kind).iter().any(|x| *x == n);
-                shared_clashes.push((kind, item.clone(), unique(item, taken)));
+        let shared = config.shared.names(kind);
+        for item in game.names(kind) {
+            if shared.contains(&item) {
+                let taken = |n: &str| shared.contains(&n) || game.names(kind).contains(&n);
+                shared_clashes.push((kind, item.to_string(), free_name(item, taken)));
             }
         }
     }
@@ -537,6 +561,7 @@ pub fn apply(config: &mut Config, plan: &Plan, choices: &Choices) -> String {
 
     game.origin = Some(Origin {
         id: plan.pack.pack.id.clone(),
+        name: plan.pack.pack.name.clone(),
         version: plan.pack.pack.version.clone(),
         library: plan.library,
         hashes: item_hashes(&game),
@@ -698,6 +723,30 @@ mod tests {
         assert_eq!(fork.based_on, Some(PackRef { id: "abc".into(), name: "Doom".into(), author: "them".into(), version: "2.0".into() }));
         assert_eq!(fork.author, "");
         assert_eq!(draft(&game, true).id, "abc", "the library keeps its pack IDs");
+
+        // Imported next to another Doom, it was renamed; the credit uses the pack's own name.
+        game.name = "Doom (2)".into();
+        game.origin.as_mut().unwrap().name = "Doom".into();
+        assert_eq!(draft(&game, false).based_on.unwrap().name, "Doom");
+    }
+
+    #[test]
+    fn copies_bring_what_they_refer_to_unless_already_there() {
+        let source = Shared {
+            macros: vec![mac("Heal"), mac("Dodge")],
+            menus: vec![menu("Wheel", vec![macro_ref("Heal"), ButtonAction::OpenMenu("More".into())]), menu("More", vec![macro_ref("Dodge")])],
+            info: Vec::new(),
+        };
+        let none = |_: ItemKind, _: &str| false;
+        let all = dependencies(&source, ItemKind::Menu, "Wheel", none);
+        let want = |list: &[(ItemKind, &str)]| list.iter().map(|(k, n)| (*k, n.to_string())).collect::<Vec<_>>();
+        assert_eq!(all, want(&[(ItemKind::Menu, "Wheel"), (ItemKind::Macro, "Heal"), (ItemKind::Menu, "More"), (ItemKind::Macro, "Dodge")]));
+        let has_heal = |k: ItemKind, n: &str| k == ItemKind::Macro && n == "Heal";
+        assert_eq!(
+            dependencies(&source, ItemKind::Menu, "Wheel", has_heal),
+            want(&[(ItemKind::Menu, "Wheel"), (ItemKind::Menu, "More"), (ItemKind::Macro, "Dodge")])
+        );
+        assert!(dependencies(&source, ItemKind::Macro, "Nope", none).is_empty());
     }
 
     #[test]
@@ -706,6 +755,10 @@ mod tests {
         assert_eq!(compare_versions("1.10", "1.9"), Greater);
         assert_eq!(compare_versions("1.0", "1"), Equal);
         assert_eq!(compare_versions("v2", "1.9.9"), Greater);
+        assert_eq!(compare_versions("1.0-beta", "1.0"), Less, "pre-releases come before the release");
+        assert_eq!(compare_versions("1.0-beta.2", "1.0-beta.10"), Less);
+        assert_eq!(compare_versions("1.1-rc1", "1.0"), Greater);
+        assert_eq!(compare_versions("1.0+linux", "1.0"), Equal);
         let id = new_id();
         assert_eq!(id.len(), 36);
         assert_eq!(&id[14..15], "4");

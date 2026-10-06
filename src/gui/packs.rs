@@ -14,8 +14,9 @@ use crate::{
 pub(super) enum Dialog {
     AddGame { search: String, selected: Option<usize> },
     Import { plan: Box<Plan>, choices: Choices },
-    /// Export of the game with this name.
-    Export { game: String, info: PackInfo, library: bool },
+    /// Export of the game with this name, and what it would write (kept up to date as the
+    /// details are edited, rather than worked out every frame).
+    Export { game: String, info: PackInfo, library: bool, preview: Box<pack::Export> },
     DeleteGame(String),
     /// Copy a macro, menu or info overlay from another game into the shown list.
     Browse { kind: ItemKind, from: Option<BrowseSource>, open: Option<usize> },
@@ -92,8 +93,9 @@ impl App {
                 }
             }
             Message::UpdateFromLibrary(name) => {
-                if let Some((_, entry)) = library::updates(&self.config, &self.library).into_iter().find(|(n, _)| *n == name) {
-                    let plan = pack::plan(&self.config, entry.pack, true);
+                let found = library::updates(&self.config, &self.library).into_iter().find(|(n, _)| *n == name).map(|(_, i)| i);
+                if let Some(i) = found {
+                    let plan = pack::plan(&self.config, self.library[i].pack.clone(), true);
                     self.open_import(plan);
                 }
             }
@@ -131,7 +133,8 @@ impl App {
             Message::OpenExport => {
                 if let Some(name) = self.game_key().map(str::to_string) {
                     let info = pack::draft(self.game(), false);
-                    self.dialog = Some(Dialog::Export { game: name, info, library: false });
+                    let preview = Box::new(pack::export(self.game(), &self.config.shared, &info));
+                    self.dialog = Some(Dialog::Export { game: name, info, library: false, preview });
                 }
             }
             Message::SetPackField(field, value) => {
@@ -143,6 +146,7 @@ impl App {
                         PackField::MadeWith => &mut info.made_with,
                     } = value;
                 }
+                self.refresh_export();
             }
             Message::SetLibraryExport(on) => {
                 let game = match &self.dialog {
@@ -154,12 +158,11 @@ impl App {
                     *info = PackInfo { description: info.description.clone(), made_with: info.made_with.clone(), ..fresh };
                     *library = on;
                 }
+                self.refresh_export();
             }
             Message::SaveExport => {
-                let Some(Dialog::Export { game, info, library }) = &self.dialog else { return Task::none() };
-                let Some(g) = self.config.game(Some(game)) else { return Task::none() };
-                let out = pack::export(g, &self.config.shared, info);
-                let text = match out.pack.to_toml() {
+                let Some(Dialog::Export { game, library, preview, .. }) = &self.dialog else { return Task::none() };
+                let text = match preview.pack.to_toml() {
                     Ok(text) => text,
                     Err(e) => {
                         self.message = Some((format!("Can't export: {e:#}"), true));
@@ -212,39 +215,77 @@ impl App {
                 let Some(Dialog::Browse { kind, from: Some(source), .. }) = &self.dialog else { return Task::none() };
                 let (kind, source) = (*kind, source.clone());
                 let Some(items) = self.browse_items(&source) else { return Task::none() };
+                let Some(root) = items.names(kind).get(i).map(|n| n.to_string()) else { return Task::none() };
                 self.dialog = None;
-                let copied = match kind {
-                    ItemKind::Macro => items.macros.get(i).cloned().map(|mut m| {
-                        m.name = self.new_item_name(kind, &m.name);
-                        let name = m.name.clone();
-                        self.macros_mut().insert(0, m);
-                        self.open_macros = self.open_macros.iter().map(|j| j + 1).chain([0]).collect();
-                        name
-                    }),
-                    ItemKind::Menu => items.menus.get(i).cloned().map(|mut m| {
-                        m.name = self.new_item_name(kind, &m.name);
-                        let name = m.name.clone();
-                        self.menus_mut().insert(0, m);
-                        self.open_menus = self.open_menus.iter().map(|j| j + 1).chain([0]).collect();
-                        self.open_appearance = self.open_appearance.iter().map(|a| a.map(|j| j + 1)).collect();
-                        name
-                    }),
-                    ItemKind::Info => items.info.get(i).cloned().map(|mut o| {
-                        o.name = self.new_item_name(kind, &o.name);
-                        let name = o.name.clone();
-                        self.infos_mut().insert(0, o);
-                        self.open_infos = self.open_infos.iter().map(|j| j + 1).chain([0]).collect();
-                        self.open_info_appearance = self.open_info_appearance.iter().map(|j| j + 1).collect();
-                        name
-                    }),
-                };
-                if let Some(name) = copied {
-                    self.message = Some((format!("Copied {} “{name}” from {source}.", kind.noun()), false));
-                }
+                self.copy_items(&items, kind, &root, &source);
             }
             _ => {}
         }
         Task::none()
+    }
+
+    /// Copies `root` (a `kind` item of `items`) into the shown list, with whatever it refers
+    /// to that isn't already usable here. Names taken here get "(2)", and references among the
+    /// copies follow.
+    fn copy_items(&mut self, items: &crate::config::Shared, kind: ItemKind, root: &str, source: &BrowseSource) {
+        let names = self.names();
+        let needed = pack::dependencies(items, kind, root, |k, n| names.list(k).iter().any(|x| x == n));
+        let mut copy = crate::config::Shared::default();
+        for (k, n) in &needed {
+            match k {
+                ItemKind::Macro => copy.macros.extend(items.macros.iter().find(|m| &m.name == n).cloned()),
+                ItemKind::Menu => copy.menus.extend(items.menus.iter().find(|m| &m.name == n).cloned()),
+                ItemKind::Info => copy.info.extend(items.info.iter().find(|o| &o.name == n).cloned()),
+            }
+        }
+        let mut renamed_root = root.to_string();
+        for (k, old) in &needed {
+            let new = free_name(old, |x| !self.item_name_free(*k, None, x) || (x != old && copy.names(*k).contains(&x)));
+            if &new == old {
+                continue;
+            }
+            match k {
+                ItemKind::Macro => copy.macros.iter_mut().filter(|m| &m.name == old).for_each(|m| m.name = new.clone()),
+                ItemKind::Menu => copy.menus.iter_mut().filter(|m| &m.name == old).for_each(|m| m.name = new.clone()),
+                ItemKind::Info => copy.info.iter_mut().filter(|o| &o.name == old).for_each(|o| o.name = new.clone()),
+            }
+            copy.rename_refs(*k, old, &new);
+            if *k == kind && old == root {
+                renamed_root = new;
+            }
+        }
+        // Copies go first, the one asked for at the top of its list, opened.
+        let shift = |set: &HashSet<usize>, by: usize| set.iter().map(|j| j + by).collect::<HashSet<_>>();
+        let (macros, menus, info) = (copy.macros.len(), copy.menus.len(), copy.info.len());
+        let order = |list_kind: ItemKind, n: &str| !(list_kind == kind && n == renamed_root);
+        copy.macros.sort_by_key(|m| order(ItemKind::Macro, &m.name));
+        copy.menus.sort_by_key(|m| order(ItemKind::Menu, &m.name));
+        copy.info.sort_by_key(|o| order(ItemKind::Info, &o.name));
+        self.macros_mut().splice(0..0, copy.macros);
+        self.menus_mut().splice(0..0, copy.menus);
+        self.infos_mut().splice(0..0, copy.info);
+        self.open_macros = shift(&self.open_macros, macros);
+        self.open_menus = shift(&self.open_menus, menus);
+        self.open_appearance = self.open_appearance.iter().map(|a| a.map(|j| j + menus)).collect();
+        self.open_infos = shift(&self.open_infos, info);
+        self.open_info_appearance = shift(&self.open_info_appearance, info);
+        match kind {
+            ItemKind::Macro => self.open_macros.insert(0),
+            ItemKind::Menu => self.open_menus.insert(0),
+            ItemKind::Info => self.open_infos.insert(0),
+        };
+        let extra: Vec<String> = needed[1..].iter().map(|(k, n)| format!("{} “{n}”", k.noun())).collect();
+        let with = if extra.is_empty() { String::new() } else { format!(", with {}", extra.join(", ")) };
+        self.message = Some((format!("Copied {} “{renamed_root}” from {source}{with}.", kind.noun()), false));
+    }
+
+    /// Works out the export dialog's pack again after its details changed.
+    fn refresh_export(&mut self) {
+        if let Some(Dialog::Export { game, info, preview, .. }) = &mut self.dialog
+            && let Some(g) = self.config.game(Some(game))
+        {
+            **preview = pack::export(g, &self.config.shared, info);
+        }
     }
 
     fn open_import(&mut self, plan: Plan) {
@@ -277,7 +318,7 @@ impl App {
         let body = match dialog {
             Dialog::AddGame { search, selected } => self.view_add_game(search, *selected),
             Dialog::Import { plan, choices } => self.view_import(plan, choices),
-            Dialog::Export { game, info, library } => self.view_export(game, info, *library),
+            Dialog::Export { game, info, library, preview } => self.view_export(game, info, *library, preview),
             Dialog::DeleteGame(name) => self.view_delete(name),
             Dialog::Browse { kind, from, open } => self.view_browse(*kind, from.as_ref(), *open),
         };
@@ -425,9 +466,8 @@ impl App {
             .into()
     }
 
-    fn view_export<'a>(&'a self, game: &'a str, info: &'a PackInfo, library: bool) -> Element<'a, Message> {
+    fn view_export<'a>(&'a self, game: &'a str, info: &'a PackInfo, library: bool, out: &'a pack::Export) -> Element<'a, Message> {
         let Some(g) = self.config.game(Some(game)) else { return text("This game is gone.").into() };
-        let out = pack::export(g, &self.config.shared, info);
         let p = &out.pack;
         let mut col = column![
             text(format!("Export {game}")).size(22),

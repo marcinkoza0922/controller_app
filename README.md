@@ -4,7 +4,7 @@ Background service that remaps gamepad inputs, or turns them into mouse and keyb
 
 - **daemon**: grabs physical gamepads (evdev) so nothing else sees them, runs the active profile, and emits through virtual uinput devices (an Xbox 360-style pad plus a keyboard and a mouse).
 - **gui**: edits profiles and talks to the daemon over `$XDG_RUNTIME_DIR/controller_app.sock`.
-- **config**: `~/.config/controller_app/config.toml`. The daemon is the only writer while it runs; after editing by hand, run `controller_app reload`. A config from before games existed can't be read: it's moved aside to `config.toml.old` and replaced with the defaults.
+- **config**: `~/.config/controller_app/config.toml`. The daemon is the only writer while it runs; after editing by hand, run `controller_app reload`. A config from before games existed is converted on first load, and the original is kept as `config.toml.old`. Each profile that an auto-switch rule pointed to becomes a game of its own with those rules; the rest go to General. Macros, menus and info overlays limited to one game's profiles move into that game, and the others become shared.
 
 ## Games
 

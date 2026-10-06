@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, fmt, path::PathBuf};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+    path::PathBuf,
+};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -1421,6 +1425,9 @@ impl Default for AutoSwitch {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Origin {
     pub id: String,
+    /// The pack's own name, which the game may have been renamed from.
+    #[serde(default)]
+    pub name: String,
     pub version: String,
     /// From the built-in library rather than a file.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -1511,6 +1518,11 @@ impl Game {
     pub fn rename_refs(&mut self, kind: ItemKind, old: &str, new: &str) {
         rename_in(&mut self.profiles, &mut self.menus, &mut self.macros, kind, old, new);
     }
+
+    /// The names of its items of one kind.
+    pub fn names(&self, kind: ItemKind) -> Vec<&str> {
+        item_names(&self.macros, &self.menus, &self.info, kind)
+    }
 }
 
 /// Macros, menus and info overlays every profile of every game can use.
@@ -1529,6 +1541,27 @@ impl Shared {
     pub fn rename_refs(&mut self, kind: ItemKind, old: &str, new: &str) {
         rename_in(&mut [], &mut self.menus, &mut self.macros, kind, old, new);
     }
+
+    pub fn names(&self, kind: ItemKind) -> Vec<&str> {
+        item_names(&self.macros, &self.menus, &self.info, kind)
+    }
+}
+
+fn item_names<'a>(macros: &'a [Macro], menus: &'a [Menu], info: &'a [InfoOverlay], kind: ItemKind) -> Vec<&'a str> {
+    match kind {
+        ItemKind::Macro => macros.iter().map(|m| m.name.as_str()).collect(),
+        ItemKind::Menu => menus.iter().map(|m| m.name.as_str()).collect(),
+        ItemKind::Info => info.iter().map(|o| o.name.as_str()).collect(),
+    }
+}
+
+/// `base` if it's free, else `base (2)`, `base (3)`, …: how an item or game is renamed when
+/// its name is taken.
+pub fn free_name(base: &str, taken: impl Fn(&str) -> bool) -> String {
+    if !taken(base) {
+        return base.to_string();
+    }
+    (2..).map(|i| format!("{base} ({i})")).find(|n| !taken(n)).unwrap()
 }
 
 /// The three kinds of named item a profile refers to.
@@ -1599,6 +1632,24 @@ pub struct Scope {
     pub info: Vec<InfoOverlay>,
 }
 
+/// Like [`Scope`], borrowed: what a game's profiles (or the shared items) can refer to.
+#[derive(Debug, Clone, Default)]
+pub struct ScopeRef<'a> {
+    pub macros: Vec<&'a Macro>,
+    pub menus: Vec<&'a Menu>,
+    pub info: Vec<&'a InfoOverlay>,
+}
+
+impl ScopeRef<'_> {
+    pub fn names(&self, kind: ItemKind) -> Vec<&str> {
+        match kind {
+            ItemKind::Macro => self.macros.iter().map(|m| m.name.as_str()).collect(),
+            ItemKind::Menu => self.menus.iter().map(|m| m.name.as_str()).collect(),
+            ItemKind::Info => self.info.iter().map(|o| o.name.as_str()).collect(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Config {
     pub enabled: bool,
@@ -1654,7 +1705,8 @@ impl Config {
     }
 
     /// Loads the config, writing the default one if none exists yet. A config from before
-    /// games existed is set aside as `config.toml.old` and replaced by the default.
+    /// games existed is converted (see [`Config::from_legacy`]), keeping the original as
+    /// `config.toml.old` (or `.old.2`, … if that's taken).
     pub fn load() -> Result<Self> {
         let path = Self::path();
         if !path.exists() {
@@ -1672,12 +1724,140 @@ impl Config {
                 if !old_format {
                     return Err(e).with_context(|| format!("parsing {}", path.display()));
                 }
-                std::fs::rename(&path, path.with_extension("toml.old"))?;
-                let config = Config::default();
+                let config = Config::from_legacy(&text).with_context(|| format!("converting {}", path.display()))?;
+                let backup = (1..)
+                    .map(|i| if i == 1 { path.with_extension("toml.old") } else { path.with_extension(format!("toml.old.{i}")) })
+                    .find(|p| !p.exists())
+                    .unwrap();
+                std::fs::copy(&path, &backup).with_context(|| format!("keeping a copy at {}", backup.display()))?;
                 config.save()?;
                 Ok(config)
             }
         }
+    }
+
+    /// Converts a config from before games existed. Each profile an auto-switch rule points
+    /// to becomes a game of its own (named after it, with its rules); the other profiles go to
+    /// General. Macros, menus and info overlays shared by all profiles become shared items;
+    /// one limited to some profiles goes with them if they all ended up in the same game (or
+    /// General), and is shared otherwise.
+    pub fn from_legacy(text: &str) -> Result<Config> {
+        #[derive(Deserialize)]
+        struct Legacy {
+            #[serde(default = "yes")]
+            enabled: bool,
+            #[serde(default)]
+            active_profile: String,
+            #[serde(default)]
+            ignored_devices: Vec<String>,
+            #[serde(default)]
+            auto_switch: LegacyAutoSwitch,
+            #[serde(default)]
+            gyro_calibration: BTreeMap<String, [f32; 3]>,
+            #[serde(default = "default_keyboard_style")]
+            keyboard_style: OverlayStyle,
+            #[serde(default = "default_numpad_style")]
+            numpad_style: OverlayStyle,
+            #[serde(default)]
+            info_glyphs: crate::info::PadFamily,
+            #[serde(default)]
+            macros: Vec<toml::Table>,
+            #[serde(default)]
+            menus: Vec<toml::Table>,
+            #[serde(default)]
+            info_overlays: Vec<toml::Table>,
+            profiles: Vec<Profile>,
+        }
+        #[derive(Deserialize)]
+        struct LegacyAutoSwitch {
+            #[serde(default = "yes")]
+            enabled: bool,
+            #[serde(default)]
+            default_profile: Option<String>,
+            #[serde(default)]
+            rules: Vec<Rule>,
+        }
+        impl Default for LegacyAutoSwitch {
+            fn default() -> Self {
+                LegacyAutoSwitch { enabled: true, default_profile: None, rules: Vec::new() }
+            }
+        }
+
+        let old: Legacy = toml::from_str(text)?;
+        let ruled = |name: &str| old.auto_switch.rules.iter().any(|r| r.profile == name);
+        // Where each old profile goes: its own game, or General (`None`).
+        let home = |name: &str| -> Option<Option<String>> {
+            old.profiles.iter().any(|p| p.name == name).then(|| ruled(name).then(|| name.to_string()))
+        };
+
+        let mut config = Config {
+            enabled: old.enabled,
+            active: ProfileRef::default(),
+            ignored_devices: old.ignored_devices,
+            auto_switch: AutoSwitch { enabled: old.auto_switch.enabled, default_profile: None },
+            gyro_calibration: old.gyro_calibration,
+            keyboard_style: old.keyboard_style,
+            numpad_style: old.numpad_style,
+            info_glyphs: old.info_glyphs,
+            general: Game::new("General", Vec::new()),
+            shared: Shared::default(),
+            games: Vec::new(),
+        };
+        for p in &old.profiles {
+            if ruled(&p.name) {
+                let mut game = Game::new(&p.name, vec![p.clone()]);
+                game.rules = old.auto_switch.rules.iter().filter(|r| r.profile == p.name).cloned().collect();
+                config.games.push(game);
+            } else {
+                config.general.profiles.push(p.clone());
+            }
+        }
+        if config.general.profiles.is_empty() {
+            let name = free_name("Gamepad", |n| old.profiles.iter().any(|p| p.name == n));
+            config.general.profiles.push(Profile::passthrough(&name));
+        }
+
+        // Each item goes where all of its profiles went, or is shared.
+        let place = |mut table: toml::Table| -> (Option<Option<String>>, toml::Table) {
+            let homes: BTreeSet<Option<String>> = match table.remove("profiles") {
+                None => BTreeSet::new(),
+                Some(list) => list
+                    .as_array()
+                    .map(|l| l.iter().filter_map(|v| v.as_str()).filter_map(&home).collect())
+                    .unwrap_or_default(),
+            };
+            let target = (homes.len() == 1).then(|| homes.into_iter().next().unwrap());
+            (target, table)
+        };
+        for table in old.macros {
+            let (target, table) = place(table);
+            let item: Macro = table.try_into()?;
+            match target {
+                Some(game) => config.game_mut(game.as_deref()).unwrap().macros.push(item),
+                None => config.shared.macros.push(item),
+            }
+        }
+        for table in old.menus {
+            let (target, table) = place(table);
+            let item: Menu = table.try_into()?;
+            match target {
+                Some(game) => config.game_mut(game.as_deref()).unwrap().menus.push(item),
+                None => config.shared.menus.push(item),
+            }
+        }
+        for table in old.info_overlays {
+            let (target, table) = place(table);
+            let item: InfoOverlay = table.try_into()?;
+            match target {
+                Some(game) => config.game_mut(game.as_deref()).unwrap().info.push(item),
+                None => config.shared.info.push(item),
+            }
+        }
+
+        let at = |name: &str| home(name).map(|game| ProfileRef { game, profile: name.to_string() });
+        config.active = at(&old.active_profile).unwrap_or_else(|| config.fallback_profile());
+        config.auto_switch.default_profile = old.auto_switch.default_profile.as_deref().and_then(at);
+        Ok(config)
     }
 
     pub fn save(&self) -> Result<()> {
@@ -1744,6 +1924,19 @@ impl Config {
         default.unwrap_or_else(|| ProfileRef::new(None, self.general.profiles.first().map_or("", |p| &p.name)))
     }
 
+    /// Settles which profile is active in this config, which replaces one where `previous`
+    /// was: still `previous` if it exists, else this config's own `active` (where the editor
+    /// says a renamed profile or game went), else the fallback (it was deleted).
+    pub fn carry_active(&mut self, previous: &ProfileRef) {
+        self.active = if self.profile(previous).is_some() {
+            previous.clone()
+        } else if self.profile(&self.active).is_some() {
+            self.active.clone()
+        } else {
+            self.fallback_profile()
+        };
+    }
+
     /// The next profile of the active game, wrapping around.
     pub fn next_profile(&self) -> Option<ProfileRef> {
         let at = self.active_ref();
@@ -1756,16 +1949,30 @@ impl Config {
     /// The items the active profile can use: its game's first, then shared ones it doesn't
     /// shadow.
     pub fn scope(&self) -> Scope {
-        fn merge<T: Clone>(own: &[T], shared: &[T], name: impl Fn(&T) -> &str) -> Vec<T> {
-            let mut all = own.to_vec();
-            all.extend(shared.iter().filter(|s| !own.iter().any(|o| name(o) == name(s))).cloned());
+        let s = self.scope_of(Some(self.active_game()));
+        Scope {
+            macros: s.macros.into_iter().cloned().collect(),
+            menus: s.menus.into_iter().cloned().collect(),
+            info: s.info.into_iter().cloned().collect(),
+        }
+    }
+
+    /// What a game's profiles and items can use: its own items, then the shared ones it
+    /// doesn't shadow. For `None`, what shared items can use: only each other.
+    pub fn scope_of<'a>(&'a self, game: Option<&'a Game>) -> ScopeRef<'a> {
+        fn merge<'a, T>(own: &'a [T], shared: &'a [T], name: impl Fn(&T) -> &str) -> Vec<&'a T> {
+            let mut all: Vec<&T> = own.iter().collect();
+            all.extend(shared.iter().filter(|s| !own.iter().any(|o| name(o) == name(s))));
             all
         }
-        let game = self.active_game();
-        Scope {
-            macros: merge(&game.macros, &self.shared.macros, |m| &m.name),
-            menus: merge(&game.menus, &self.shared.menus, |m| &m.name),
-            info: merge(&game.info, &self.shared.info, |o| &o.name),
+        let (macros, menus, info) = match game {
+            Some(g) => (g.macros.as_slice(), g.menus.as_slice(), g.info.as_slice()),
+            None => (&[][..], &[][..], &[][..]),
+        };
+        ScopeRef {
+            macros: merge(macros, &self.shared.macros, |m| &m.name),
+            menus: merge(menus, &self.shared.menus, |m| &m.name),
+            info: merge(info, &self.shared.info, |o| &o.name),
         }
     }
 
@@ -2087,6 +2294,110 @@ mod tests {
         config.games.push(Game::new("Doom", vec![Profile::pc_action("Play"), Profile::desktop("Menus")]));
         config.active = ProfileRef::new(Some("Doom"), "Menus");
         assert_eq!(config.next_profile(), Some(ProfileRef::new(Some("Doom"), "Play")));
+    }
+
+    #[test]
+    fn configs_from_before_games_are_converted() {
+        let old = r#"
+enabled = true
+active_profile = "Souls"
+ignored_devices = ["Wheel"]
+
+[auto_switch]
+enabled = true
+default_profile = "Desktop"
+
+[[auto_switch.rules]]
+kind = "steam_app_id"
+value = "1245620"
+profile = "Souls"
+
+[[macros]]
+name = "Roll"
+profiles = ["Souls"]
+steps = [{ wait = 10 }]
+
+[[macros]]
+name = "Screenshot"
+steps = [{ wait = 20 }]
+
+[[macros]]
+name = "Both"
+profiles = ["Souls", "Desktop"]
+steps = []
+
+[[info_overlays]]
+name = "Help"
+profiles = ["Desktop"]
+always = true
+"#;
+        let mut value: toml::Table = toml::from_str(old).unwrap();
+        let profiles = [Profile::desktop("Desktop"), Profile::pc_action("Souls")];
+        value.insert("profiles".into(), toml::Value::try_from(profiles).unwrap());
+        let config = Config::from_legacy(&toml::to_string(&value).unwrap()).unwrap();
+
+        assert_eq!(config.general.profiles.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["Desktop"]);
+        assert_eq!(config.games.len(), 1);
+        let souls = &config.games[0];
+        assert_eq!((souls.name.as_str(), souls.profiles[0].name.as_str()), ("Souls", "Souls"));
+        assert_eq!(souls.rules, [Rule::new(RuleKind::SteamAppId, "1245620", "Souls")]);
+        assert_eq!(souls.names(ItemKind::Macro), ["Roll"]);
+        assert_eq!(config.shared.names(ItemKind::Macro), ["Screenshot", "Both"], "unscoped, or spread over games");
+        assert_eq!(config.general.names(ItemKind::Info), ["Help"]);
+        assert!(config.general.info[0].always);
+        assert_eq!(config.active, ProfileRef::new(Some("Souls"), "Souls"));
+        assert_eq!(config.auto_switch.default_profile, Some(ProfileRef::new(None, "Desktop")));
+        assert_eq!(config.ignored_devices, ["Wheel"]);
+        // And it saves in the new format.
+        let back: Config = toml::from_str(&toml::to_string_pretty(&config).unwrap()).unwrap();
+        assert_eq!(back, config);
+    }
+
+    #[test]
+    fn a_converted_config_always_has_a_general_profile() {
+        let mut value = toml::Table::new();
+        value.insert("active_profile".into(), "Gamepad".into());
+        value.insert("profiles".into(), toml::Value::try_from([Profile::passthrough("Gamepad")]).unwrap());
+        let rule = toml::Value::try_from(Rule::new(RuleKind::Executable, "game.exe", "Gamepad")).unwrap();
+        let mut auto = toml::Table::new();
+        auto.insert("rules".into(), toml::Value::Array(vec![rule]));
+        value.insert("auto_switch".into(), auto.into());
+        let config = Config::from_legacy(&toml::to_string(&value).unwrap()).unwrap();
+        assert_eq!(config.games[0].name, "Gamepad");
+        assert_eq!(config.general.profiles[0].name, "Gamepad (2)", "named apart from the game's profile");
+        assert!(config.auto_switch.enabled);
+        assert_eq!(config.active, ProfileRef::new(Some("Gamepad"), "Gamepad"));
+    }
+
+    #[test]
+    fn replacing_the_config_keeps_follows_or_replaces_the_active_profile() {
+        let mut config = Config::default();
+        config.games.push(Game::new("Doom", vec![Profile::pc_action("Play")]));
+        let playing = ProfileRef::new(Some("Doom"), "Play");
+        // Unchanged: stays, whatever the editor's copy says.
+        let mut new = config.clone();
+        new.active = ProfileRef::new(None, "Desktop");
+        new.carry_active(&playing);
+        assert_eq!(new.active, playing);
+        // Renamed: the editor's copy says where it went.
+        let mut renamed = config.clone();
+        renamed.games[0].name = "Doom II".into();
+        renamed.active = ProfileRef::new(Some("Doom II"), "Play");
+        renamed.carry_active(&playing);
+        assert_eq!(renamed.active, ProfileRef::new(Some("Doom II"), "Play"));
+        // Deleted: the default profile, else General's first.
+        let mut deleted = config.clone();
+        deleted.games.clear();
+        deleted.active = playing.clone();
+        deleted.auto_switch.default_profile = Some(ProfileRef::new(None, "Desktop"));
+        deleted.carry_active(&playing);
+        assert_eq!(deleted.active, ProfileRef::new(None, "Desktop"));
+        deleted.auto_switch.default_profile = None;
+        deleted.carry_active(&ProfileRef::new(Some("Gone"), "x"));
+        assert_eq!(deleted.active, ProfileRef::new(None, "Desktop"), "Desktop exists, so it's kept");
+        deleted.active = ProfileRef::new(Some("Gone"), "x");
+        deleted.carry_active(&ProfileRef::new(Some("Gone"), "x"));
+        assert_eq!(deleted.active, ProfileRef::new(None, "Gamepad"));
     }
 
     #[test]

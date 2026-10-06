@@ -175,7 +175,7 @@ fn parse_lutris(text: &str) -> Vec<String> {
 
 /// Lowercase file name of a Unix or Windows path.
 fn file_name(path: &str) -> String {
-    path.rsplit(['/', '\\']).next().unwrap_or(path).to_lowercase()
+    crate::focus::base_name(path).to_lowercase()
 }
 
 fn collect_files(dir: &Path, depth: usize, budget: &mut usize, out: &mut HashSet<String>) {

@@ -840,11 +840,7 @@ impl Daemon {
             Request::SetConfig(new) => {
                 let mut new = *new;
                 new.enabled = self.config.enabled;
-                new.active = if new.profile(&self.config.active).is_some() {
-                    self.config.active.clone()
-                } else {
-                    new.fallback_profile()
-                };
+                new.carry_active(&self.config.active);
                 self.replace_config(new)
             }
             Request::Reload => match Config::load() {

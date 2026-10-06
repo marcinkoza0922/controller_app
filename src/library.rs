@@ -26,17 +26,18 @@ pub fn entries() -> Vec<Entry> {
     all
 }
 
-/// Games added from the library that it now has a newer version of: (game name, entry).
-pub fn updates(config: &Config, library: &[Entry]) -> Vec<(String, Entry)> {
+/// Games added from the library that it now has a newer version of: (game name, index of
+/// the entry in `library`).
+pub fn updates<'a>(config: &'a Config, library: &[Entry]) -> Vec<(&'a str, usize)> {
     config
         .games
         .iter()
         .filter_map(|g| {
             let origin = g.origin.as_ref().filter(|o| o.library)?;
-            let entry = library.iter().find(|e| e.pack.pack.id == origin.id)?;
-            pack::compare_versions(&entry.pack.pack.version, &origin.version)
+            let i = library.iter().position(|e| e.pack.pack.id == origin.id)?;
+            pack::compare_versions(&library[i].pack.pack.version, &origin.version)
                 .is_gt()
-                .then(|| (g.name.clone(), entry.clone()))
+                .then_some((g.name.as_str(), i))
         })
         .collect()
 }
