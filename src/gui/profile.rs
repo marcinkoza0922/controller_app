@@ -194,11 +194,11 @@ impl fmt::Display for Template {
 /// The controller SVG with button letters and mapping-label pills placed over it. (iced's
 /// SVG renderer may not draw SVG text, so text is real widgets pinned at drawing
 /// coordinates; the drawing is shown at 1:1.)
-pub(super) fn controller_drawing<'a>(input: Option<&InputSnapshot>, labels_from: Option<&Profile>) -> Element<'a, Message> {
+pub(super) fn controller_drawing<'a>(input: Option<&InputSnapshot>, labels_from: Option<&Profile>, greyed: bool) -> Element<'a, Message> {
     let labels = labels_from.map(drawing_labels).unwrap_or_default();
     let handle = svg::Handle::from_memory(pad_svg::render(input, &labels).into_bytes());
     let mut layers: Vec<Element<'a, Message>> =
-        vec![svg(handle).width(pad_svg::WIDTH).height(pad_svg::HEIGHT).into()];
+        vec![svg(handle).width(pad_svg::WIDTH).height(pad_svg::HEIGHT).opacity(if greyed { 0.3_f32 } else { 1.0 }).into()];
 
     for o in pad_svg::overlays(input) {
         let [r, g, b] = o.color;
@@ -1407,8 +1407,8 @@ impl App {
             .into()
         } else {
             row![
-                button(text("Find by pressing")).style(button::secondary).on_press(Message::StartFind),
-                help("Press a button or push a stick on your controller to jump to its mapping.".into()),
+                button(text("Find by pressing")).style(button::secondary).on_press_maybe(self.status.is_some().then_some(Message::StartFind)),
+                help("Press a button or push a stick on your controller to jump to its mapping (needs the daemon).".into()),
             ]
             .spacing(8)
             .align_y(Alignment::Center)
@@ -1463,7 +1463,7 @@ impl App {
         let caption = if layers.is_empty() { caption } else { format!("{caption} · Layers: {}", layers.join(" + ")) };
         column![
             text("Live input").size(20),
-            container(controller_drawing(self.live.as_ref(), labels_from)).center_x(Length::Fill),
+            container(controller_drawing(self.live.as_ref(), labels_from, self.status.is_none())).center_x(Length::Fill),
             container(text(caption).size(13).color(MUTED_COLOR)).center_x(Length::Fill),
         ]
         .spacing(8)
