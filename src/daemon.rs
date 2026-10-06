@@ -537,8 +537,8 @@ impl Daemon {
             Some(Active::Keyboard(k)) => {
                 let mut view = k.view(Instant::now());
                 view.style = match k.layout() {
-                    Layout::Keyboard => self.config.keyboard_style.clone(),
-                    Layout::Numpad => self.config.numpad_style.clone(),
+                    Layout::Keyboard => self.config.active_keyboard_style().clone(),
+                    Layout::Numpad => self.config.active_numpad_style().clone(),
                 };
                 Some(OverlayView::Keyboard(view))
             }

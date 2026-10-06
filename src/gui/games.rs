@@ -146,6 +146,7 @@ impl App {
             }
             Message::SetInfoGlyphs(family) => self.config.info_glyphs = family,
             Message::SetKeyboardStyle(style) => self.config.keyboard_style = style,
+            Message::SetGameOverlayStyle(layout, style) => self.set_game_overlay_style(layout, style),
             Message::SetIgnored(name, ignored) => {
                 // Applies immediately, independent of unsaved profile edits.
                 for c in [&mut self.config, &mut self.saved] {
@@ -585,6 +586,7 @@ impl App {
                 Some("When the focused window (or a running process) matches a rule, its profile becomes active. Untick a rule to switch it off.".into()),
                 vec![rules.into()],
             ),
+            self.view_game_overlays(),
             section("Pack", None, pack_rows),
         ]
         .spacing(16)

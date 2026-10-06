@@ -8,12 +8,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{
     ButtonAction, Config, Game, GyroMode, Indicator, InfoOverlay, ItemKind, Layer, Macro, Menu, MacroStep, Origin,
-    PackInfo, PackRef, Profile, Rule, Shared, free_name,
+    OverlayStyle, PackInfo, PackRef, Profile, Rule, Shared, free_name,
 };
 
 /// The pack format this app writes, and the newest it reads. 2 added layers; 3, toggles
-/// that start on.
-pub const FORMAT: u32 = 3;
+/// that start on; 4, the keyboard and numpad styles.
+pub const FORMAT: u32 = 4;
 pub const EXTENSION: &str = "padpack";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -32,6 +32,11 @@ pub struct Pack {
     pub info_overlays: Vec<InfoOverlay>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub layers: Vec<Layer>,
+    /// How the on-screen keyboard and numpad look in this game, if the author set that.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keyboard_style: Option<OverlayStyle>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub numpad_style: Option<OverlayStyle>,
 }
 
 /// What a pack says about itself.
@@ -113,6 +118,8 @@ impl Pack {
             menus: self.menus.clone(),
             info: self.info_overlays.clone(),
             layers: self.layers.clone(),
+            keyboard_style: self.keyboard_style.clone(),
+            numpad_style: self.numpad_style.clone(),
         }
     }
 
@@ -355,6 +362,8 @@ pub fn export(game: &Game, shared: &Shared, info: &PackInfo) -> Export {
         menus: pack_game.menus,
         info_overlays: pack_game.info,
         layers: pack_game.layers,
+        keyboard_style: pack_game.keyboard_style,
+        numpad_style: pack_game.numpad_style,
     };
     Export { pack, pulled_in, dangling: dangling.into_iter().collect(), features }
 }
@@ -607,7 +616,13 @@ pub fn apply(config: &mut Config, plan: &Plan, choices: &Choices) -> String {
     };
     let name = game.name.clone();
     match replace.and_then(|n| config.games.iter().position(|g| g.name == n)) {
-        Some(i) => config.games[i] = game,
+        Some(i) => {
+            // A pack that sets no look leaves the player's own in place.
+            let old = &config.games[i];
+            game.keyboard_style = game.keyboard_style.or_else(|| old.keyboard_style.clone());
+            game.numpad_style = game.numpad_style.or_else(|| old.numpad_style.clone());
+            config.games[i] = game;
+        }
         None => config.games.push(game),
     }
     name
@@ -800,6 +815,30 @@ mod tests {
         // ("Heal" is shared rather than the game's own, so it isn't the source's to copy.)
         let needs = dependencies(&config.games[0], ItemKind::Layer, "Hotkeys", |_, _| false);
         assert_eq!(needs, [(ItemKind::Layer, "Hotkeys".to_string()), (ItemKind::Layer, "Deeper".to_string())]);
+    }
+
+    #[test]
+    fn keyboard_and_numpad_styles_travel_in_packs() {
+        let mut config = setup();
+        let style = OverlayStyle { scale: 1.5, ..OverlayStyle::keyboard() };
+        config.games[0].keyboard_style = Some(style.clone());
+        let out = export(&config.games[0], &config.shared, &draft(&config.games[0], false));
+        let pack = parse(&out.pack.to_toml().unwrap()).unwrap();
+        assert_eq!(pack.to_game().keyboard_style, Some(style));
+        assert_eq!(pack.to_game().numpad_style, None);
+
+        // Importing over a game that has its own numpad look keeps it when the pack sets none.
+        let mut config = setup();
+        let mut mine = pack.to_game();
+        mine.name = "Mine".into();
+        mine.numpad_style = Some(OverlayStyle { scale: 0.5, ..OverlayStyle::numpad() });
+        config.games.push(mine.clone());
+        let mut plan = plan(&config, pack, false);
+        plan.update_of = Some("Mine".into());
+        apply(&mut config, &plan, &Choices::default());
+        let updated = config.games.iter().find(|g| g.name == "Mine").unwrap();
+        assert_eq!(updated.numpad_style, mine.numpad_style);
+        assert_eq!(updated.keyboard_style.as_ref().unwrap().scale, 1.5);
     }
 
     #[test]

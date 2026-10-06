@@ -33,6 +33,7 @@ mod checks;
 mod games;
 mod items;
 mod layers;
+mod overlays;
 mod packs;
 mod profile;
 mod widgets;
@@ -298,6 +299,8 @@ enum Message {
     SetMenuKind(usize, MenuKind),
     SetMenuStyle(usize, OverlayStyle),
     SetKeyboardStyle(OverlayStyle),
+    /// A game's own style for the keyboard or numpad, or back to the global one.
+    SetGameOverlayStyle(crate::keyboard::Layout, Option<OverlayStyle>),
     AddMenuItem(usize),
     RemoveMenuItem(usize, usize),
     MoveMenuItem(usize, usize, bool),

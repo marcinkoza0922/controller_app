@@ -1731,6 +1731,12 @@ pub struct Game {
     /// Held or toggled on with `ButtonAction::Layer`, over whichever profile is active.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub layers: Vec<Layer>,
+    /// Looks of the on-screen keyboard and numpad while this game is active; the global ones
+    /// (`Config::keyboard_style`, `Config::numpad_style`) apply when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keyboard_style: Option<OverlayStyle>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub numpad_style: Option<OverlayStyle>,
 }
 
 impl Game {
@@ -1745,6 +1751,8 @@ impl Game {
             menus: Vec::new(),
             info: Vec::new(),
             layers: Vec::new(),
+            keyboard_style: None,
+            numpad_style: None,
         }
     }
 
@@ -2188,6 +2196,16 @@ impl Config {
         self.game(at.game.as_deref())?.profile(&at.profile)
     }
 
+    /// How the on-screen keyboard looks now: the active game's own style, else the global one.
+    pub fn active_keyboard_style(&self) -> &OverlayStyle {
+        self.active_game().keyboard_style.as_ref().unwrap_or(&self.keyboard_style)
+    }
+
+    /// Like [`Config::active_keyboard_style`], for the numpad.
+    pub fn active_numpad_style(&self) -> &OverlayStyle {
+        self.active_game().numpad_style.as_ref().unwrap_or(&self.numpad_style)
+    }
+
     /// The active profile's game, or General if it's gone.
     pub fn active_game(&self) -> &Game {
         self.game(self.active.game.as_deref())
@@ -2579,6 +2597,16 @@ mod tests {
         assert_eq!(menu.style, OverlayStyle::default());
         assert_eq!(Config::default().keyboard_style.position, ScreenPosition::BottomCenter);
         assert_eq!(Config::default().numpad_style.position, ScreenPosition::BottomRight);
+        // A game follows the global styles until it sets its own.
+        let mut config = Config::default();
+        config.games.push(Game::new("Doom", vec![Profile::passthrough("Play")]));
+        config.active = ProfileRef::new(Some("Doom"), "Play");
+        assert_eq!(config.active_keyboard_style(), &config.keyboard_style);
+        config.games[0].numpad_style = Some(OverlayStyle { scale: 1.5, ..OverlayStyle::numpad() });
+        assert_eq!(config.active_numpad_style().scale, 1.5);
+        assert_eq!(config.active_keyboard_style(), &config.keyboard_style);
+        let again: Config = toml::from_str(&toml::to_string(&config).unwrap()).unwrap();
+        assert_eq!(again.games[0].numpad_style, config.games[0].numpad_style);
     }
 
     #[test]

@@ -1,4 +1,4 @@
-format = 3
+format = 4
 macros = []
 
 [pack]
@@ -413,3 +413,35 @@ opacity = 0.6
 color = "#2f5db0"
 opacity = 1.0
 
+
+[keyboard_style]
+position = "bottom_center"
+scale = 1.0
+
+[keyboard_style.background]
+color = "#080c0d"
+opacity = 0.94
+
+[keyboard_style.items]
+color = "#1c2a2b"
+opacity = 0.95
+
+[keyboard_style.selected]
+color = "#d9a02b"
+opacity = 1.0
+
+[numpad_style]
+position = "bottom_right"
+scale = 1.0
+
+[numpad_style.background]
+color = "#080c0d"
+opacity = 0.94
+
+[numpad_style.items]
+color = "#1c2a2b"
+opacity = 0.95
+
+[numpad_style.selected]
+color = "#d9a02b"
+opacity = 1.0
