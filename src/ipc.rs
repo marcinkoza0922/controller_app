@@ -61,6 +61,9 @@ pub struct Status {
     /// The active profile's game; `None` is General.
     #[serde(default)]
     pub active_game: Option<String>,
+    /// Layers active right now (oldest first), on top of the active profile.
+    #[serde(default)]
+    pub active_layers: Vec<String>,
     pub devices: Vec<DeviceInfo>,
     #[serde(default)]
     pub focus_backend: FocusBackend,

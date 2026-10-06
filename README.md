@@ -62,6 +62,16 @@ More templates are available under "New from template…" in the GUI:
 - **Strategy**: mouse pointer on the left stick, arrow-key camera on the right, A/B/X = left/right/middle click, RT = left click for drag-select, L3/R3 = zoom (wheel up/down), LB/RB = held Ctrl/Shift, D-pad = control groups 1–4.
 - **Retro / platformer**: arrows on the D-pad and left stick, A/B/X/Y = Z/X/C/V, for keyboard-only indie games and emulators.
 
+## Layers
+
+A layer changes some of the controller's mappings while it's on, then changes them back, e.g. hold LB and the face buttons type F1–F4 and the right stick scrolls. Layers belong to a game (its **Layers** tab) and apply over whichever of its profiles is active; anything a layer doesn't set stays as in the profile. A layer can override buttons and stick directions, gestures, sticks, triggers (with their zones) and gyro, add combos, and switch the profile's combos off.
+
+- **Turning one on**: map "Layer…" to any button, trigger, stick direction, zone, gesture or combo: the layer is on while that input is held. Wrapped in **Toggle** it stays on until pressed again, which also lets a menu item switch it (menu items can only toggle layers). Layers can turn on further layers.
+- **Several at once**: they stack, and the newest one wins where they disagree.
+- **Switching over**: an input that's down when a layer comes on or goes off keeps doing what it started until it's released; sticks, triggers and gyro switch modes right away. Held layers end when the profile changes or an on-screen menu or keyboard opens; toggled ones stay on within the game.
+- **Showing it**: each layer shows its name on screen while on (with its own position, size and colors), or one of the game's info overlays (e.g. a cheat sheet), or nothing for quick ones like "hold Y to lean". The live controller drawing labels the inputs as they act with the layers that are on.
+- **Editing**: the Layers tab uses the profile editor, shown over one of the game's profiles. Inputs the layer doesn't set read "Same as Gameplay: …" with **Override**; overridden ones have **Back to base**. Layers use their profile's timings. "Copy from another game…" copies a layer (with the macros, menus and info overlays it uses), handy for sequels. Shared items can't use layers.
+
 ## Macros
 
 A game's Macros tab holds named input sequences, each in its own collapsible card ("+ New macro" adds one at the top). Each step is a **tap** (press, hold for N ms, release), **hold down**, **release**, **wait** (N ms), or **move stick** (a virtual-pad stick to a direction or custom position, held until the next stick step and recentered when the macro ends). Steps can press a key or key combo, mouse button, scroll wheel or gamepad button. "Insert motion…" adds fighting-game motions one frame apart: quarter circles, dragon punch and half circles, written facing right. Map a macro with the "Macro…" action:
@@ -107,7 +117,7 @@ Each menu is a collapsible card on the Menus tab, with a live preview; "Add a me
 Info overlays put text on screen without taking the controller, mainly to show a game's controls. Each one is a grid of cells (rows of cells that line up in columns), with its own position, size and colors. Cells can hold tokens:
 
 - **Button glyphs** drawn the way the controller in use labels them: `{south}` is A on Xbox, ✕ on PlayStation and B on Nintendo; also `{east}` `{west}` `{north}` `{lb}` `{rb}` `{lt}` `{rt}` `{select}` `{start}` `{guide}` `{ls}` `{rs}` `{l3}` `{r3}` `{dpad}` `{up}` `{down}` `{left}` `{right}`. Controllers that can't be recognized get the "Fallback glyphs" kind chosen on the Settings page.
-- **Live values**, updated every second: `{time}` `{time12}` `{date}` `{profile}` `{app}` (the focused program's executable) `{title}` `{pid}` `{cpu}` `{ram}` `{gpu}` (AMD only) `{controller}`.
+- **Live values**, updated every second: `{time}` `{time12}` `{date}` `{profile}` `{layer}` (the layers on, e.g. "Hotkeys + Build") `{app}` (the focused program's executable) `{title}` `{pid}` `{cpu}` `{ram}` `{gpu}` (AMD only) `{controller}`.
 
 An info overlay is either always shown while its game is active, or shown with the "Show info overlay…" action while that input is held (wrap it in Toggle to keep it up). Overlays at the same screen position stack.
 
@@ -138,6 +148,7 @@ Focus tracking uses a small KWin script (KDE Plasma, Wayland or X11). On other d
 - **Overview**: a live controller drawing labelled with the active profile's mappings, and the controller list (Manage, Test rumble, Calibrate gyro).
 - **Settings**: automatic switching and its default profile, the on-screen keyboard and numpad, and fallback glyphs.
 - **A game's Profiles tab**: the profile being edited, with its own labelled drawing and sub-tabs for Buttons, Sticks & triggers, Combos and Gyro. Mappings collapse to one-line summaries ("A ▸ Left click"); click a name to edit it. **Find by pressing** jumps to whatever you press or push on the controller.
+- **A game's Layers tab**: the game's layers, edited like a profile (see Layers).
 - **A game's Macros tab**: step editor with exact millisecond fields.
 
 Problems that would block saving (unknown keys, missing macros, incomplete combos) are flagged on the row and with ⚠ on its tab. Section explanations sit behind ⓘ tooltips, and keys can be picked from an on-screen keyboard.

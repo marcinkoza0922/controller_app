@@ -101,7 +101,23 @@ pub struct Engine {
     held: HashMap<Source, ButtonAction>,
     members: HashMap<Button, ComboMember>,
     gestures: HashMap<Button, GestureState>,
-    stick_keys: HashMap<Stick, Vec<KeyCode>>,
+    /// Keys held by sticks in direction-keys mode: (direction 0 up, 1 down, 2 left, 3 right;
+    /// key). A direction keeps its key until let go, even if a layer changed the stick.
+    stick_keys: HashMap<Stick, Vec<(usize, KeyCode)>>,
+    /// Virtual-pad stick each physical stick feeds in gamepad mode, so it can be recentered
+    /// when a layer gives the stick another mode.
+    pad_feeds: HashMap<Stick, Stick>,
+    /// Virtual-pad trigger each physical trigger feeds, likewise.
+    trigger_feeds: HashMap<Trigger, Trigger>,
+    /// Press threshold of each trigger whose button action is held: it releases below that,
+    /// whatever the trigger is set to by then.
+    trigger_release: HashMap<Trigger, f32>,
+    /// Bounds of each active zone, which it releases by (the zone list may have changed).
+    zone_bounds: HashMap<(Analog, usize), (f32, f32)>,
+    /// Layers held or toggled on, oldest first, with how many inputs hold each.
+    layers: Vec<(String, u32)>,
+    /// Set when `layers` changes; the daemon takes it.
+    layers_changed: bool,
     mouse_acc: (f32, f32),
     scroll_acc: (f32, f32),
     /// Seconds each held action containing a wheel direction has been held.
@@ -220,6 +236,16 @@ impl Engine {
         let switch = self.digital(src.clone(), action, true, out);
         self.digital(src, action, false, out);
         switch
+    }
+
+    /// Active layers, oldest first.
+    pub fn layers(&self) -> Vec<String> {
+        self.layers.iter().map(|(name, _)| name.clone()).collect()
+    }
+
+    /// Whether the active layers changed since the last call.
+    pub fn take_layers_changed(&mut self) -> bool {
+        std::mem::take(&mut self.layers_changed)
     }
 
     /// Whether the shown info overlays changed since the last call.
@@ -682,6 +708,21 @@ impl Engine {
                 self.menu_request = Some((name.clone(), Opener { toggled: self.toggling, ..src.opener() }));
             }
         }
+        ButtonAction::Layer(name) => {
+            let at = self.layers.iter().position(|(n, _)| n == name);
+            match (pressed, at) {
+                (true, Some(i)) => self.layers[i].1 += 1,
+                (true, None) => self.layers.push((name.clone(), 1)),
+                (false, Some(i)) => {
+                    self.layers[i].1 -= 1;
+                    if self.layers[i].1 == 0 {
+                        self.layers.remove(i);
+                    }
+                }
+                (false, None) => {}
+            }
+            self.layers_changed = true;
+        }
             ButtonAction::Multi(actions) => {
                 // Child slots depend only on position, so reverse-order release matches.
                 let mut slots = Vec::with_capacity(actions.len());
@@ -779,48 +820,70 @@ impl Engine {
     }
 
     fn trigger(&mut self, profile: &Profile, t: Trigger, value: f32, out: &mut Vec<OutEvent>) -> bool {
-        let switch = match profile.trigger(t) {
-            TriggerAction::Disabled => false,
+        let action = profile.trigger(t);
+        // A virtual trigger no longer fed (a layer changed this one's mode) goes back to rest.
+        let target = match action {
+            TriggerAction::Gamepad(target) => Some(*target),
+            _ => None,
+        };
+        if let Some(old) = self.trigger_feeds.get(&t).copied()
+            && Some(old) != target
+        {
+            self.trigger_feeds.remove(&t);
+            out.push(OutEvent::PadAxis(trigger_axis(old), 0.0));
+        }
+        let src = Source::Trigger(t);
+        let mut switch = false;
+        // A pull keeps its action until let go past where it pressed.
+        if let Some(threshold) = self.trigger_release.get(&t).copied()
+            && value < threshold - TRIGGER_HYSTERESIS
+        {
+            self.trigger_release.remove(&t);
+            switch |= self.digital(src.clone(), &ButtonAction::Disabled, false, out);
+        }
+        match action {
+            TriggerAction::Disabled => {}
             TriggerAction::Gamepad(target) => {
+                self.trigger_feeds.insert(t, *target);
                 out.push(OutEvent::PadAxis(trigger_axis(*target), value));
-                false
             }
             TriggerAction::Button { action, threshold } => {
-                let src = Source::Trigger(t);
-                let held = self.held.contains_key(&src);
-                let threshold = *threshold;
-                if !held && value >= threshold {
-                    self.digital(src, action, true, out)
-                } else if held && value < threshold - TRIGGER_HYSTERESIS {
-                    self.digital(src, action, false, out)
-                } else {
-                    false
+                if !self.trigger_release.contains_key(&t) && value >= *threshold {
+                    self.trigger_release.insert(t, *threshold);
+                    switch |= self.digital(src, action, true, out);
                 }
             }
-        };
+        }
         self.zones(profile, Analog::Trigger(t), value, out) | switch
     }
 
     /// Presses/releases zone actions for an analog input at `value` (0.0..1.0). Zones are
     /// inactive at rest (value 0), so a zone starting at 0 means "as soon as it moves".
     fn zones(&mut self, profile: &Profile, analog: Analog, value: f32, out: &mut Vec<OutEvent>) -> bool {
-        let zones = profile.zones(analog);
-        let mut changes = Vec::new();
-        for (i, zone) in zones.iter().enumerate() {
-            let held = self.held.contains_key(&Source::Zone(analog, i));
-            let margin = if held { ZONE_HYSTERESIS } else { 0.0 };
+        let inside = |(min, max): (f32, f32), margin: f32| {
             // The top zone includes full deflection itself.
-            let below_max = zone.max >= 1.0 || value < zone.max + margin;
-            let active = value > 0.0 && value >= zone.min - margin && below_max;
-            if active != held {
-                changes.push((i, active));
-            }
-        }
-        // Release before press so moving between adjacent zones never holds both.
-        changes.sort_by_key(|(_, active)| *active);
+            let below_max = max >= 1.0 || value < max + margin;
+            value > 0.0 && value >= min - margin && below_max
+        };
+        // Release first, by the bounds each active zone pressed with (a layer may have
+        // changed the zones since), so moving between adjacent zones never holds both.
         let mut switch = false;
-        for (i, active) in changes {
-            switch |= self.digital(Source::Zone(analog, i), &zones[i].action, active, out);
+        let leaving: Vec<usize> = self
+            .zone_bounds
+            .iter()
+            .filter(|((a, _), bounds)| *a == analog && !inside(**bounds, ZONE_HYSTERESIS))
+            .map(|((_, i), _)| *i)
+            .collect();
+        for i in leaving {
+            self.zone_bounds.remove(&(analog, i));
+            switch |= self.digital(Source::Zone(analog, i), &ButtonAction::Disabled, false, out);
+        }
+        for (i, zone) in profile.zones(analog).iter().enumerate() {
+            let bounds = (zone.min, zone.max);
+            if !self.zone_bounds.contains_key(&(analog, i)) && inside(bounds, 0.0) {
+                self.zone_bounds.insert((analog, i), bounds);
+                switch |= self.digital(Source::Zone(analog, i), &zone.action, true, out);
+            }
         }
         switch
     }
@@ -835,31 +898,47 @@ impl Engine {
     fn stick(&mut self, profile: &Profile, s: Stick, out: &mut Vec<OutEvent>) -> bool {
         let cfg = profile.stick(s);
         let (x, y) = self.stick_pos(s, cfg.deadzone);
-        match &cfg.action {
-            StickAction::Gamepad { stick, invert_y } => {
-                self.pad_sticks.insert(*stick, (x, if *invert_y { -y } else { y }));
-                self.emit_pad_stick(*stick, out);
-            }
-            StickAction::Keys { up, down, left, right } => {
-                let mut want = Vec::new();
-                let t = cfg.key_threshold;
-                for (active, name) in [(y < -t, up), (y > t, down), (x < -t, left), (x > t, right)] {
-                    if active && let Some(k) = parse_key(name) {
-                        want.push(k);
+        // A virtual stick no longer fed (a layer changed this stick's mode) recenters.
+        let target = match &cfg.action {
+            StickAction::Gamepad { stick, .. } => Some(*stick),
+            _ => None,
+        };
+        if let Some(old) = self.pad_feeds.get(&s).copied()
+            && Some(old) != target
+        {
+            self.pad_feeds.remove(&s);
+            self.pad_sticks.remove(&old);
+            self.emit_pad_stick(old, out);
+        }
+        if let StickAction::Gamepad { stick, invert_y } = &cfg.action {
+            self.pad_feeds.insert(s, *stick);
+            self.pad_sticks.insert(*stick, (x, if *invert_y { -y } else { y }));
+            self.emit_pad_stick(*stick, out);
+        }
+        // Direction keys, also released after a layer changed the mode: each direction keeps
+        // the key it pressed until it's let go. (Mouse and scroll are driven by `tick`.)
+        let names: [Option<&String>; 4] = match &cfg.action {
+            StickAction::Keys { up, down, left, right } => [Some(up), Some(down), Some(left), Some(right)],
+            _ => [None; 4],
+        };
+        let t = cfg.key_threshold;
+        let active = [y < -t, y > t, x < -t, x > t];
+        let held = self.stick_keys.entry(s).or_default();
+        let mut now_held = Vec::new();
+        for (dir, (on, name)) in active.into_iter().zip(names).enumerate() {
+            match (on, held.iter().find(|(d, _)| *d == dir).map(|(_, k)| *k)) {
+                (true, Some(k)) => now_held.push((dir, k)),
+                (true, None) => {
+                    if let Some(k) = name.and_then(|n| parse_key(n)) {
+                        out.push(OutEvent::Key(k, true));
+                        now_held.push((dir, k));
                     }
                 }
-                let held = self.stick_keys.entry(s).or_default();
-                for k in held.iter().filter(|k| !want.contains(k)) {
-                    out.push(OutEvent::Key(*k, false));
-                }
-                for k in want.iter().filter(|k| !held.contains(k)) {
-                    out.push(OutEvent::Key(*k, true));
-                }
-                *held = want;
+                (false, Some(k)) => out.push(OutEvent::Key(k, false)),
+                (false, None) => {}
             }
-            // Mouse and scroll are continuous and driven by `tick`.
-            StickAction::Mouse { .. } | StickAction::Scroll { .. } | StickAction::Disabled => {}
         }
+        *held = now_held;
         self.zones(profile, Analog::Stick(s), x.hypot(y).min(1.0), out)
     }
 
@@ -989,6 +1068,8 @@ impl Engine {
         match cfg.mode {
             GyroMode::Off => {}
             GyroMode::Mouse { sensitivity } => {
+                // A layer may have switched from stick mode: stop deflecting the stick.
+                self.set_gyro_stick(None, out);
                 let (dx, dy) = take_whole(&mut self.gyro.mouse_acc, x * sensitivity * sample.dt, y * sensitivity * sample.dt);
                 if dx != 0 || dy != 0 {
                     out.push(OutEvent::MouseMove(dx, dy));
@@ -1090,8 +1171,9 @@ impl Engine {
     }
 
     /// Releases everything this engine holds down and centers the virtual pad. Used before a
-    /// profile switch or when the device goes away.
-    pub fn release_all(&mut self, out: &mut Vec<OutEvent>) {
+    /// profile switch, when an on-screen overlay takes the controller, or when the device goes
+    /// away. With `keep_toggled_layers`, layers a Toggle switched on stay on (held ones end).
+    pub fn release_all(&mut self, keep_toggled_layers: bool, out: &mut Vec<OutEvent>) {
         let held: Vec<_> = self.held.drain().collect();
         for (src, action) in held {
             self.emit(&src, &action, false, 0, out);
@@ -1099,6 +1181,10 @@ impl Engine {
         // Toggled-on actions are released too (this also stops toggled turbos).
         let toggled: Vec<_> = self.toggled.drain().collect();
         for ((src, slot), inner) in toggled {
+            if keep_toggled_layers && matches!(inner, ButtonAction::Layer(_)) {
+                self.toggled.insert((src, slot), inner);
+                continue;
+            }
             self.emit(&src, &inner, false, slot + 1, out);
         }
         for id in self.macros_running.keys().cloned().collect::<Vec<_>>() {
@@ -1117,8 +1203,12 @@ impl Engine {
         // Unfinished tap sequences are dropped.
         self.gestures.clear();
         for (_, keys) in self.stick_keys.drain() {
-            out.extend(keys.into_iter().map(|k| OutEvent::Key(k, false)));
+            out.extend(keys.into_iter().map(|(_, k)| OutEvent::Key(k, false)));
         }
+        self.pad_feeds.clear();
+        self.trigger_feeds.clear();
+        self.trigger_release.clear();
+        self.zone_bounds.clear();
         for axis in [Axis::LeftX, Axis::LeftY, Axis::RightX, Axis::RightY, Axis::LeftTrigger, Axis::RightTrigger] {
             out.push(OutEvent::PadAxis(axis, 0.0));
         }
@@ -1215,7 +1305,7 @@ fn take_whole(acc: &mut (f32, f32), dx: f32, dy: f32) -> (i32, i32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{Combo, MouseButton, StickConfig};
+    use crate::config::{Combo, MouseButton, StickConfig, Zone};
 
     fn run(engine: &mut Engine, profile: &Profile, ev: InputEvent) -> Vec<OutEvent> {
         let mut out = Vec::new();
@@ -1855,7 +1945,7 @@ mod tests {
         run(&mut e, &p, InputEvent::Button(Button::North, false));
         run(&mut e, &p, InputEvent::Button(Button::West, true));
         let mut out = Vec::new();
-        e.release_all(&mut out);
+        e.release_all(false, &mut out);
         assert!(out.contains(&OutEvent::Key(KeyCode::KEY_C, false)), "{out:?}");
         assert!(out.contains(&OutEvent::MouseButton(MouseButton::Left, false)), "{out:?}");
         assert!(!e.needs_tick(&p));
@@ -2124,7 +2214,7 @@ mod tests {
         let presses = |out: &[OutEvent]| out.iter().filter(|ev| **ev == OutEvent::Key(KeyCode::KEY_A, true)).count();
         assert_eq!(presses(&hold_for(&mut e, &p, 0.5)), 10, "keeps looping hands-off");
         let mut out = Vec::new();
-        e.release_all(&mut out);
+        e.release_all(false, &mut out);
         assert!(!e.needs_tick(&p));
         assert_eq!(presses(&hold_for(&mut e, &p, 0.5)), 0);
     }
@@ -2314,5 +2404,129 @@ mod tests {
         e.tap_menu_item("Pause", 1, &toggle_c, &mut out);
         e.tap_menu_item("Pause", 1, &toggle_c, &mut out);
         assert_eq!(out, vec![OutEvent::Key(KeyCode::KEY_C, true), OutEvent::Key(KeyCode::KEY_C, false)], "a toggle item flips each time");
+    }
+
+    // Layers: the engine keeps the stack; the daemon hands it the profile with them on top.
+
+    fn layered(base: &Profile, layer: &crate::config::Layer) -> Profile {
+        base.with_layers([layer])
+    }
+
+    #[test]
+    fn layers_stack_and_count_their_holders() {
+        let mut p = Profile::passthrough("p");
+        p.set_button(Button::LeftBumper, ButtonAction::Layer("A".into()));
+        p.set_button(Button::RightBumper, ButtonAction::Layer("B".into()));
+        p.set_button(Button::West, ButtonAction::Layer("A".into()));
+        p.set_button(Button::North, ButtonAction::Toggle(Box::new(ButtonAction::Layer("A".into()))));
+        let mut e = Engine::default();
+        run(&mut e, &p, InputEvent::Button(Button::LeftBumper, true));
+        run(&mut e, &p, InputEvent::Button(Button::RightBumper, true));
+        assert_eq!(e.layers(), ["A", "B"], "oldest first");
+        assert!(e.take_layers_changed() && !e.take_layers_changed());
+        run(&mut e, &p, InputEvent::Button(Button::West, true));
+        run(&mut e, &p, InputEvent::Button(Button::LeftBumper, false));
+        assert_eq!(e.layers(), ["A", "B"], "West still holds A");
+        run(&mut e, &p, InputEvent::Button(Button::West, false));
+        assert_eq!(e.layers(), ["B"]);
+        // A toggle keeps one on after release.
+        run(&mut e, &p, InputEvent::Button(Button::North, true));
+        run(&mut e, &p, InputEvent::Button(Button::North, false));
+        assert_eq!(e.layers(), ["B", "A"]);
+        run(&mut e, &p, InputEvent::Button(Button::North, true));
+        assert_eq!(e.layers(), ["B"]);
+    }
+
+    #[test]
+    fn toggled_layers_survive_menus_but_not_game_changes() {
+        let mut p = Profile::passthrough("p");
+        p.set_button(Button::North, ButtonAction::Toggle(Box::new(ButtonAction::Layer("A".into()))));
+        p.set_button(Button::LeftBumper, ButtonAction::Layer("B".into()));
+        let mut e = Engine::default();
+        run(&mut e, &p, InputEvent::Button(Button::North, true));
+        run(&mut e, &p, InputEvent::Button(Button::North, false));
+        run(&mut e, &p, InputEvent::Button(Button::LeftBumper, true));
+        let mut out = Vec::new();
+        e.release_all(true, &mut out);
+        assert_eq!(e.layers(), ["A"], "held ones end, toggled ones stay");
+        // Still toggled: the next press turns it off.
+        run(&mut e, &p, InputEvent::Button(Button::North, true));
+        assert!(e.layers().is_empty());
+        run(&mut e, &p, InputEvent::Button(Button::North, false));
+        run(&mut e, &p, InputEvent::Button(Button::North, true));
+        e.release_all(false, &mut out);
+        assert!(e.layers().is_empty());
+    }
+
+    #[test]
+    fn a_held_button_keeps_its_action_across_a_layer_change() {
+        let base = Profile::passthrough("p");
+        let mut layer = crate::config::Layer::new("L");
+        layer.buttons.insert(Button::South, ButtonAction::Keys(vec!["KEY_F1".into()]));
+        let on = layered(&base, &layer);
+        let mut e = Engine::default();
+        assert_eq!(run(&mut e, &base, InputEvent::Button(Button::South, true)), [OutEvent::PadButton(Button::South, true)]);
+        // The layer comes on while A is down: A still releases the pad button.
+        assert_eq!(run(&mut e, &on, InputEvent::Button(Button::South, false)), [OutEvent::PadButton(Button::South, false)]);
+        assert_eq!(run(&mut e, &on, InputEvent::Button(Button::South, true)), [OutEvent::Key(KeyCode::KEY_F1, true)]);
+    }
+
+    #[test]
+    fn analog_inputs_switch_modes_without_getting_stuck() {
+        let base = Profile::passthrough("p");
+        let mut layer = crate::config::Layer::new("L");
+        layer.left_stick = Some(StickConfig::new(wasd(), 0.1, 1.0));
+        layer.right_stick = Some(StickConfig::new(StickAction::Mouse { speed: 1000.0 }, 0.1, 1.0));
+        layer.right_trigger = Some(TriggerAction::Gamepad(Trigger::Right).into());
+        let on = layered(&base, &layer);
+        let mut e = Engine::default();
+
+        // Right stick: pad stick, then mouse; the virtual stick recenters.
+        axis(&mut e, &base, Axis::RightX, 0.8);
+        let mut out = Vec::new();
+        e.resync(&on, &mut out);
+        assert!(out.contains(&OutEvent::PadAxis(Axis::RightX, 0.0)), "{out:?}");
+
+        // Left stick: keys in the layer. W pressed under the layer stays down after it ends,
+        // until the stick lets go of that direction.
+        let held = axis(&mut e, &on, Axis::LeftY, -0.9);
+        assert!(held.contains(&OutEvent::Key(KeyCode::KEY_W, true)));
+        let mut out = Vec::new();
+        e.resync(&base, &mut out);
+        assert!(!out.contains(&OutEvent::Key(KeyCode::KEY_W, false)), "still pushed up: {out:?}");
+        assert!(axis(&mut e, &base, Axis::LeftY, 0.0).contains(&OutEvent::Key(KeyCode::KEY_W, false)));
+
+        // A trigger pull pressed as a button releases by its own threshold after the layer
+        // made the trigger analog, and the analog trigger doesn't stay pulled afterwards.
+        let mut pulled = Profile::passthrough("p");
+        pulled.right_trigger = TriggerAction::Button { action: ButtonAction::Mouse(MouseButton::Left), threshold: 0.5 }.into();
+        let pulled_on = layered(&pulled, &layer);
+        // (The virtual trigger the resync above fed under the layer goes back to rest first.)
+        let out = axis(&mut e, &pulled, Axis::RightTrigger, 0.9);
+        assert_eq!(out, [OutEvent::PadAxis(Axis::RightTrigger, 0.0), OutEvent::MouseButton(MouseButton::Left, true)]);
+        let out = axis(&mut e, &pulled_on, Axis::RightTrigger, 0.2);
+        assert!(out.contains(&OutEvent::MouseButton(MouseButton::Left, false)), "{out:?}");
+        let out = axis(&mut e, &pulled, Axis::RightTrigger, 0.1);
+        assert!(out.contains(&OutEvent::PadAxis(Axis::RightTrigger, 0.0)), "{out:?}");
+    }
+
+    #[test]
+    fn active_zones_release_by_their_own_bounds() {
+        let mut base = Profile::passthrough("p");
+        base.left_stick.zones.push(Zone { min: 0.0, max: 0.5, action: ButtonAction::Keys(vec!["KEY_LEFTSHIFT".into()]) });
+        let mut layer = crate::config::Layer::new("L");
+        let mut stick = base.left_stick.clone();
+        stick.zones = vec![Zone { min: 0.6, max: 1.0, action: ButtonAction::Keys(vec!["KEY_X".into()]) }];
+        layer.left_stick = Some(stick);
+        let on = layered(&base, &layer);
+        let mut e = Engine::default();
+        assert!(axis(&mut e, &base, Axis::LeftX, 0.3).contains(&OutEvent::Key(KeyCode::KEY_LEFTSHIFT, true)));
+        // Under the layer, zone 0 means something else; Shift stays until 0.5 is passed.
+        let out = axis(&mut e, &on, Axis::LeftX, 0.4);
+        assert!(!out.iter().any(|o| matches!(o, OutEvent::Key(..))), "{out:?}");
+        // Past it, Shift releases and the layer's zone presses, in that order.
+        let out = axis(&mut e, &on, Axis::LeftX, 0.8);
+        let keys: Vec<&OutEvent> = out.iter().filter(|o| matches!(o, OutEvent::Key(..))).collect();
+        assert_eq!(keys, [&OutEvent::Key(KeyCode::KEY_LEFTSHIFT, false), &OutEvent::Key(KeyCode::KEY_X, true)]);
     }
 }

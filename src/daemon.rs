@@ -24,7 +24,7 @@ use anyhow::{Context, Result, bail};
 use evdev::Device;
 
 use crate::{
-    config::{Config, ProfileRef, Scope},
+    config::{Config, Profile, ProfileRef, Scope},
     engine::{Engine, Opener},
     focus::{self, FocusEvent},
     input::{self, InputEvent, MotionFrame, MotionNormalizer, MotionSample, Normalizer},
@@ -81,6 +81,15 @@ struct Managed {
     /// Drift per raw sensor axis (the controller's own frame), subtracted before remapping.
     gyro_bias: [f32; 3],
     calibrating: Option<Calibration>,
+    /// The active profile with this controller's layers on top, while it has any, and which
+    /// layers those are.
+    layered: Option<(Vec<String>, Profile)>,
+}
+
+/// What a controller's mappings come from: the active profile, or that profile with the
+/// controller's layers on top.
+fn layered<'a>(cached: &'a Option<(Vec<String>, Profile)>, base: &'a Profile) -> &'a Profile {
+    cached.as_ref().map_or(base, |(_, p)| p)
 }
 
 struct Calibration {
@@ -115,6 +124,22 @@ impl MotionNode {
 }
 
 impl Managed {
+    /// Brings `layered` up to date with the engine's layers. True if they changed.
+    fn refresh_layers(&mut self, config: &Config) -> bool {
+        let layers = self.engine.layers();
+        let current = self.layered.as_ref().map(|(names, _)| names.as_slice()).unwrap_or_default();
+        if layers == current {
+            return false;
+        }
+        self.layered = if layers.is_empty() {
+            None
+        } else {
+            let game = config.active_game();
+            config.active().map(|base| (layers.clone(), base.with_layers(game.layers_named(&layers))))
+        };
+        true
+    }
+
     /// Terminal status line: physical input, then what the mapping outputs.
     fn draw_status(&self) {
         if monitor::enabled() {
@@ -319,7 +344,7 @@ impl Daemon {
         if changed {
             self.broadcast_overlay();
         }
-        let Some(profile) = self.config.active() else { return };
+        let Some(base) = self.config.active() else { return };
         let mut switch = false;
         let mut toggle_overlay = None;
         let mut menu_request = None;
@@ -328,7 +353,10 @@ impl Daemon {
                 continue;
             }
             let mut out = Vec::new();
-            switch |= dev.engine.timers(profile, now, &mut out);
+            switch |= dev.engine.timers(layered(&dev.layered, base), now, &mut out);
+            if dev.refresh_layers(&self.config) {
+                dev.engine.resync(layered(&dev.layered, base), &mut out);
+            }
             dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
             toggle_overlay = dev.engine.take_overlay_toggle().or(toggle_overlay);
             if let Some(request) = dev.engine.take_menu_request() {
@@ -412,10 +440,12 @@ impl Daemon {
     }
 
     /// Lets go of everything the mappings hold; the controller now drives the overlay.
+    /// Toggled layers stay on, so a menu item that toggles one isn't undone by the menu.
     fn release_mappings(&mut self) {
         for dev in self.devices.values_mut() {
             let mut out = Vec::new();
-            dev.engine.release_all(&mut out);
+            dev.engine.release_all(true, &mut out);
+            dev.refresh_layers(&self.config);
             dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
         }
     }
@@ -458,6 +488,11 @@ impl Daemon {
         let Some(dev) = self.devices.get_mut(&device) else { return };
         let mut out = Vec::new();
         let switch = dev.engine.tap_menu_item(menu, item, action, &mut out);
+        if dev.refresh_layers(&self.config)
+            && let Some(base) = self.config.active()
+        {
+            dev.engine.resync(layered(&dev.layered, base), &mut out);
+        }
         dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
         let toggle_overlay = dev.engine.take_overlay_toggle();
         let menu_request = dev.engine.take_menu_request();
@@ -475,6 +510,7 @@ impl Daemon {
         if let Some((name, opener)) = menu_request {
             self.open_menu(device, name, opener);
         }
+        self.check_info_changes();
     }
 
     fn overlay_view(&self) -> Option<OverlayView> {
@@ -523,8 +559,45 @@ impl Daemon {
     /// Info overlays to show now: those of the active profile set to always show, and any
     /// a ShowInfo action holds up.
     fn visible_info(&self) -> Vec<crate::config::InfoOverlay> {
+        use crate::config::{Indicator, InfoOverlay};
         let held: HashSet<&String> = self.devices.values().flat_map(|d| d.engine.shown_info()).collect();
-        self.scope.info.iter().filter(|o| o.always || held.contains(&o.name)).cloned().collect()
+        let mut shown: Vec<InfoOverlay> =
+            self.scope.info.iter().filter(|o| o.always || held.contains(&o.name)).cloned().collect();
+        // Each active layer's indicator: its name, or an info overlay of the game's.
+        for name in self.active_layers() {
+            let Some(layer) = self.scope.layers.iter().find(|l| l.name == name) else { continue };
+            match &layer.indicator {
+                Indicator::Name => shown.push(InfoOverlay {
+                    name: format!("layer {name}"),
+                    always: true,
+                    style: layer.indicator_style.clone(),
+                    rows: vec![vec![name.clone()]],
+                }),
+                Indicator::Info(info) => {
+                    if !shown.iter().any(|o| &o.name == info)
+                        && let Some(o) = self.scope.info.iter().find(|o| &o.name == info)
+                    {
+                        shown.push(o.clone());
+                    }
+                }
+                Indicator::Off => {}
+            }
+        }
+        shown
+    }
+
+    /// Layers active on any controller (the last one used first), oldest first, that the
+    /// active game has.
+    fn active_layers(&self) -> Vec<String> {
+        let last = self.last_active.and_then(|id| self.devices.get(&id));
+        let others = self.devices.iter().filter(|(id, _)| Some(**id) != self.last_active).map(|(_, d)| d);
+        let mut layers: Vec<String> = Vec::new();
+        for name in last.into_iter().chain(others).flat_map(|d| d.engine.layers()) {
+            if !layers.contains(&name) && self.scope.layers.iter().any(|l| l.name == name) {
+                layers.push(name);
+            }
+        }
+        layers
     }
 
     fn live_values(&self) -> crate::info::Live {
@@ -536,16 +609,19 @@ impl Daemon {
             title: window.title,
             pid: window.pid,
             controller: pad.map(|d| d.name.clone()).unwrap_or_default(),
+            layers: self.active_layers(),
             family: pad.and_then(|d| d.family).unwrap_or(self.config.info_glyphs),
             system: self.sampler.stats.clone(),
         }
     }
 
-    /// Redraws info overlays if a ShowInfo action changed what is held up.
+    /// Redraws info overlays if a ShowInfo action changed what is held up, or a layer (with its
+    /// indicator and `{layer}`) started or ended.
     fn check_info_changes(&mut self) {
         let mut changed = false;
         for dev in self.devices.values_mut() {
             changed |= dev.engine.take_info_changed();
+            changed |= dev.engine.take_layers_changed();
         }
         if changed {
             self.broadcast_overlay();
@@ -566,15 +642,15 @@ impl Daemon {
     }
 
     fn needs_tick(&self) -> bool {
-        let Some(profile) = self.config.active() else { return false };
-        self.devices.values().any(|d| d.engine.needs_tick(profile))
+        let Some(base) = self.config.active() else { return false };
+        self.devices.values().any(|d| d.engine.needs_tick(layered(&d.layered, base)))
     }
 
     fn tick(&mut self, dt: f32) {
-        let Some(profile) = self.config.active() else { return };
+        let Some(base) = self.config.active() else { return };
         for dev in self.devices.values_mut() {
             let mut out = Vec::new();
-            dev.engine.tick(profile, dt, &mut out);
+            dev.engine.tick(layered(&dev.layered, base), dt, &mut out);
             dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
             dev.out_view.end_tick(dt);
         }
@@ -595,7 +671,7 @@ impl Daemon {
                     log!("device gone: {} ({})", dev.name, dev.path.display());
                     self.forget_active(id);
                     let mut out = Vec::new();
-                    dev.engine.release_all(&mut out);
+                    dev.engine.release_all(false, &mut out);
                     dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
                 }
             }
@@ -655,9 +731,9 @@ impl Daemon {
         }
         let sample = dev.motion_frame.to_standard(sample);
         dev.view.set_gyro(sample.gyro);
-        let Some(profile) = self.config.active().filter(|_| self.active.is_none()) else { return };
+        let Some(base) = self.config.active().filter(|_| self.active.is_none()) else { return };
         let mut out = Vec::new();
-        dev.engine.motion(profile, sample, &mut out);
+        dev.engine.motion(layered(&dev.layered, base), sample, &mut out);
         dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
         if self.last_draw.elapsed() >= STATUS_REDRAW {
             dev.draw_status();
@@ -759,17 +835,22 @@ impl Daemon {
         if self.active.is_some() {
             return self.overlay_input(id, events);
         }
-        let Some(profile) = self.config.active() else { return };
+        let Some(base) = self.config.active() else { return };
         let Some(dev) = self.devices.get_mut(&id) else { return };
         let mut out = Vec::new();
         let mut switch = false;
         let now = Instant::now();
         for ev in events {
             dev.view.apply(&ev);
-            switch |= dev.engine.handle(profile, ev, now, &mut out);
+            switch |= dev.engine.handle(layered(&dev.layered, base), ev, now, &mut out);
+            // A layer started or ended: the next events use it, and sticks, triggers and
+            // gyro switch modes right away.
+            if dev.refresh_layers(&self.config) {
+                dev.engine.resync(layered(&dev.layered, base), &mut out);
+            }
         }
         dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
-        if !dev.engine.needs_tick(profile) {
+        if !dev.engine.needs_tick(layered(&dev.layered, base)) {
             dev.out_view.stop_motion();
         }
         dev.draw_status();
@@ -931,7 +1012,8 @@ impl Daemon {
         if matches!(self.active, Some(Active::Menu { .. })) {
             self.close_overlay();
         }
-        self.release_all();
+        // Toggled layers stay on; they apply again if the game still has them.
+        self.release_all(true);
         self.config = new;
         self.refresh_scope();
         let ignored = self.config.ignored_devices.clone();
@@ -968,7 +1050,8 @@ impl Daemon {
         if game_changes && matches!(self.active, Some(Active::Menu { .. })) {
             self.close_overlay();
         }
-        self.release_all();
+        // Layers belong to a game: toggled ones stay on within it.
+        self.release_all(!game_changes);
         self.config.active = target;
         if game_changes {
             self.refresh_scope();
@@ -982,19 +1065,23 @@ impl Daemon {
     }
 
     /// Releases every output held by every device (before a profile change).
-    fn release_all(&mut self) {
+    fn release_all(&mut self, keep_toggled_layers: bool) {
         for dev in self.devices.values_mut() {
             let mut out = Vec::new();
-            dev.engine.release_all(&mut out);
+            dev.engine.release_all(keep_toggled_layers, &mut out);
             dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
         }
     }
 
+    /// Re-applies analog state under the active profile (and each controller's layers, which
+    /// are rebuilt from it).
     fn resync_all(&mut self) {
-        let Some(profile) = self.config.active() else { return };
+        let Some(base) = self.config.active() else { return };
         for dev in self.devices.values_mut() {
+            dev.layered = None;
+            dev.refresh_layers(&self.config);
             let mut out = Vec::new();
-            dev.engine.resync(profile, &mut out);
+            dev.engine.resync(layered(&dev.layered, base), &mut out);
             dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
         }
     }
@@ -1008,7 +1095,7 @@ impl Daemon {
             monitor::clear();
             self.forget_active(id);
             let mut out = Vec::new();
-            dev.engine.release_all(&mut out);
+            dev.engine.release_all(false, &mut out);
             dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
             log!("released {} ({})", dev.name, dev.path.display());
         }
@@ -1033,6 +1120,7 @@ impl Daemon {
             enabled: self.config.enabled,
             active_profile: self.config.active().map(|p| p.name.clone()).unwrap_or_default(),
             active_game: self.config.active_ref().game,
+            active_layers: self.active_layers(),
             devices,
             focus_backend: self.focus_backend,
             focused: self.focused.clone(),
@@ -1157,6 +1245,7 @@ impl Daemon {
             motion_frame: MotionFrame::default(),
             gyro_bias: [0.0; 3],
             calibrating: None,
+            layered: None,
         };
         if let Some(profile) = self.config.active() {
             let mut out = Vec::new();

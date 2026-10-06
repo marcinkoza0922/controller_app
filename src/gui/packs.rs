@@ -227,28 +227,32 @@ impl App {
     /// Copies `root` (a `kind` item of `items`) into the shown list, with whatever it refers
     /// to that isn't already usable here. Names taken here get "(2)", and references among the
     /// copies follow.
-    fn copy_items(&mut self, items: &crate::config::Shared, kind: ItemKind, root: &str, source: &BrowseSource) {
+    fn copy_items(&mut self, items: &Game, kind: ItemKind, root: &str, source: &BrowseSource) {
         let names = self.names();
         let needed = pack::dependencies(items, kind, root, |k, n| names.list(k).iter().any(|x| x == n));
-        let mut copy = crate::config::Shared::default();
+        let mut copy = Game::new("", Vec::new());
         for (k, n) in &needed {
             match k {
                 ItemKind::Macro => copy.macros.extend(items.macros.iter().find(|m| &m.name == n).cloned()),
                 ItemKind::Menu => copy.menus.extend(items.menus.iter().find(|m| &m.name == n).cloned()),
                 ItemKind::Info => copy.info.extend(items.info.iter().find(|o| &o.name == n).cloned()),
+                ItemKind::Layer => copy.layers.extend(items.layers.iter().find(|l| &l.name == n).cloned()),
             }
         }
         let mut renamed_root = root.to_string();
         for (k, old) in &needed {
-            let new = free_name(old, |x| !self.item_name_free(*k, None, x) || (x != old && copy.names(*k).contains(&x)));
+            let taken = |x: &str| {
+                let here = match k {
+                    ItemKind::Layer => self.game().layers.iter().any(|l| l.name == x),
+                    _ => !self.item_name_free(*k, None, x),
+                };
+                here || (x != old && copy.names(*k).contains(&x))
+            };
+            let new = free_name(old, taken);
             if &new == old {
                 continue;
             }
-            match k {
-                ItemKind::Macro => copy.macros.iter_mut().filter(|m| &m.name == old).for_each(|m| m.name = new.clone()),
-                ItemKind::Menu => copy.menus.iter_mut().filter(|m| &m.name == old).for_each(|m| m.name = new.clone()),
-                ItemKind::Info => copy.info.iter_mut().filter(|o| &o.name == old).for_each(|o| o.name = new.clone()),
-            }
+            copy.rename_item(*k, old, &new);
             copy.rename_refs(*k, old, &new);
             if *k == kind && old == root {
                 renamed_root = new;
@@ -261,19 +265,28 @@ impl App {
         copy.macros.sort_by_key(|m| order(ItemKind::Macro, &m.name));
         copy.menus.sort_by_key(|m| order(ItemKind::Menu, &m.name));
         copy.info.sort_by_key(|o| order(ItemKind::Info, &o.name));
+        copy.layers.sort_by_key(|l| order(ItemKind::Layer, &l.name));
         self.macros_mut().splice(0..0, copy.macros);
         self.menus_mut().splice(0..0, copy.menus);
         self.infos_mut().splice(0..0, copy.info);
+        self.game_mut().layers.splice(0..0, copy.layers);
         self.open_macros = shift(&self.open_macros, macros);
         self.open_menus = shift(&self.open_menus, menus);
         self.open_appearance = self.open_appearance.iter().map(|a| a.map(|j| j + menus)).collect();
         self.open_infos = shift(&self.open_infos, info);
         self.open_info_appearance = shift(&self.open_info_appearance, info);
         match kind {
-            ItemKind::Macro => self.open_macros.insert(0),
-            ItemKind::Menu => self.open_menus.insert(0),
-            ItemKind::Info => self.open_infos.insert(0),
-        };
+            ItemKind::Macro => {
+                self.open_macros.insert(0);
+            }
+            ItemKind::Menu => {
+                self.open_menus.insert(0);
+            }
+            ItemKind::Info => {
+                self.open_infos.insert(0);
+            }
+            ItemKind::Layer => self.layer = 0,
+        }
         let extra: Vec<String> = needed[1..].iter().map(|(k, n)| format!("{} “{n}”", k.noun())).collect();
         let with = if extra.is_empty() { String::new() } else { format!(", with {}", extra.join(", ")) };
         self.message = Some((format!("Copied {} “{renamed_root}” from {source}{with}.", kind.noun()), false));
@@ -293,19 +306,12 @@ impl App {
         self.dialog = Some(Dialog::Import { plan: Box::new(plan), choices });
     }
 
-    /// Macros, menus and info overlays of a "Copy from" source.
-    fn browse_items(&self, source: &BrowseSource) -> Option<crate::config::Shared> {
-        let (macros, menus, info) = match source {
-            BrowseSource::Game(key) => {
-                let g = self.config.game(key.as_deref())?;
-                (g.macros.clone(), g.menus.clone(), g.info.clone())
-            }
-            BrowseSource::Library(i, _) => {
-                let p = &self.library.get(*i)?.pack;
-                (p.macros.clone(), p.menus.clone(), p.info_overlays.clone())
-            }
-        };
-        Some(crate::config::Shared { macros, menus, info })
+    /// A "Copy from" source, as a game.
+    fn browse_items(&self, source: &BrowseSource) -> Option<Game> {
+        match source {
+            BrowseSource::Game(key) => self.config.game(key.as_deref()).cloned(),
+            BrowseSource::Library(i, _) => Some(self.library.get(*i)?.pack.to_game()),
+        }
     }
 
     /// Whether any connected controller has a gyro: `None` with none connected.
@@ -484,8 +490,8 @@ impl App {
         for f in &out.features {
             col = col.push(
                 text(format!(
-                    "Profile “{}” uses {}: players on a plain XInput pad won't get it.",
-                    f.profile,
+                    "The {} uses {}: players on a plain XInput pad won't get it.",
+                    f.place,
                     f.feature.label()
                 ))
                 .size(13)
@@ -583,11 +589,7 @@ impl App {
         .spacing(12);
         if let Some(items) = from.and_then(|s| self.browse_items(s)) {
             let mut list = column![].spacing(6);
-            let count = match kind {
-                ItemKind::Macro => items.macros.len(),
-                ItemKind::Menu => items.menus.len(),
-                ItemKind::Info => items.info.len(),
-            };
+            let count = items.names(kind).len();
             for i in 0..count {
                 let (name, summary, preview_panel): (String, String, Option<Element<'a, Message>>) = match kind {
                     ItemKind::Macro => {
@@ -607,6 +609,12 @@ impl App {
                         let sample = InfoOverlay { style: preview_style(&o.style), ..o.clone() };
                         let view = crate::info::resolve(&sample, &crate::info::Live::sample(self.config.info_glyphs));
                         (o.name.clone(), format!("{} rows", o.rows.len()), Some(preview(crate::overlay::draw::info_panel(&view))))
+                    }
+                    ItemKind::Layer => {
+                        let l = &items.layers[i];
+                        let lines = layer_lines(l);
+                        let summary = format!("{} override{}", l.overrides(), if l.overrides() == 1 { "" } else { "s" });
+                        (l.name.clone(), summary, Some(text(lines.join("\n")).size(13).into()))
                     }
                 };
                 let chevron = if open == Some(i) { "▾" } else { "▸" };
@@ -683,13 +691,41 @@ fn contents_line(p: &pack::Pack) -> String {
     let count = |n: usize, what: &str| format!("{n} {what}{}", if n == 1 { "" } else { "s" });
     let profiles: Vec<&str> = p.profiles.iter().map(|x| x.name.as_str()).collect();
     format!(
-        "{} ({}) · {} · {} · {}",
+        "{} ({}) · {} · {} · {} · {}",
         count(p.profiles.len(), "profile"),
         profiles.join(", "),
+        count(p.layers.len(), "layer"),
         count(p.macros.len(), "macro"),
         count(p.menus.len(), "menu"),
         count(p.info_overlays.len(), "info overlay"),
     )
+}
+
+/// What a layer changes, one line each: "A → F1", "Right Stick → scroll, 15 notches/s".
+fn layer_lines(l: &crate::config::Layer) -> Vec<String> {
+    let mut lines: Vec<String> = l.buttons.iter().map(|(b, a)| format!("{} → {}", short_button(*b), summarize(a))).collect();
+    lines.extend(l.gestures.keys().map(|b| format!("{} gestures", short_button(*b))));
+    for (stick, cfg) in [(Stick::Left, &l.left_stick), (Stick::Right, &l.right_stick)] {
+        if let Some(cfg) = cfg {
+            lines.push(format!("{stick} → {}", stick_summary(cfg)));
+        }
+    }
+    for (t, cfg) in [(Trigger::Left, &l.left_trigger), (Trigger::Right, &l.right_trigger)] {
+        if let Some(cfg) = cfg {
+            lines.push(format!("{t} → {}", trigger_summary(cfg)));
+        }
+    }
+    if l.gyro.is_some() {
+        lines.push("Gyro settings".into());
+    }
+    lines.extend(l.combos.iter().map(|c| {
+        let name: Vec<&str> = c.buttons.iter().map(|b| short_button(*b)).collect();
+        format!("{} → {}", name.join(" + "), summarize(&c.action))
+    }));
+    if !l.disabled_combos.is_empty() {
+        lines.push(format!("{} of the profile's combos off", l.disabled_combos.len()));
+    }
+    lines
 }
 
 /// One macro step in a few words.

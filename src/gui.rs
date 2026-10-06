@@ -28,8 +28,10 @@ use crate::{
     pack, pad_svg, style,
 };
 
+mod layers;
 mod packs;
 
+use layers::IndicatorChoice;
 use packs::{BrowseSource, Dialog, PackField};
 
 pub fn run() -> iced::Result {
@@ -95,6 +97,15 @@ struct App {
     /// The shown game's items changed since it was imported (see `pack::edited_items`),
     /// worked out after each edit rather than every frame.
     edited: Vec<String>,
+    /// The layer shown on the Layers tab, by index in the game's layers.
+    layer: usize,
+    /// The profile a layer is shown over, by index in the game's profiles.
+    compare: usize,
+    /// What the layer editor edits: the compared profile with the layer on top (see
+    /// `layers.rs`).
+    layer_view: Option<Profile>,
+    /// The layer name label's Appearance section is open.
+    indicator_appearance: bool,
 }
 
 /// What the sidebar shows on the right.
@@ -110,6 +121,7 @@ enum Page {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GameTab {
     Profiles,
+    Layers,
     Macros,
     Menus,
     Info,
@@ -117,13 +129,14 @@ enum GameTab {
 }
 
 impl GameTab {
-    const ALL: [GameTab; 5] = [GameTab::Profiles, GameTab::Macros, GameTab::Menus, GameTab::Info, GameTab::Details];
+    const ALL: [GameTab; 6] = [GameTab::Profiles, GameTab::Layers, GameTab::Macros, GameTab::Menus, GameTab::Info, GameTab::Details];
 }
 
 impl fmt::Display for GameTab {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             GameTab::Profiles => "Profiles",
+            GameTab::Layers => "Layers",
             GameTab::Macros => "Macros",
             GameTab::Menus => "Menus",
             GameTab::Info => "Info overlays",
@@ -408,6 +421,9 @@ fn fit_items(menu: &mut Menu) {
 /// What's wrong with a menu item's action: the usual checks, plus which menus it may open
 /// (see [`crate::menu::can_open`]).
 fn item_problem(menu: &Menu, action: &ButtonAction, menus: &[&Menu], names: &Names) -> Option<String> {
+    if holds_layer(action) {
+        return Some("a menu item can only toggle a layer (wrap it in Toggle)".into());
+    }
     action_problem(action, names).or_else(|| {
         let mut problem = None;
         action.walk(&mut |a| {
@@ -447,29 +463,41 @@ fn origin_note(game: &Game) -> Option<String> {
     Some(format!("from {source}, version {}{by}", origin.version))
 }
 
-/// Macro, menu and info overlay names, for the "Macro…"/"Open menu…"/"Show info overlay…"
-/// pickers and for checking references.
+/// Macro, menu, info overlay and layer names, for the "Macro…"/"Open menu…"/"Show info
+/// overlay…"/"Layer…" pickers and for checking references.
 #[derive(Debug, Clone, Default)]
 struct Names {
     macros: Vec<String>,
     menus: Vec<String>,
     infos: Vec<String>,
+    layers: Vec<String>,
+    /// False for shared items, which can't use layers (they're always a game's own).
+    layers_allowed: bool,
 }
 
+/// The "+ New layer" choice in a layer picker; replaced by a new layer's name when chosen.
+const NEW_LAYER: &str = "+ New layer";
+
 impl Names {
-    fn of(scope: &ScopeRef) -> Self {
+    fn of(scope: &ScopeRef, layers_allowed: bool) -> Self {
         let list = |kind| scope.names(kind).into_iter().map(str::to_string).collect();
-        Names { macros: list(ItemKind::Macro), menus: list(ItemKind::Menu), infos: list(ItemKind::Info) }
+        Names {
+            macros: list(ItemKind::Macro),
+            menus: list(ItemKind::Menu),
+            infos: list(ItemKind::Info),
+            layers: list(ItemKind::Layer),
+            layers_allowed,
+        }
     }
 
     /// What a game's profiles and items can use: its own items, then shared ones.
     fn for_game(config: &Config, game: &Game) -> Self {
-        Names::of(&config.scope_of(Some(game)))
+        Names::of(&config.scope_of(Some(game)), true)
     }
 
     /// What shared items can use: only other shared items.
     fn shared(config: &Config) -> Self {
-        Names::of(&config.scope_of(None))
+        Names::of(&config.scope_of(None), false)
     }
 
     fn list(&self, kind: ItemKind) -> &[String] {
@@ -477,7 +505,18 @@ impl Names {
             ItemKind::Macro => &self.macros,
             ItemKind::Menu => &self.menus,
             ItemKind::Info => &self.infos,
+            ItemKind::Layer => &self.layers,
         }
+    }
+}
+
+/// Whether `action` holds a layer outside any Toggle, which a tap (a menu item) can't do.
+fn holds_layer(action: &ButtonAction) -> bool {
+    match action {
+        ButtonAction::Layer(_) => true,
+        ButtonAction::Multi(list) => list.iter().any(holds_layer),
+        ButtonAction::Turbo { action, .. } => holds_layer(action),
+        _ => false,
     }
 }
 
@@ -489,6 +528,104 @@ struct Ui<'a> {
     found: Option<Button>,
     analog_triggers: bool,
     any_gyro: bool,
+    /// Set while editing a layer: the profile shown is the layer over `base`.
+    layer: Option<LayerMarks<'a>>,
+}
+
+/// A layer being edited, over the profile it's compared with.
+#[derive(Clone, Copy)]
+struct LayerMarks<'a> {
+    layer: &'a crate::config::Layer,
+    base: &'a Profile,
+}
+
+/// Something a layer overrides as a whole.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LayerPart {
+    /// A button's action and gestures.
+    Button(Button),
+    Stick(Stick),
+    /// A trigger's action and zones.
+    Trigger(Trigger),
+    Gyro,
+}
+
+impl LayerMarks<'_> {
+    fn overrides(&self, part: LayerPart) -> bool {
+        let l = self.layer;
+        match part {
+            LayerPart::Button(b) => l.buttons.contains_key(&b) || l.gestures.contains_key(&b),
+            LayerPart::Stick(Stick::Left) => l.left_stick.is_some(),
+            LayerPart::Stick(Stick::Right) => l.right_stick.is_some(),
+            LayerPart::Trigger(Trigger::Left) => l.left_trigger.is_some(),
+            LayerPart::Trigger(Trigger::Right) => l.right_trigger.is_some(),
+            LayerPart::Gyro => l.gyro.is_some(),
+        }
+    }
+}
+
+/// In a layer, a part it doesn't override reads "Same as Gameplay: …" with an Override
+/// button; an overridden one gets its editor and "Back to base". Outside layers, just the
+/// editor.
+fn layer_part<'a>(ui: &Ui, part: LayerPart, label: String, summary: String, editor: impl FnOnce() -> Vec<Element<'a, Message>>) -> Vec<Element<'a, Message>> {
+    let Some(marks) = ui.layer else { return editor() };
+    if marks.overrides(part) {
+        let mut rows = vec![
+            row![
+                text(label).size(13).color(style_accent()),
+                space::horizontal(),
+                button(text("Back to base").size(13)).style(button::text).on_press(Message::RevertInput(part)),
+            ]
+            .align_y(Alignment::Center)
+            .into(),
+        ];
+        rows.extend(editor());
+        return rows;
+    }
+    vec![
+        row![
+            text(label).width(LABEL_WIDTH).color(MUTED_COLOR),
+            text(format!("Same as {}: {summary}", marks.base.name)).color(MUTED_COLOR),
+            space::horizontal(),
+            button(text("Override").size(13)).style(button::secondary).on_press(Message::OverrideInput(part)),
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .into(),
+    ]
+}
+
+/// A stick's mode in a few words.
+fn stick_summary(cfg: &StickConfig) -> String {
+    let mode = match &cfg.action {
+        StickAction::Disabled => "Disabled".to_string(),
+        StickAction::Gamepad { stick, .. } => format!("pad {stick}"),
+        StickAction::Mouse { speed } => format!("mouse, {speed:.0} px/s"),
+        StickAction::Scroll { speed } => format!("scroll, {speed:.0} notches/s"),
+        StickAction::Keys { up, down, left, right } => {
+            [up, left, down, right].map(|k| keyboard::label(k)).join("/")
+        }
+    };
+    format!("{mode}{}", zones_note(cfg.zones.len()))
+}
+
+/// A trigger's action in a few words.
+fn trigger_summary(cfg: &crate::config::TriggerConfig) -> String {
+    let action = match &cfg.action {
+        TriggerAction::Disabled => "Disabled".to_string(),
+        TriggerAction::Gamepad(t) => format!("pad {t}"),
+        TriggerAction::Button { action, .. } => summarize(action),
+    };
+    format!("{action}{}", zones_note(cfg.zones.len()))
+}
+
+/// " + 2 zones", or nothing.
+fn zones_note(n: usize) -> String {
+    match n {
+        0 => String::new(),
+        1 => " + 1 zone".into(),
+        n => format!(" + {n} zones"),
+    }
 }
 
 impl Ui<'_> {
@@ -831,6 +968,21 @@ enum Message {
     AskDeleteGame,
     ConfirmDeleteGame,
     OpenBrowse(ItemKind),
+    NewLayer,
+    SelectLayer(String),
+    RenameLayer(String),
+    DeleteLayer,
+    /// Which of the game's profiles the layer editor shows the layer over.
+    SetCompare(String),
+    SetIndicator(IndicatorChoice),
+    SetIndicatorStyle(OverlayStyle),
+    ToggleIndicatorAppearance,
+    /// Make the layer set this (a copy of the profile's, to edit).
+    OverrideInput(LayerPart),
+    /// Stop the layer setting this.
+    RevertInput(LayerPart),
+    /// Switch a profile combo (by its buttons) off in the layer, or back on.
+    ToggleBaseCombo(Vec<Button>),
     BrowseFrom(BrowseSource),
     BrowseOpen(usize),
     CopyItem(usize),
@@ -957,6 +1109,10 @@ impl App {
             installed: None,
             renames: Vec::new(),
             edited: Vec::new(),
+            layer: 0,
+            compare: 0,
+            layer_view: None,
+            indicator_appearance: false,
         };
         let load = Task::perform(
             async {
@@ -1060,6 +1216,7 @@ impl App {
             ItemKind::Macro => self.macros().iter().map(|m| &m.name).collect(),
             ItemKind::Menu => self.menus().iter().map(|m| &m.name).collect(),
             ItemKind::Info => self.infos().iter().map(|o| &o.name).collect(),
+            ItemKind::Layer => self.game().layers.iter().map(|l| &l.name).collect(),
         };
         if list.iter().enumerate().any(|(i, n)| Some(i) != index && *n == name) {
             return Some("name used twice".into());
@@ -1091,11 +1248,19 @@ impl App {
         unique_name(base, |n| !self.item_name_free(kind, None, n))
     }
 
+    /// The profile the editor shows: the edited profile, or on the Layers tab, the layer over
+    /// the profile it's compared with.
     fn profile(&self) -> Option<&Profile> {
+        if self.editing_layer() {
+            return self.layer_view.as_ref();
+        }
         self.game().profiles.get(self.editing)
     }
 
     fn profile_mut(&mut self) -> Option<&mut Profile> {
+        if self.editing_layer() {
+            return self.layer_view.as_mut();
+        }
         let editing = self.editing;
         self.game_mut().profiles.get_mut(editing)
     }
@@ -1129,14 +1294,26 @@ impl App {
         if key.is_some() {
             self.shared_view = false;
         }
+        self.layer = 0;
+        self.compare = self.editing;
         self.reset_page_state();
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
         // Polling and live input don't change the config, and arrive many times a second.
         let edits = !matches!(message, Message::Poll | Message::LiveInput(_) | Message::StatusLoaded(_));
+        let message = self.new_layer_for(message);
+        // Edits in the layer editor change a working copy; they're kept as the layer's
+        // overrides.
+        let before = self.layer_view.clone().filter(|_| self.editing_layer());
         let task = self.handle(message);
+        if let Some(before) = before
+            && self.editing_layer()
+        {
+            self.write_back(&before);
+        }
         if edits {
+            self.refresh_layer_view();
             self.edited = if self.page == Page::Game(None) { Vec::new() } else { pack::edited_items(self.game()) };
         }
         task
@@ -1808,7 +1985,7 @@ impl App {
                 self.editing = self.editing.min(self.game().profiles.len().saturating_sub(1));
                 self.message = None;
             }
-            other => return self.update_packs(other),
+            other => return self.update_layers(other),
         }
         Task::none()
     }
@@ -1897,7 +2074,9 @@ impl App {
     fn jump_to(&mut self, b: Button) -> Task<Message> {
         self.finding = false;
         self.found = Some(b);
-        self.game_tab = GameTab::Profiles;
+        if self.game_tab != GameTab::Layers {
+            self.game_tab = GameTab::Profiles;
+        }
         let (tab, position) = match Button::ALL.iter().position(|x| *x == b) {
             Some(i) => (ProfileTab::Buttons, i as f32 / Button::ALL.len() as f32),
             None => {
@@ -1907,6 +2086,12 @@ impl App {
         };
         self.profile_tab = tab;
         iced::widget::operation::snap_to("main", scrollable::RelativeOffset { x: Some(0.0), y: Some(position) })
+    }
+
+    /// `p` with the layers the daemon says are on right now (they belong to the active game).
+    fn with_active_layers(&self, p: &Profile) -> Profile {
+        let layers = self.status.as_ref().map(|s| s.active_layers.as_slice()).unwrap_or_default();
+        p.with_layers(self.config.active_game().layers_named(layers))
     }
 
     fn validate(&self) -> Option<String> {
@@ -1938,7 +2123,11 @@ impl App {
 
     fn view(&self) -> Element<'_, Message> {
         let page: Element<'_, Message> = match &self.page {
-            Page::Overview => column![self.view_live(self.config.active()), rule::horizontal(1), self.view_devices()]
+            Page::Overview => column![
+                self.view_live(self.config.active().map(|p| self.with_active_layers(p)).as_ref()),
+                rule::horizontal(1),
+                self.view_devices()
+            ]
                 .spacing(16)
                 .into(),
             Page::Settings => self.view_settings(),
@@ -2029,6 +2218,7 @@ impl App {
         let reachable = reachable_menus(&self.config, (!self.on_shared()).then_some(game));
         let issue = |tab: GameTab| match tab {
             GameTab::Profiles => profile_issue,
+            GameTab::Layers => layers_problem(game, &names).is_some(),
             GameTab::Macros => macros_have_problem(self.macros(), &names),
             GameTab::Menus => menus_have_problem(self.menus(), &reachable, &names),
             GameTab::Info => info_has_problem(self.infos()),
@@ -2073,6 +2263,7 @@ impl App {
 
         let body = match tab {
             GameTab::Profiles => self.view_profile_tab(&names),
+            GameTab::Layers => self.view_layers(&names),
             GameTab::Macros => self.view_macros(&names),
             GameTab::Menus => self.view_menus(&names, &reachable),
             GameTab::Info => self.view_infos(),
@@ -2138,9 +2329,17 @@ impl App {
     }
 
     fn view_profile_tab<'a>(&'a self, names: &Names) -> Element<'a, Message> {
-        let mut col = column![self.view_profile_bar()].spacing(16);
+        let col = column![self.view_profile_bar()].spacing(16);
         let Some(p) = self.profile() else { return col.into() };
-        col = col.push(self.view_live(Some(p)));
+        col.push(self.view_profile_editor(p, names, None)).into()
+    }
+
+    /// The live drawing, "Find by pressing", and the Buttons, Sticks & triggers, Combos and
+    /// Gyro tabs for `p`: a profile, or (with `layer`) a layer over one.
+    fn view_profile_editor<'a>(&'a self, p: &'a Profile, names: &Names, layer: Option<LayerMarks<'a>>) -> Element<'a, Message> {
+        // The active profile's drawing also shows the layers that are on right now.
+        let live = (layer.is_none() && self.profile_ref().is_some_and(|at| at == self.saved.active)).then(|| self.with_active_layers(p));
+        let mut col = column![self.view_live(Some(live.as_ref().unwrap_or(p)))].spacing(16);
 
         let find: Element<'_, Message> = if self.finding {
             row![
@@ -2186,6 +2385,7 @@ impl App {
             found: self.found,
             analog_triggers: self.analog_triggers(),
             any_gyro: self.any_gyro(),
+            layer,
         };
         col.push(view_profile(p, &ui, self.profile_tab)).into()
     }
@@ -2245,6 +2445,8 @@ impl App {
             (None, Some(_)) => "Press a button on a managed controller".into(),
             (None, None) => "Live input needs the daemon".into(),
         };
+        let layers = self.status.as_ref().map(|s| s.active_layers.as_slice()).unwrap_or_default();
+        let caption = if layers.is_empty() { caption } else { format!("{caption} · Layers: {}", layers.join(" + ")) };
         column![
             text("Live input").size(20),
             container(controller_drawing(self.live.as_ref(), labels_from)).center_x(Length::Fill),
@@ -3390,15 +3592,20 @@ fn view_profile<'a>(p: &'a Profile, ui: &Ui, tab: ProfileTab) -> Element<'a, Mes
         ProfileTab::Sticks => {
             let mut sticks = Vec::new();
             for s in [Stick::Left, Stick::Right] {
-                sticks.push(stick_editor(s, p.stick(s), names));
+                let base = ui.layer.map_or(p.stick(s), |m| m.base.stick(s));
+                sticks.extend(layer_part(ui, LayerPart::Stick(s), s.to_string(), stick_summary(base), || vec![stick_editor(s, p.stick(s), names)]));
                 for b in Button::stick_directions(s) {
                     sticks.extend(button_row(p, b, ui));
                 }
             }
-            let triggers = [Trigger::Left, Trigger::Right]
-                .into_iter()
-                .map(|t| trigger_editor(t, p.trigger(t), p.zones(Analog::Trigger(t)), ui.analog_triggers, names))
-                .collect();
+            let mut triggers = Vec::new();
+            for t in [Trigger::Left, Trigger::Right] {
+                let base = ui.layer.map_or(p, |m| m.base);
+                let base = if t == Trigger::Left { &base.left_trigger } else { &base.right_trigger };
+                triggers.extend(layer_part(ui, LayerPart::Trigger(t), t.to_string(), trigger_summary(base), || {
+                    vec![trigger_editor(t, p.trigger(t), p.zones(Analog::Trigger(t)), ui.analog_triggers, names)]
+                }));
+            }
             vec![
                 section(
                     "Sticks",
@@ -3414,23 +3621,64 @@ fn view_profile<'a>(p: &'a Profile, ui: &Ui, tab: ProfileTab) -> Element<'a, Mes
                 section("Triggers", None, triggers),
             ]
         }
-        ProfileTab::Combos => vec![section(
-            "Combos",
-            Some(format!(
-                "Buttons pressed within the window act as one input. Combo buttons wait up to {} ms \
-                 before acting alone; a combo button set to Disabled works as a modifier with no \
-                 time limit.",
-                p.combo_window_ms
-            )),
-            combo_rows(p, ui),
-        )],
-        ProfileTab::Gyro => vec![section(
-            "Gyro",
-            Some("Uses the controller's motion sensors. Calibrate it from the controller list on the Overview tab if the aim drifts.".into()),
-            gyro_rows(&p.gyro, ui.any_gyro),
-        )],
+        ProfileTab::Combos => {
+            let mut sections = vec![section(
+                if ui.layer.is_some() { "This layer's combos" } else { "Combos" },
+                Some(format!(
+                    "Buttons pressed within the window act as one input. Combo buttons wait up to {} ms \
+                     before acting alone; a combo button set to Disabled works as a modifier with no \
+                     time limit.",
+                    p.combo_window_ms
+                )),
+                combo_rows(p, ui),
+            )];
+            if let Some(marks) = ui.layer {
+                sections.push(base_combos(marks));
+            }
+            sections
+        }
+        ProfileTab::Gyro => {
+            let base = ui.layer.map_or(&p.gyro, |m| &m.base.gyro);
+            let summary = match base.mode {
+                GyroMode::Off => "off".to_string(),
+                _ => "on".to_string(),
+            };
+            vec![section(
+                "Gyro",
+                Some("Uses the controller's motion sensors. Calibrate it from the controller list on the Overview tab if the aim drifts.".into()),
+                layer_part(ui, LayerPart::Gyro, "Gyro".into(), summary, || gyro_rows(&p.gyro, ui.any_gyro)),
+            )]
+        }
     };
     column(sections).spacing(16).into()
+}
+
+/// The compared profile's combos, each of which a layer can switch off while it's on.
+fn base_combos<'a>(marks: LayerMarks<'_>) -> Element<'a, Message> {
+    let mut rows: Vec<Element<'a, Message>> = Vec::new();
+    for combo in &marks.base.combos {
+        let key = crate::config::combo_key(&combo.buttons);
+        let off = marks.layer.disabled_combos.iter().any(|d| crate::config::combo_key(d) == key);
+        let replaced = marks.layer.combos.iter().any(|c| crate::config::combo_key(&c.buttons) == key);
+        let name = combo.buttons.iter().map(|b| short_button(*b)).collect::<Vec<_>>().join(" + ");
+        let mut line = row![text(name).width(LABEL_WIDTH), text(summarize(&combo.action)).color(MUTED_COLOR), space::horizontal()]
+            .spacing(10)
+            .align_y(Alignment::Center);
+        line = if replaced {
+            line.push(text("replaced by this layer's").size(12).color(MUTED_COLOR))
+        } else {
+            line.push(checkbox(off).label("Off in this layer").on_toggle(move |_| Message::ToggleBaseCombo(key.clone())))
+        };
+        rows.push(line.into());
+    }
+    if rows.is_empty() {
+        rows.push(text(format!("{} has no combos.", marks.base.name)).size(13).color(MUTED_COLOR).into());
+    }
+    section(
+        "The profile's combos",
+        Some("They stay on while the layer is held, unless switched off here or replaced by a layer combo with the same buttons.".into()),
+        rows,
+    )
 }
 
 impl ProfileTab {
@@ -3468,6 +3716,7 @@ fn summarize(action: &ButtonAction) -> String {
         ButtonAction::Turbo { action, rate } => format!("Turbo {} ({rate:.0}/s)", summarize(action)),
         ButtonAction::Macro { name, repeat: true } => format!("Macro “{name}” (repeat)"),
         ButtonAction::Macro { name, .. } => format!("Macro “{name}”"),
+        ButtonAction::Layer(name) => format!("Layer “{name}”"),
     }
 }
 
@@ -3492,6 +3741,12 @@ fn action_problem(action: &ButtonAction, names: &Names) -> Option<String> {
             }
             ButtonAction::ShowInfo(name) if !names.infos.contains(name) => {
                 problem = Some(format!("missing info overlay {name:?}"));
+            }
+            ButtonAction::Layer(_) if !names.layers_allowed => {
+                problem = Some("shared items can't use layers".into());
+            }
+            ButtonAction::Layer(name) if !names.layers.contains(name) => {
+                problem = Some(format!("missing layer {name:?}"));
             }
             _ => {}
         }
@@ -3558,6 +3813,13 @@ fn items_problem(macros: &[Macro], menus: &[Menu], info: &[InfoOverlay], names: 
         let keys = m.steps.iter().filter_map(MacroStep::action).flat_map(|a| a.key_names());
         if let Some(bad) = keys.into_iter().find(|k| KeyCode::from_str(k).is_err()) {
             return Some(format!("Macro {:?}: unknown key {:?}", m.name, short_key(bad)));
+        }
+        if m.steps.iter().filter_map(MacroStep::action).any(|a| {
+            let mut layer = false;
+            a.walk(&mut |a| layer |= matches!(a, ButtonAction::Layer(_)));
+            layer
+        }) {
+            return Some(format!("Macro {:?}: macros can't hold layers.", m.name));
         }
         if let Some(problem) = m.steps.iter().filter_map(MacroStep::action).find_map(|a| action_problem(a, names)) {
             return Some(format!("Macro {:?}: {problem}", m.name));
@@ -3635,7 +3897,45 @@ fn game_problem(config: &Config, g: &Game) -> Option<String> {
             return Some(format!("Profile {:?}: unknown key {:?}", p.name, short_key(bad)));
         }
     }
-    rules_problem(g)
+    layers_problem(g, &names).or_else(|| rules_problem(g))
+}
+
+/// The first thing saving would reject in a game's layers.
+fn layers_problem(g: &Game, names: &Names) -> Option<String> {
+    use crate::config::Indicator;
+    for (i, l) in g.layers.iter().enumerate() {
+        if l.name.trim().is_empty() {
+            return Some("Layer names cannot be empty.".into());
+        }
+        if g.layers[..i].iter().any(|o| o.name == l.name) {
+            return Some(format!("Two layers are named {:?}.", l.name));
+        }
+        let label = format!("Layer {:?}", l.name);
+        if let Indicator::Info(info) = &l.indicator
+            && !names.infos.contains(info)
+        {
+            return Some(format!("{label}: missing info overlay {info:?} to show."));
+        }
+        if let Some(problem) = l.actions().into_iter().find_map(|a| action_problem(a, names)) {
+            return Some(format!("{label}: {problem}."));
+        }
+        if let Some(c) = l.combos.iter().find(|c| c.buttons.len() < 2) {
+            return Some(format!("{label}: a combo needs at least two buttons (has {}).", c.buttons.len()));
+        }
+        let zones = [&l.left_stick, &l.right_stick].into_iter().flatten().flat_map(|s| &s.zones);
+        let zones = zones.chain([&l.left_trigger, &l.right_trigger].into_iter().flatten().flat_map(|t| &t.zones));
+        if zones.into_iter().any(|z| z.min >= z.max) {
+            return Some(format!("{label}: a zone's range must start below where it ends."));
+        }
+        let stick_keys = [&l.left_stick, &l.right_stick].into_iter().flatten().flat_map(|s| match &s.action {
+            StickAction::Keys { up, down, left, right } => vec![up, down, left, right],
+            _ => Vec::new(),
+        });
+        if let Some(bad) = stick_keys.into_iter().find(|k| KeyCode::from_str(k).is_err()) {
+            return Some(format!("{label}: unknown key {:?}", short_key(bad)));
+        }
+    }
+    None
 }
 
 /// What's wrong with a game's auto-switch rules, if anything.
@@ -3868,10 +4168,15 @@ fn gyro_rows(cfg: &GyroConfig, any_gyro: bool) -> Vec<Element<'_, Message>> {
 }
 
 fn button_rows<'a>(p: &'a Profile, ui: &Ui) -> Vec<Element<'a, Message>> {
-    let mut rows: Vec<Element<'a, Message>> = vec![
-        value_slider("Tap window", 100.0..=600.0, p.tap_window_ms as f32, 10.0, "ms", Message::SetTapWindow),
-        value_slider("Long press after", 200.0..=1500.0, p.long_press_ms as f32, 50.0, "ms", Message::SetLongPress),
-    ];
+    // Layers use their profile's timings.
+    let mut rows: Vec<Element<'a, Message>> = if ui.layer.is_some() {
+        Vec::new()
+    } else {
+        vec![
+            value_slider("Tap window", 100.0..=600.0, p.tap_window_ms as f32, 10.0, "ms", Message::SetTapWindow),
+            value_slider("Long press after", 200.0..=1500.0, p.long_press_ms as f32, 50.0, "ms", Message::SetLongPress),
+        ]
+    };
     for b in Button::ALL {
         rows.extend(button_row(p, b, ui));
     }
@@ -3895,6 +4200,15 @@ fn row_toggle<'a>(label: String, target: Target, open: bool, problem: bool) -> E
 /// One button: collapsed to a summary ("A ▸ E · double tap: Q"), or open with its action
 /// editor, "+ Gesture" picker and gesture rows.
 fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<'a, Message>> {
+    if let Some(marks) = ui.layer
+        && !marks.overrides(LayerPart::Button(b))
+    {
+        let mut summary = summarize(marks.base.button(b));
+        if marks.base.gestures(b).is_some() {
+            summary.push_str(" +");
+        }
+        return layer_part(ui, LayerPart::Button(b), b.to_string(), summary, Vec::new);
+    }
     let target = Target::Button(b);
     let open = ui.is_open(target);
     let gestures = p.gestures.get(&b);
@@ -3918,6 +4232,11 @@ fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<'a, Message
         if let Some(problem) = problem {
             line = line.push(space::horizontal()).push(text(format!("⚠ {problem}")).size(12).color(ERROR_COLOR));
         }
+        if ui.layer.is_some() {
+            line = line.push(space::horizontal()).push(
+                button(text("Back to base").size(13)).style(button::text).on_press(Message::RevertInput(LayerPart::Button(b))),
+            );
+        }
         rows.push(line.into());
         return rows;
     }
@@ -3935,6 +4254,11 @@ fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<'a, Message
             dropdown(missing, None::<GestureKind>, move |k| Message::AddGesture(b, k))
                 .placeholder("+ Gesture")
                 .width(130),
+        );
+    }
+    if ui.layer.is_some() {
+        header = header.push(
+            button(text("Back to base").size(13)).style(button::text).on_press(Message::RevertInput(LayerPart::Button(b))),
         );
     }
     rows.push(header.into());
@@ -3966,14 +4290,10 @@ fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<'a, Message
 }
 
 fn combo_rows<'a>(p: &'a Profile, ui: &Ui) -> Vec<Element<'a, Message>> {
-    let mut rows: Vec<Element<'a, Message>> = vec![value_slider(
-        "Combo window",
-        20.0..=300.0,
-        p.combo_window_ms as f32,
-        5.0,
-        "ms",
-        Message::SetComboWindow,
-    )];
+    let mut rows: Vec<Element<'a, Message>> = Vec::new();
+    if ui.layer.is_none() {
+        rows.push(value_slider("Combo window", 20.0..=300.0, p.combo_window_ms as f32, 5.0, "ms", Message::SetComboWindow));
+    }
     for (i, combo) in p.combos.iter().enumerate() {
         let target = Target::Combo(i);
         let open = ui.is_open(target);
@@ -4078,6 +4398,7 @@ enum ActionKind {
     Macro,
     Menu,
     Info,
+    Layer,
     Multiple,
 }
 
@@ -4096,6 +4417,7 @@ impl fmt::Display for ActionKind {
             ActionKind::Macro => "Macro…",
             ActionKind::Menu => "Open menu…",
             ActionKind::Info => "Show info overlay…",
+            ActionKind::Layer => "Layer…",
             ActionKind::Turbo => "Turbo (repeat while held)…",
             ActionKind::Multiple => "Multiple…",
         })
@@ -4103,7 +4425,7 @@ impl fmt::Display for ActionKind {
 }
 
 /// Every kind, for a top-level action.
-const ACTION_KINDS: [ActionKind; 14] = [
+const ACTION_KINDS: [ActionKind; 15] = [
     ActionKind::Disabled,
     ActionKind::Gamepad,
     ActionKind::Keys,
@@ -4117,6 +4439,7 @@ const ACTION_KINDS: [ActionKind; 14] = [
     ActionKind::Macro,
     ActionKind::Menu,
     ActionKind::Info,
+    ActionKind::Layer,
     ActionKind::Multiple,
 ];
 /// Radial menu items: everything but opening another menu.
@@ -4181,6 +4504,8 @@ const TOGGLE_INNER_KINDS: &[ActionKind] = &[
     ActionKind::Macro,
     // Shown until toggled off.
     ActionKind::Info,
+    // On until toggled off; how a menu item switches a layer.
+    ActionKind::Layer,
     ActionKind::Multiple,
 ];
 /// What a Turbo can repeat.
@@ -4211,6 +4536,8 @@ fn action_editor<'a>(
     names: &Names,
 ) -> Element<'a, Message> {
     let kind = action_kind(action);
+    // Shared items can't use layers, so they aren't offered there.
+    let kinds: Vec<ActionKind> = kinds.iter().copied().filter(|k| *k != ActionKind::Layer || names.layers_allowed).collect();
     let kind_picker = {
         let on_change = on_change.clone();
         let (current, names) = (action.clone(), names.clone());
@@ -4236,6 +4563,7 @@ fn action_kind(action: &ButtonAction) -> ActionKind {
         ButtonAction::Macro { .. } => ActionKind::Macro,
         ButtonAction::OpenMenu(_) => ActionKind::Menu,
         ButtonAction::ShowInfo(_) => ActionKind::Info,
+        ButtonAction::Layer(_) => ActionKind::Layer,
     }
 }
 
@@ -4267,6 +4595,8 @@ fn new_action(k: ActionKind, default_button: Button, current: &ButtonAction, nam
         ActionKind::Macro => ButtonAction::Macro { name: names.macros.first().cloned().unwrap_or_default(), repeat: false },
         ActionKind::Menu => ButtonAction::OpenMenu(names.menus.first().cloned().unwrap_or_default()),
         ActionKind::Info => ButtonAction::ShowInfo(names.infos.first().cloned().unwrap_or_default()),
+        // With no layers yet, picking the kind makes one.
+        ActionKind::Layer => ButtonAction::Layer(names.layers.first().cloned().unwrap_or_else(|| NEW_LAYER.into())),
     }
 }
 
@@ -4362,7 +4692,7 @@ fn action_value<'a>(
             text("Hold B on the controller to close it.").size(12).color(MUTED_COLOR).into()
         }
         ButtonAction::ShowInfo(_) if names.infos.is_empty() => {
-            text("No info overlays yet: create one in the Overlays tab.").size(12).color(MUTED_COLOR).into()
+            text("No info overlays yet: create one on the Info overlays tab.").size(12).color(MUTED_COLOR).into()
         }
         ButtonAction::ShowInfo(name) => {
             let mut line = row![
@@ -4377,7 +4707,18 @@ fn action_value<'a>(
             line.into()
         }
         ButtonAction::OpenMenu(_) if names.menus.is_empty() => {
-            text("No menus to open: create one in the Overlays tab.").size(12).color(MUTED_COLOR).into()
+            text("No menus to open: create one on the Menus tab.").size(12).color(MUTED_COLOR).into()
+        }
+        ButtonAction::Layer(name) => {
+            let mut options = names.layers.clone();
+            options.push(NEW_LAYER.to_string());
+            let mut line = row![dropdown(options, Some(name.clone()), move |n| on_change(ButtonAction::Layer(n))).width(200)]
+                .spacing(8)
+                .align_y(Alignment::Center);
+            if !names.layers.contains(name) {
+                line = line.push(text("missing layer").size(12).color(ERROR_COLOR));
+            }
+            line.into()
         }
         ButtonAction::OpenMenu(name) => {
             let mut line = row![dropdown(names.menus.clone(), Some(name.clone()), move |n| on_change(ButtonAction::OpenMenu(n))).width(200)]
@@ -5133,7 +5474,7 @@ mod tests {
         assert!(!app.finding, "one press ends find mode");
         assert_eq!((app.game_tab, app.profile_tab, app.found), (GameTab::Profiles, ProfileTab::Buttons, Some(Button::West)));
         let names = Names::default();
-        let ui = Ui { names: &names, expanded: &app.expanded, found: app.found, analog_triggers: true, any_gyro: false };
+        let ui = Ui { names: &names, expanded: &app.expanded, found: app.found, analog_triggers: true, any_gyro: false, layer: None };
         assert!(ui.is_open(Target::Button(Button::West)));
         // Presses while not finding don't move the editor.
         let _ = app.update(Message::LiveInput(Some(snapshot(&[Button::West, Button::North], (0.0, 0.0)))));
@@ -5336,7 +5677,8 @@ mod tests {
         app.config.shared.menus.push(Menu { name: "Wheel".into(), kind: MenuKind::List, items: vec![], cancel: None, style: OverlayStyle::default() });
         app.config.games[0].info.push(InfoOverlay { name: "Controls".into(), always: true, style: OverlayStyle::info(), rows: vec![vec!["{south}".into()]] });
         app.config.games[0].macros.push(Macro { name: "Dodge".into(), steps: vec![MacroStep::Wait(5)] });
-        app.status = Some(Status { devices: vec![device("Pad", true, false)], ..Default::default() });
+        app.config.games[0].layers.push(crate::config::Layer::new("Hotkeys"));
+        app.status = Some(Status { devices: vec![device("Pad", true, false)], active_layers: vec!["Hotkeys".into()], ..Default::default() });
         let _ = app.view();
         for page in [Page::Overview, Page::Settings, Page::Game(None), Page::Game(Some("Doom".into()))] {
             let _ = app.update(Message::SelectPage(page));
@@ -5423,6 +5765,115 @@ mod tests {
         let _ = app.update(Message::SetSharedView(true));
         assert_eq!(app.name_problem(ItemKind::Macro, 0, "Dodge").as_deref(), Some("Doom has its own macro with this name"));
         assert_eq!(app.name_problem(ItemKind::Macro, 0, " ").as_deref(), Some("needs a name"));
+    }
+
+    #[test]
+    fn editing_a_layer_records_only_overrides() {
+        let mut app = with_game();
+        let _ = app.update(Message::SelectGameTab(GameTab::Layers));
+        let _ = app.update(Message::NewLayer);
+        assert_eq!(app.game().layers[0].name, "Layer");
+        assert!(app.editing_layer());
+        let base_south = app.game().profiles[0].button(Button::South).clone();
+
+        // Editing a button through the profile editor overrides it in the layer only.
+        let f1 = ButtonAction::Keys(vec!["KEY_F1".into()]);
+        let _ = app.update(Message::SetAction(Target::Button(Button::South), f1.clone()));
+        let layer = &app.game().layers[0];
+        assert_eq!(layer.buttons.get(&Button::South), Some(&f1));
+        assert_eq!(layer.buttons.len(), 1);
+        assert_eq!(app.game().profiles[0].button(Button::South), &base_south);
+        assert_eq!(app.profile().unwrap().button(Button::South), &f1, "the editor shows the layer over the profile");
+
+        // A gesture added in the layer, and the key picker writing into the layer.
+        let _ = app.update(Message::AddGesture(Button::North, GestureKind::DoubleTap));
+        assert!(app.game().layers[0].gestures.get(&Button::North).is_some_and(|g| g.double_tap.is_some()));
+        pick(&mut app, KeyField::root(Target::Gesture(Button::North, GestureKind::DoubleTap)), false, &["KEY_F2"]);
+        assert_eq!(
+            app.game().layers[0].gestures[&Button::North].double_tap,
+            Some(ButtonAction::Keys(vec!["KEY_F2".into()]))
+        );
+
+        // Override copies the profile's stick; editing it changes the layer's copy.
+        let _ = app.update(Message::OverrideInput(LayerPart::Stick(Stick::Right)));
+        assert_eq!(app.game().layers[0].right_stick.as_ref(), Some(&app.game().profiles[0].right_stick));
+        let scroll = StickConfig::new(StickAction::Scroll { speed: 15.0 }, 0.15, 2.0);
+        let _ = app.update(Message::SetStick(Stick::Right, scroll.clone()));
+        assert_eq!(app.game().layers[0].right_stick, Some(scroll));
+        assert_ne!(app.game().profiles[0].right_stick.action, StickAction::Scroll { speed: 15.0 });
+        let _ = app.update(Message::RevertInput(LayerPart::Stick(Stick::Right)));
+        let _ = app.update(Message::RevertInput(LayerPart::Button(Button::North)));
+        assert!(app.game().layers[0].right_stick.is_none() && app.game().layers[0].gestures.is_empty());
+
+        // Its own combos, and switching off one of the profile's.
+        app.config.games[0].profiles[0].combos.push(Combo { buttons: vec![Button::LeftBumper, Button::RightBumper], action: ButtonAction::Disabled });
+        let _ = app.update(Message::AddCombo);
+        assert_eq!(app.game().layers[0].combos.len(), 1);
+        assert_eq!(app.game().profiles[0].combos.len(), 1);
+        let _ = app.update(Message::ToggleBaseCombo(vec![Button::LeftBumper, Button::RightBumper]));
+        assert_eq!(app.game().layers[0].disabled_combos, [vec![Button::LeftBumper, Button::RightBumper]]);
+        let _ = app.update(Message::RemoveCombo(0));
+        assert_eq!(app.validate(), None);
+        let _ = app.view();
+    }
+
+    #[test]
+    fn layer_actions_make_follow_and_check_layers() {
+        let mut app = with_game();
+        // "+ New layer" in a button's picker makes one and points the button at it.
+        let _ = app.update(Message::SetAction(Target::Button(Button::LeftBumper), ButtonAction::Layer(NEW_LAYER.into())));
+        assert_eq!(app.game().layers[0].name, "Layer");
+        assert_eq!(app.game().profiles[0].button(Button::LeftBumper), &ButtonAction::Layer("Layer".into()));
+        // Renaming the layer follows.
+        let _ = app.update(Message::SelectGameTab(GameTab::Layers));
+        let _ = app.update(Message::RenameLayer("Hotkeys".into()));
+        assert_eq!(app.game().profiles[0].button(Button::LeftBumper), &ButtonAction::Layer("Hotkeys".into()));
+        assert_eq!(app.validate(), None);
+
+        // A menu item can toggle a layer, but not hold one.
+        let _ = app.update(Message::SelectGameTab(GameTab::Menus));
+        let _ = app.update(Message::NewMenu(MenuKindTag::List));
+        let _ = app.update(Message::SetAction(Target::MenuItem(0, 0), ButtonAction::Layer("Hotkeys".into())));
+        assert!(app.validate().unwrap().contains("can only toggle a layer"), "{:?}", app.validate());
+        let _ = app.update(Message::SetAction(Target::MenuItem(0, 0), ButtonAction::Toggle(Box::new(ButtonAction::Layer("Hotkeys".into())))));
+        assert_eq!(app.validate(), None);
+
+        // Shared items can't use layers at all.
+        app.config.shared.menus.push(Menu {
+            name: "Everywhere".into(),
+            kind: MenuKind::List,
+            items: vec![MenuItem { label: "x".into(), action: ButtonAction::Toggle(Box::new(ButtonAction::Layer("Hotkeys".into()))), button: None }],
+            cancel: None,
+            style: OverlayStyle::default(),
+        });
+        assert!(app.validate().unwrap().contains("shared items can't use layers"), "{:?}", app.validate());
+        app.config.shared.menus.clear();
+
+        // Deleting it leaves the mappings flagged.
+        let _ = app.update(Message::SelectGameTab(GameTab::Layers));
+        let _ = app.update(Message::DeleteLayer);
+        assert!(app.validate().unwrap().contains("missing layer"), "{:?}", app.validate());
+    }
+
+    #[test]
+    fn layers_are_copied_from_other_games_with_what_they_use() {
+        let mut app = with_game();
+        let mut quake = Game::new("Quake", vec![Profile::passthrough("P")]);
+        quake.macros.push(Macro { name: "Lean".into(), steps: vec![MacroStep::Wait(5)] });
+        let mut lean = crate::config::Layer::new("Lean");
+        lean.buttons.insert(Button::West, ButtonAction::Macro { name: "Lean".into(), repeat: false });
+        lean.indicator = crate::config::Indicator::Off;
+        quake.layers.push(lean);
+        app.config.games.push(quake);
+        let _ = app.update(Message::SelectGameTab(GameTab::Layers));
+        let _ = app.update(Message::OpenBrowse(ItemKind::Layer));
+        let _ = app.update(Message::BrowseFrom(BrowseSource::Game(Some("Quake".into()))));
+        let _ = app.view();
+        let _ = app.update(Message::CopyItem(0));
+        let doom = app.game();
+        assert_eq!(doom.layers[0].name, "Lean");
+        assert_eq!(doom.macros[0].name, "Lean");
+        assert_eq!(app.validate(), None);
     }
 
     #[test]

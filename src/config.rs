@@ -223,6 +223,9 @@ pub enum ButtonAction {
     ShowInfo(String),
     /// Shows the menu named here. As a menu item's action it opens a submenu.
     OpenMenu(String),
+    /// While held, the game's layer named here applies on top of the active profile (wrap in
+    /// Toggle to keep it on).
+    Layer(String),
 }
 
 /// An on-screen action menu, usable by every profile of its game (or, when shared, of every
@@ -472,6 +475,16 @@ impl OverlayStyle {
     /// The on-screen numpad's default: out of the way in the bottom-right corner.
     pub fn numpad() -> Self {
         OverlayStyle { position: ScreenPosition::BottomRight, ..OverlayStyle::default() }
+    }
+
+    /// A layer's name label: top center, small and see-through.
+    pub fn indicator() -> Self {
+        OverlayStyle {
+            position: ScreenPosition::TopCenter,
+            scale: 0.7,
+            background: Paint::new("#16181c", 0.7),
+            ..OverlayStyle::default()
+        }
     }
 
     /// Info overlays: top right, smaller and see-through so they can stay up during play.
@@ -836,6 +849,160 @@ pub struct Zone {
     pub action: ButtonAction,
 }
 
+/// What a layer shows on screen while it's active.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Indicator {
+    /// A small label with the layer's name.
+    #[default]
+    Name,
+    /// One of the game's (or the shared) info overlays.
+    Info(String),
+    Off,
+}
+
+/// A set of overrides on top of whichever of its game's profiles is active, while an input
+/// holds it (or a toggle keeps it on). Whatever it doesn't set falls through to the layers
+/// below it and then the profile.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Layer {
+    pub name: String,
+    #[serde(default)]
+    pub indicator: Indicator,
+    /// How the name label looks, for `Indicator::Name`.
+    #[serde(default = "OverlayStyle::indicator")]
+    pub indicator_style: OverlayStyle,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub buttons: BTreeMap<Button, ButtonAction>,
+    /// Per button, its gestures replace the profile's (empty: none while the layer is on).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub gestures: BTreeMap<Button, Gestures>,
+    /// Added to the profile's combos; one with the same buttons replaces the profile's.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub combos: Vec<Combo>,
+    /// The profile's combos (by their buttons) switched off while the layer is on.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disabled_combos: Vec<Vec<Button>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub left_stick: Option<StickConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub right_stick: Option<StickConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub left_trigger: Option<TriggerConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub right_trigger: Option<TriggerConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gyro: Option<GyroConfig>,
+}
+
+/// A combo's buttons in a canonical order, to compare combos.
+pub fn combo_key(buttons: &[Button]) -> Vec<Button> {
+    let mut key = buttons.to_vec();
+    key.sort();
+    key.dedup();
+    key
+}
+
+impl Layer {
+    pub fn new(name: &str) -> Self {
+        Layer {
+            name: name.into(),
+            indicator: Indicator::Name,
+            indicator_style: OverlayStyle::indicator(),
+            buttons: BTreeMap::new(),
+            gestures: BTreeMap::new(),
+            combos: Vec::new(),
+            disabled_combos: Vec::new(),
+            left_stick: None,
+            right_stick: None,
+            left_trigger: None,
+            right_trigger: None,
+            gyro: None,
+        }
+    }
+
+    /// Puts this layer's overrides on top of `p`.
+    pub fn apply(&self, p: &mut Profile) {
+        for (b, a) in &self.buttons {
+            p.buttons.insert(*b, a.clone());
+        }
+        for (b, g) in &self.gestures {
+            if g.is_empty() {
+                p.gestures.remove(b);
+            } else {
+                p.gestures.insert(*b, g.clone());
+            }
+        }
+        let replaced = |c: &Combo| {
+            let key = combo_key(&c.buttons);
+            self.disabled_combos.iter().any(|d| combo_key(d) == key) || self.combos.iter().any(|l| combo_key(&l.buttons) == key)
+        };
+        p.combos.retain(|c| !replaced(c));
+        p.combos.extend(self.combos.iter().cloned());
+        let overrides = [(&self.left_stick, &mut p.left_stick), (&self.right_stick, &mut p.right_stick)];
+        for (layer, profile) in overrides {
+            if let Some(s) = layer {
+                *profile = s.clone();
+            }
+        }
+        for (layer, profile) in [(&self.left_trigger, &mut p.left_trigger), (&self.right_trigger, &mut p.right_trigger)] {
+            if let Some(t) = layer {
+                *profile = t.clone();
+            }
+        }
+        if let Some(g) = &self.gyro {
+            p.gyro = g.clone();
+        }
+    }
+
+    /// Every action it sets: buttons, gestures, combos, triggers and zones.
+    pub fn actions(&self) -> Vec<&ButtonAction> {
+        let mut all: Vec<&ButtonAction> = self.buttons.values().collect();
+        all.extend(self.gestures.values().flat_map(|g| GestureKind::ALL.into_iter().filter_map(|k| g.get(k))));
+        all.extend(self.combos.iter().map(|c| &c.action));
+        for t in [&self.left_trigger, &self.right_trigger].into_iter().flatten() {
+            if let TriggerAction::Button { action, .. } = &t.action {
+                all.push(action);
+            }
+            all.extend(t.zones.iter().map(|z| &z.action));
+        }
+        for s in [&self.left_stick, &self.right_stick].into_iter().flatten() {
+            all.extend(s.zones.iter().map(|z| &z.action));
+        }
+        all
+    }
+
+    pub fn actions_mut(&mut self) -> Vec<&mut ButtonAction> {
+        let mut all: Vec<&mut ButtonAction> = self.buttons.values_mut().collect();
+        for g in self.gestures.values_mut() {
+            all.extend([&mut g.double_tap, &mut g.triple_tap, &mut g.long_press].into_iter().filter_map(|s| s.as_mut()));
+        }
+        all.extend(self.combos.iter_mut().map(|c| &mut c.action));
+        for t in [&mut self.left_trigger, &mut self.right_trigger].into_iter().flatten() {
+            if let TriggerAction::Button { action, .. } = &mut t.action {
+                all.push(action);
+            }
+            all.extend(t.zones.iter_mut().map(|z| &mut z.action));
+        }
+        for s in [&mut self.left_stick, &mut self.right_stick].into_iter().flatten() {
+            all.extend(s.zones.iter_mut().map(|z| &mut z.action));
+        }
+        all
+    }
+
+    /// How many things it overrides, for summaries.
+    pub fn overrides(&self) -> usize {
+        self.buttons.len()
+            + self.gestures.len()
+            + self.combos.len()
+            + self.disabled_combos.len()
+            + [self.left_stick.is_some(), self.right_stick.is_some(), self.left_trigger.is_some(), self.right_trigger.is_some(), self.gyro.is_some()]
+                .into_iter()
+                .filter(|o| *o)
+                .count()
+    }
+}
+
 /// Something that can switch gyro on/off or recenter it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1137,6 +1304,15 @@ impl Profile {
             Analog::Trigger(Trigger::Left) => &mut self.left_trigger.zones,
             Analog::Trigger(Trigger::Right) => &mut self.right_trigger.zones,
         }
+    }
+
+    /// This profile with `layers` on top, oldest first: later ones win.
+    pub fn with_layers<'a>(&self, layers: impl IntoIterator<Item = &'a Layer>) -> Profile {
+        let mut p = self.clone();
+        for layer in layers {
+            layer.apply(&mut p);
+        }
+        p
     }
 
     /// 1:1 virtual gamepad. Guide cycles profiles.
@@ -1493,6 +1669,9 @@ pub struct Game {
     /// Shown by `ButtonAction::ShowInfo`, or always while the game is active.
     #[serde(default, rename = "info_overlays")]
     pub info: Vec<InfoOverlay>,
+    /// Held or toggled on with `ButtonAction::Layer`, over whichever profile is active.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub layers: Vec<Layer>,
 }
 
 impl Game {
@@ -1506,6 +1685,7 @@ impl Game {
             macros: Vec::new(),
             menus: Vec::new(),
             info: Vec::new(),
+            layers: Vec::new(),
         }
     }
 
@@ -1516,12 +1696,32 @@ impl Game {
     /// Points every reference to the macro, menu or info overlay `old` (of `kind`) at `new`:
     /// in profiles, menu items and macro steps.
     pub fn rename_refs(&mut self, kind: ItemKind, old: &str, new: &str) {
-        rename_in(&mut self.profiles, &mut self.menus, &mut self.macros, kind, old, new);
+        rename_in(&mut self.profiles, &mut self.menus, &mut self.macros, &mut self.layers, kind, old, new);
     }
 
     /// The names of its items of one kind.
     pub fn names(&self, kind: ItemKind) -> Vec<&str> {
-        item_names(&self.macros, &self.menus, &self.info, kind)
+        match kind {
+            ItemKind::Layer => self.layers.iter().map(|l| l.name.as_str()).collect(),
+            _ => item_names(&self.macros, &self.menus, &self.info, kind),
+        }
+    }
+
+    /// Renames its item `old` of `kind` to `new`, without following references (see
+    /// [`Game::rename_refs`]).
+    pub fn rename_item(&mut self, kind: ItemKind, old: &str, new: &str) {
+        let new = new.to_string();
+        match kind {
+            ItemKind::Macro => self.macros.iter_mut().filter(|m| m.name == old).for_each(|m| m.name = new.clone()),
+            ItemKind::Menu => self.menus.iter_mut().filter(|m| m.name == old).for_each(|m| m.name = new.clone()),
+            ItemKind::Info => self.info.iter_mut().filter(|o| o.name == old).for_each(|o| o.name = new.clone()),
+            ItemKind::Layer => self.layers.iter_mut().filter(|l| l.name == old).for_each(|l| l.name = new.clone()),
+        }
+    }
+
+    /// Its layers named in `active` (oldest first), skipping names it has none of.
+    pub fn layers_named<'a>(&'a self, active: &'a [String]) -> impl Iterator<Item = &'a Layer> {
+        active.iter().filter_map(|n| self.layers.iter().find(|l| &l.name == n))
     }
 }
 
@@ -1539,7 +1739,7 @@ pub struct Shared {
 impl Shared {
     /// Like [`Game::rename_refs`], within the shared items.
     pub fn rename_refs(&mut self, kind: ItemKind, old: &str, new: &str) {
-        rename_in(&mut [], &mut self.menus, &mut self.macros, kind, old, new);
+        rename_in(&mut [], &mut self.menus, &mut self.macros, &mut [], kind, old, new);
     }
 
     pub fn names(&self, kind: ItemKind) -> Vec<&str> {
@@ -1552,6 +1752,8 @@ fn item_names<'a>(macros: &'a [Macro], menus: &'a [Menu], info: &'a [InfoOverlay
         ItemKind::Macro => macros.iter().map(|m| m.name.as_str()).collect(),
         ItemKind::Menu => menus.iter().map(|m| m.name.as_str()).collect(),
         ItemKind::Info => info.iter().map(|o| o.name.as_str()).collect(),
+        // Layers are always a game's own, never shared.
+        ItemKind::Layer => Vec::new(),
     }
 }
 
@@ -1564,22 +1766,24 @@ pub fn free_name(base: &str, taken: impl Fn(&str) -> bool) -> String {
     (2..).map(|i| format!("{base} ({i})")).find(|n| !taken(n)).unwrap()
 }
 
-/// The three kinds of named item a profile refers to.
+/// The kinds of named item a profile refers to. Layers are never shared.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ItemKind {
     Macro,
     Menu,
     Info,
+    Layer,
 }
 
 impl ItemKind {
-    pub const ALL: [ItemKind; 3] = [ItemKind::Macro, ItemKind::Menu, ItemKind::Info];
+    pub const ALL: [ItemKind; 4] = [ItemKind::Macro, ItemKind::Menu, ItemKind::Info, ItemKind::Layer];
 
     pub fn noun(self) -> &'static str {
         match self {
             ItemKind::Macro => "macro",
             ItemKind::Menu => "menu",
             ItemKind::Info => "info overlay",
+            ItemKind::Layer => "layer",
         }
     }
 
@@ -1588,7 +1792,8 @@ impl ItemKind {
         match (self, action) {
             (ItemKind::Macro, ButtonAction::Macro { name, .. })
             | (ItemKind::Menu, ButtonAction::OpenMenu(name))
-            | (ItemKind::Info, ButtonAction::ShowInfo(name)) => Some(name),
+            | (ItemKind::Info, ButtonAction::ShowInfo(name))
+            | (ItemKind::Layer, ButtonAction::Layer(name)) => Some(name),
             _ => None,
         }
     }
@@ -1597,13 +1802,22 @@ impl ItemKind {
         match (self, action) {
             (ItemKind::Macro, ButtonAction::Macro { name, .. })
             | (ItemKind::Menu, ButtonAction::OpenMenu(name))
-            | (ItemKind::Info, ButtonAction::ShowInfo(name)) => Some(name),
+            | (ItemKind::Info, ButtonAction::ShowInfo(name))
+            | (ItemKind::Layer, ButtonAction::Layer(name)) => Some(name),
             _ => None,
         }
     }
 }
 
-fn rename_in(profiles: &mut [Profile], menus: &mut [Menu], macros: &mut [Macro], kind: ItemKind, old: &str, new: &str) {
+fn rename_in(
+    profiles: &mut [Profile],
+    menus: &mut [Menu],
+    macros: &mut [Macro],
+    layers: &mut [Layer],
+    kind: ItemKind,
+    old: &str,
+    new: &str,
+) {
     let mut follow = |a: &mut ButtonAction| {
         a.walk_mut(&mut |a| {
             if let Some(name) = kind.name_in_mut(a)
@@ -1622,6 +1836,19 @@ fn rename_in(profiles: &mut [Profile], menus: &mut [Menu], macros: &mut [Macro],
     for m in macros {
         m.steps.iter_mut().filter_map(MacroStep::action_mut).for_each(&mut follow);
     }
+    for l in layers.iter_mut() {
+        l.actions_mut().into_iter().for_each(&mut follow);
+    }
+    // An info overlay used as a layer's indicator follows its rename too.
+    if kind == ItemKind::Info {
+        for l in layers.iter_mut() {
+            if let Indicator::Info(name) = &mut l.indicator
+                && name == old
+            {
+                *name = new.to_string();
+            }
+        }
+    }
 }
 
 /// What the active profile can use: its game's items first, then shared ones.
@@ -1630,6 +1857,8 @@ pub struct Scope {
     pub macros: Vec<Macro>,
     pub menus: Vec<Menu>,
     pub info: Vec<InfoOverlay>,
+    /// The game's own (layers are never shared).
+    pub layers: Vec<Layer>,
 }
 
 /// Like [`Scope`], borrowed: what a game's profiles (or the shared items) can refer to.
@@ -1638,6 +1867,7 @@ pub struct ScopeRef<'a> {
     pub macros: Vec<&'a Macro>,
     pub menus: Vec<&'a Menu>,
     pub info: Vec<&'a InfoOverlay>,
+    pub layers: Vec<&'a Layer>,
 }
 
 impl ScopeRef<'_> {
@@ -1646,6 +1876,7 @@ impl ScopeRef<'_> {
             ItemKind::Macro => self.macros.iter().map(|m| m.name.as_str()).collect(),
             ItemKind::Menu => self.menus.iter().map(|m| m.name.as_str()).collect(),
             ItemKind::Info => self.info.iter().map(|o| o.name.as_str()).collect(),
+            ItemKind::Layer => self.layers.iter().map(|l| l.name.as_str()).collect(),
         }
     }
 }
@@ -1954,6 +2185,7 @@ impl Config {
             macros: s.macros.into_iter().cloned().collect(),
             menus: s.menus.into_iter().cloned().collect(),
             info: s.info.into_iter().cloned().collect(),
+            layers: s.layers.into_iter().cloned().collect(),
         }
     }
 
@@ -1973,6 +2205,7 @@ impl Config {
             macros: merge(macros, &self.shared.macros, |m| &m.name),
             menus: merge(menus, &self.shared.menus, |m| &m.name),
             info: merge(info, &self.shared.info, |o| &o.name),
+            layers: game.map(|g| g.layers.iter().collect()).unwrap_or_default(),
         }
     }
 
@@ -2433,6 +2666,42 @@ always = true
         config.active = ProfileRef::new(Some("B"), "Play");
         assert_eq!(config.find_profile("Play"), Some(ProfileRef::new(Some("B"), "Play")));
         assert_eq!(config.find_profile("Nope"), None);
+    }
+
+    #[test]
+    fn layers_override_on_top_of_a_profile_newest_last() {
+        let mut base = Profile::desktop("Desktop");
+        base.gestures.insert(Button::North, Gestures { double_tap: Some(ButtonAction::NextProfile), ..Gestures::default() });
+        let f = |k: &str| ButtonAction::Keys(vec![k.into()]);
+        let mut a = Layer::new("A");
+        a.buttons.insert(Button::South, f("KEY_F1"));
+        a.gestures.insert(Button::North, Gestures::default());
+        a.disabled_combos.push(vec![Button::RightBumper, Button::LeftBumper]);
+        a.right_stick = Some(StickConfig::new(StickAction::Disabled, 0.1, 1.0));
+        let mut b = Layer::new("B");
+        b.buttons.insert(Button::South, f("KEY_F2"));
+        b.combos.push(Combo { buttons: vec![Button::Select, Button::Start], action: f("KEY_F3") });
+
+        let p = base.with_layers([&a, &b]);
+        assert_eq!(p.button(Button::South), &f("KEY_F2"), "the newest layer wins");
+        assert_eq!(p.button(Button::East), base.button(Button::East), "unset inputs fall through");
+        assert!(p.gestures(Button::North).is_none(), "empty gestures switch the profile's off");
+        assert_eq!(p.combos.len(), 1, "LB+RB switched off (in any order), Select+Start added");
+        assert_eq!(p.combos[0].buttons, [Button::Select, Button::Start]);
+        assert_eq!(p.right_stick.action, StickAction::Disabled);
+        assert_eq!(p.left_stick, base.left_stick);
+        assert_eq!(a.overrides(), 4);
+
+        // Layers belong to games and roundtrip with them.
+        let mut config = Config::default();
+        config.general.layers = vec![a, b];
+        config.general.profiles[0].set_button(Button::LeftBumper, ButtonAction::Layer("A".into()));
+        let back: Config = toml::from_str(&toml::to_string_pretty(&config).unwrap()).unwrap();
+        assert_eq!(back, config);
+        assert_eq!(config.scope().layers.len(), 2);
+        assert_eq!(config.general.layers_named(&["B".into(), "Nope".into()]).map(|l| l.name.as_str()).collect::<Vec<_>>(), ["B"]);
+        config.general.rename_refs(ItemKind::Layer, "A", "Alpha");
+        assert_eq!(config.general.profiles[0].button(Button::LeftBumper), &ButtonAction::Layer("Alpha".into()));
     }
 
     #[test]

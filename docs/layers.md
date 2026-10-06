@@ -1,6 +1,6 @@
 # Layers (mode shifts)
 
-Status: draft spec, from an interview on 2026-10-06 (with follow-ups). Nothing here is implemented yet.
+Status: implemented (2026-10-06), except per-layer timings (see the open questions).
 
 ## Goal
 

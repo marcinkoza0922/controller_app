@@ -69,6 +69,7 @@ pub enum Stat {
     Ram,
     Gpu,
     Controller,
+    Layer,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -107,6 +108,7 @@ pub const TOKENS: &[(&str, &str)] = &[
     ("time12", "Time (12-hour)"),
     ("date", "Date"),
     ("profile", "Active profile"),
+    ("layer", "Active layers"),
     ("app", "Focused program's executable"),
     ("title", "Focused window's title"),
     ("pid", "Focused program's process ID"),
@@ -142,6 +144,7 @@ fn token(name: &str) -> Option<Token> {
         "time12" => Token::Stat(Stat::Time12),
         "date" => Token::Stat(Stat::Date),
         "profile" => Token::Stat(Stat::Profile),
+        "layer" => Token::Stat(Stat::Layer),
         "app" => Token::Stat(Stat::App),
         "title" => Token::Stat(Stat::Title),
         "pid" => Token::Stat(Stat::Pid),
@@ -272,6 +275,8 @@ pub struct Live {
     pub title: String,
     pub pid: u32,
     pub controller: String,
+    /// Active layers, oldest first.
+    pub layers: Vec<String>,
     pub family: PadFamily,
     pub system: SystemStats,
 }
@@ -285,6 +290,7 @@ impl Live {
             title: "My Game".into(),
             pid: 4242,
             controller: format!("{family} controller"),
+            layers: vec!["Hotkeys".into()],
             family,
             system: SystemStats { cpu: Some(23.0), ram: Some((7.4, 31.2)), gpu: Some(61.0) },
         }
@@ -306,6 +312,7 @@ fn stat(s: Stat, live: &Live) -> String {
         Stat::Ram => live.system.ram.map_or("n/a".into(), |(used, total)| format!("{used:.1}/{total:.1} GB")),
         Stat::Gpu => live.system.gpu.map_or("n/a".into(), |g| format!("{g:.0}%")),
         Stat::Controller => or_dash(&live.controller),
+        Stat::Layer => or_dash(&live.layers.join(" + ")),
     }
 }
 
@@ -461,6 +468,13 @@ mod tests {
         assert_eq!(v.rows[0][2], vec![Segment::Text("pid 4242".into())]);
         assert!(!is_live(&overlay(&[&["{south} Jump"]])));
         assert_eq!(local_time("%Y").len(), 4);
+
+        let layer = overlay(&[&["Layer: {layer}"]]);
+        let mut live = Live::sample(PadFamily::Xbox);
+        live.layers = vec!["Hotkeys".into(), "Build".into()];
+        assert_eq!(resolve(&layer, &live).rows[0][0], vec![Segment::Text("Layer: Hotkeys + Build".into())]);
+        live.layers.clear();
+        assert_eq!(resolve(&layer, &live).rows[0][0], vec![Segment::Text("Layer: —".into())]);
     }
 
     #[test]

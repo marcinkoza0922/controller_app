@@ -7,12 +7,12 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::config::{
-    ButtonAction, Config, Game, GyroMode, InfoOverlay, ItemKind, Macro, Menu, MacroStep, Origin, PackInfo, PackRef,
-    Profile, Rule, Shared, free_name,
+    ButtonAction, Config, Game, GyroMode, Indicator, InfoOverlay, ItemKind, Layer, Macro, Menu, MacroStep, Origin,
+    PackInfo, PackRef, Profile, Rule, Shared, free_name,
 };
 
-/// The pack format this app writes, and the newest it reads.
-pub const FORMAT: u32 = 1;
+/// The pack format this app writes, and the newest it reads. 2 added layers.
+pub const FORMAT: u32 = 2;
 pub const EXTENSION: &str = "padpack";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -29,6 +29,8 @@ pub struct Pack {
     pub menus: Vec<Menu>,
     #[serde(default)]
     pub info_overlays: Vec<InfoOverlay>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub layers: Vec<Layer>,
 }
 
 /// What a pack says about itself.
@@ -78,11 +80,11 @@ impl Feature {
     }
 }
 
-/// A feature and the profile that uses it.
+/// A feature and where it's used, e.g. "profile “Play”".
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct FeatureUse {
     pub feature: Feature,
-    pub profile: String,
+    pub place: String,
 }
 
 impl Pack {
@@ -109,6 +111,7 @@ impl Pack {
             macros: self.macros.clone(),
             menus: self.menus.clone(),
             info: self.info_overlays.clone(),
+            layers: self.layers.clone(),
         }
     }
 
@@ -179,8 +182,9 @@ pub fn new_id() -> String {
     format!("{}-{}-{}-{}-{}", &hex[..8], &hex[8..12], &hex[12..16], &hex[16..20], &hex[20..])
 }
 
-/// Every (kind, name) reference in these profiles, menus and macros, nested ones included.
-fn references(profiles: &[Profile], menus: &[Menu], macros: &[Macro]) -> BTreeSet<(ItemKind, String)> {
+/// Every (kind, name) reference in these profiles, menus, macros and layers, nested ones
+/// included, and the info overlays layers use as their indicator.
+fn references(profiles: &[Profile], menus: &[Menu], macros: &[Macro], layers: &[Layer]) -> BTreeSet<(ItemKind, String)> {
     let mut refs = BTreeSet::new();
     let mut visit = |a: &ButtonAction| {
         a.walk(&mut |a| {
@@ -200,13 +204,25 @@ fn references(profiles: &[Profile], menus: &[Menu], macros: &[Macro]) -> BTreeSe
     for m in macros {
         m.steps.iter().filter_map(MacroStep::action).for_each(&mut visit);
     }
+    for l in layers {
+        l.actions().into_iter().for_each(&mut visit);
+    }
+    for l in layers {
+        if let Indicator::Info(name) = &l.indicator {
+            refs.insert((ItemKind::Info, name.clone()));
+        }
+    }
     refs
+}
+
+fn game_references(g: &Game) -> BTreeSet<(ItemKind, String)> {
+    references(&g.profiles, &g.menus, &g.macros, &g.layers)
 }
 
 /// What copying the `kind` item `name` out of `source` has to bring: the item itself (first)
 /// and, followed through menu items and macro steps, every item of `source` it refers to
 /// that `resolves` can't already find where it's going.
-pub fn dependencies(source: &Shared, kind: ItemKind, name: &str, resolves: impl Fn(ItemKind, &str) -> bool) -> Vec<(ItemKind, String)> {
+pub fn dependencies(source: &Game, kind: ItemKind, name: &str, resolves: impl Fn(ItemKind, &str) -> bool) -> Vec<(ItemKind, String)> {
     if !source.names(kind).contains(&name) {
         return Vec::new();
     }
@@ -215,8 +231,9 @@ pub fn dependencies(source: &Shared, kind: ItemKind, name: &str, resolves: impl 
     while i < needed.len() {
         let (k, n) = needed[i].clone();
         let refs = match k {
-            ItemKind::Macro => source.macros.iter().find(|m| m.name == n).map(|m| references(&[], &[], std::slice::from_ref(m))),
-            ItemKind::Menu => source.menus.iter().find(|m| m.name == n).map(|m| references(&[], std::slice::from_ref(m), &[])),
+            ItemKind::Macro => source.macros.iter().find(|m| m.name == n).map(|m| references(&[], &[], std::slice::from_ref(m), &[])),
+            ItemKind::Menu => source.menus.iter().find(|m| m.name == n).map(|m| references(&[], std::slice::from_ref(m), &[], &[])),
+            ItemKind::Layer => source.layers.iter().find(|l| l.name == n).map(|l| references(&[], &[], &[], std::slice::from_ref(l))),
             ItemKind::Info => None,
         };
         for (rk, rn) in refs.unwrap_or_default() {
@@ -230,13 +247,19 @@ pub fn dependencies(source: &Shared, kind: ItemKind, name: &str, resolves: impl 
     needed
 }
 
-/// Inputs beyond the XInput baseline that the profiles use, and where.
-pub fn features(profiles: &[Profile]) -> Vec<FeatureUse> {
-    profiles
+/// Inputs beyond the XInput baseline that a game's profiles and layers use, and where.
+pub fn features(game: &Game) -> Vec<FeatureUse> {
+    let profiles = game
+        .profiles
         .iter()
         .filter(|p| p.gyro.mode != GyroMode::Off)
-        .map(|p| FeatureUse { feature: Feature::Gyro, profile: p.name.clone() })
-        .collect()
+        .map(|p| FeatureUse { feature: Feature::Gyro, place: format!("profile “{}”", p.name) });
+    let layers = game
+        .layers
+        .iter()
+        .filter(|l| l.gyro.as_ref().is_some_and(|g| g.mode != GyroMode::Off))
+        .map(|l| FeatureUse { feature: Feature::Gyro, place: format!("layer “{}”", l.name) });
+    profiles.chain(layers).collect()
 }
 
 /// A pack ready to save, and what the export dialog should point out.
@@ -287,7 +310,7 @@ pub fn export(game: &Game, shared: &Shared, info: &PackInfo) -> Export {
     let mut dangling = BTreeSet::new();
     // Each pass adds the shared items the previous ones referred to.
     loop {
-        let refs = references(&pack_game.profiles, &pack_game.menus, &pack_game.macros);
+        let refs = game_references(&pack_game);
         let mut added = false;
         for (kind, name) in refs {
             if pack_game.names(kind).contains(&name.as_str()) {
@@ -301,6 +324,8 @@ pub fn export(game: &Game, shared: &Shared, info: &PackInfo) -> Export {
                 ItemKind::Macro => pack_game.macros.extend(shared.macros.iter().find(|m| m.name == name).cloned()),
                 ItemKind::Menu => pack_game.menus.extend(shared.menus.iter().find(|m| m.name == name).cloned()),
                 ItemKind::Info => pack_game.info.extend(shared.info.iter().find(|o| o.name == name).cloned()),
+                // Never shared, so it was reported as dangling above.
+                ItemKind::Layer => {}
             }
             pulled_in.push((kind, name));
             added = true;
@@ -309,7 +334,7 @@ pub fn export(game: &Game, shared: &Shared, info: &PackInfo) -> Export {
             break;
         }
     }
-    let features = features(&pack_game.profiles);
+    let features = features(&pack_game);
     let requires: BTreeSet<Feature> = features.iter().map(|f| f.feature).collect();
     let pack = Pack {
         format: FORMAT,
@@ -328,6 +353,7 @@ pub fn export(game: &Game, shared: &Shared, info: &PackInfo) -> Export {
         macros: pack_game.macros,
         menus: pack_game.menus,
         info_overlays: pack_game.info,
+        layers: pack_game.layers,
     };
     Export { pack, pulled_in, dangling: dangling.into_iter().collect(), features }
 }
@@ -360,6 +386,9 @@ pub fn item_hashes(game: &Game) -> BTreeMap<String, String> {
     }
     for o in &game.info {
         hashes.insert(format!("info overlay:{}", o.name), hash(o));
+    }
+    for l in &game.layers {
+        hashes.insert(format!("layer:{}", l.name), hash(l));
     }
     hashes
 }
@@ -529,11 +558,7 @@ pub fn live_clashes<'a>(plan: &'a Plan, choices: &Choices) -> impl Iterator<Item
 pub fn apply(config: &mut Config, plan: &Plan, choices: &Choices) -> String {
     let mut game = plan.pack.to_game();
     for (kind, old, new) in &plan.shared_clashes {
-        match kind {
-            ItemKind::Macro => game.macros.iter_mut().filter(|m| &m.name == old).for_each(|m| m.name = new.clone()),
-            ItemKind::Menu => game.menus.iter_mut().filter(|m| &m.name == old).for_each(|m| m.name = new.clone()),
-            ItemKind::Info => game.info.iter_mut().filter(|o| &o.name == old).for_each(|o| o.name = new.clone()),
-        }
+        game.rename_item(*kind, old, new);
         game.rename_refs(*kind, old, new);
     }
 
@@ -633,7 +658,7 @@ mod tests {
         assert_eq!(out.pulled_in, [(ItemKind::Menu, "Wheel".to_string()), (ItemKind::Macro, "Heal".to_string())]);
         assert_eq!(out.dangling, ["macro \"Gone\""]);
         assert_eq!(out.pack.pack.requires, [Feature::Gyro], "the action template aims with gyro");
-        assert_eq!(out.features, [FeatureUse { feature: Feature::Gyro, profile: "Play".into() }]);
+        assert_eq!(out.features, [FeatureUse { feature: Feature::Gyro, place: "profile “Play”".into() }]);
         assert!(!out.pack.macros.iter().any(|m| m.name == "Unused"));
         assert_eq!(out.pack.pack.name, "Doom");
     }
@@ -645,7 +670,7 @@ mod tests {
         let text = out.pack.to_toml().unwrap();
         assert_eq!(parse(&text).unwrap(), out.pack);
 
-        let newer = text.replacen("format = 1", "format = 2", 1);
+        let newer = text.replacen(&format!("format = {FORMAT}"), &format!("format = {}", FORMAT + 1), 1);
         assert!(parse(&newer).unwrap_err().to_string().contains("newer version of the app"));
         let extra = format!("surprise = 1\n{text}");
         assert!(parse(&extra).is_err(), "strict within a format");
@@ -732,11 +757,9 @@ mod tests {
 
     #[test]
     fn copies_bring_what_they_refer_to_unless_already_there() {
-        let source = Shared {
-            macros: vec![mac("Heal"), mac("Dodge")],
-            menus: vec![menu("Wheel", vec![macro_ref("Heal"), ButtonAction::OpenMenu("More".into())]), menu("More", vec![macro_ref("Dodge")])],
-            info: Vec::new(),
-        };
+        let mut source = Game::new("Source", Vec::new());
+        source.macros = vec![mac("Heal"), mac("Dodge")];
+        source.menus = vec![menu("Wheel", vec![macro_ref("Heal"), ButtonAction::OpenMenu("More".into())]), menu("More", vec![macro_ref("Dodge")])];
         let none = |_: ItemKind, _: &str| false;
         let all = dependencies(&source, ItemKind::Menu, "Wheel", none);
         let want = |list: &[(ItemKind, &str)]| list.iter().map(|(k, n)| (*k, n.to_string())).collect::<Vec<_>>();
@@ -747,6 +770,34 @@ mod tests {
             want(&[(ItemKind::Menu, "Wheel"), (ItemKind::Menu, "More"), (ItemKind::Macro, "Dodge")])
         );
         assert!(dependencies(&source, ItemKind::Macro, "Nope", none).is_empty());
+    }
+
+    #[test]
+    fn layers_travel_in_packs_with_what_they_use() {
+        let mut config = setup();
+        config.games[0].profiles[0].gyro = crate::config::GyroConfig::default();
+        let mut layer = Layer::new("Hotkeys");
+        layer.buttons.insert(Button::South, macro_ref("Heal"));
+        layer.buttons.insert(Button::East, ButtonAction::Layer("Deeper".into()));
+        layer.indicator = Indicator::Info("Cheat sheet".into());
+        let mut deeper = Layer::new("Deeper");
+        deeper.gyro = Some(crate::config::GyroConfig { mode: crate::config::GyroMode::Mouse { sensitivity: 10.0 }, ..Default::default() });
+        config.games[0].layers = vec![layer.clone(), deeper];
+        config.shared.info.push(InfoOverlay { name: "Cheat sheet".into(), always: false, style: Default::default(), rows: vec![] });
+
+        let out = export(&config.games[0], &config.shared, &draft(&config.games[0], false));
+        assert!(out.pulled_in.contains(&(ItemKind::Info, "Cheat sheet".into())), "an indicator's info overlay comes along");
+        assert_eq!(out.features, [FeatureUse { feature: Feature::Gyro, place: "layer “Deeper”".into() }]);
+        let text = out.pack.to_toml().unwrap();
+        assert!(text.contains("format = 2"));
+        let back = parse(&text).unwrap();
+        assert_eq!(back.layers.len(), 2);
+        assert_eq!(back.to_game().layers[0], layer);
+
+        // Copying the layer brings the layer it holds and the macro it plays.
+        // ("Heal" is shared rather than the game's own, so it isn't the source's to copy.)
+        let needs = dependencies(&config.games[0], ItemKind::Layer, "Hotkeys", |_, _| false);
+        assert_eq!(needs, [(ItemKind::Layer, "Hotkeys".to_string()), (ItemKind::Layer, "Deeper".to_string())]);
     }
 
     #[test]
