@@ -261,9 +261,10 @@ pub(super) fn view_profile<'a>(p: &'a Profile, ui: &Ui, tab: ProfileTab) -> Elem
         ProfileTab::Buttons => vec![section(
             "Buttons",
             Some(
-                "Click a button's name to edit it. Add a double tap, triple tap or long press with \
-                 \"+ Gesture\". Buttons with gestures act once the gesture is decided: a quick tap \
-                 fires after the tap window; held past the tap window, the button's own action presses \
+                "Click a button's name to edit it. Add a double tap, triple tap or long press \
+                 with the \"+\" buttons under its actions. Buttons with gestures act once the gesture \
+                 is decided: a quick tap fires after the tap window; held past the tap window, the \
+                 button's own action presses \
                  and holds until release (unless a long press is set, which takes over when held)."
                     .into(),
             ),
@@ -611,7 +612,6 @@ pub(super) fn button_rows<'a>(p: &'a Profile, ui: &Ui) -> Vec<Element<'a, Messag
     rows
 }
 
-/// One button's action editor with its "+ Gesture" picker and any gesture rows.
 /// The label column of a collapsible row: click to open or close it.
 pub(super) fn row_toggle<'a>(label: &str, target: Target, open: bool, problem: bool) -> Element<'a, Message> {
     let chevron = if open { "▾" } else { "▸" };
@@ -626,7 +626,7 @@ pub(super) fn row_toggle<'a>(label: &str, target: Target, open: bool, problem: b
 }
 
 /// One button: collapsed to a summary ("A ▸ E · double tap: Q"), or open with its action
-/// editor, "+ Gesture" picker and gesture rows.
+/// editor, gesture rows and a "+ Double tap" style button for each gesture not yet set.
 #[expect(clippy::too_many_lines, reason = "predates the size lints")]
 pub(super) fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<'a, Message>> {
     if let Some(marks) = ui.layer
@@ -678,13 +678,6 @@ pub(super) fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<
     let mut header = row![row_toggle(&b.to_string(), target, true, problem.is_some()), space::horizontal()]
         .spacing(10)
         .align_y(Alignment::Center);
-    if !missing.is_empty() {
-        header = header.push(
-            dropdown(missing, None::<GestureKind>, move |k| Message::AddGesture(b, k))
-                .placeholder("+ Gesture")
-                .width(130),
-        );
-    }
     if ui.layer.is_some() {
         header = header.push(
             button(text("Back to base").size(13)).style(button::text).on_press(Message::RevertInput(LayerPart::Button(b))),
@@ -709,6 +702,17 @@ pub(super) fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<
             .align_y(Alignment::Center)
             .into(),
         ));
+    }
+    // Adding a gesture sits under the rows it extends, one click per kind.
+    if !missing.is_empty() {
+        let adds = missing.into_iter().map(|k| {
+            button(text(format!("+ {k}")).size(13))
+                .style(button::secondary)
+                .padding([3, 10])
+                .on_press(Message::AddGesture(b, k))
+                .into()
+        });
+        rows.push(labeled("", row(adds).spacing(6).into()));
     }
     if let Some(problem) = problem {
         rows.push(labeled("", text(format!("⚠ {problem}")).size(12).color(ERROR_COLOR).into()));
