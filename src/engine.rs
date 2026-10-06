@@ -11,8 +11,8 @@ use evdev::KeyCode;
 
 use crate::{
     config::{
-        Analog, Button, ButtonAction, GyroActivation, GyroConfig, GyroHorizontal, GyroInput, GyroMode,
-        Macro, MacroStep, Profile, Stick, StickAction, Trigger, TriggerAction,
+        Analog, Button, ButtonAction, GestureKind, GyroActivation, GyroConfig, GyroHorizontal, GyroInput, GyroMode,
+        Macro, MacroStep, Menu, Profile, Stick, StickAction, Toggled, Trigger, TriggerAction,
     },
     input::{Axis, InputEvent, MotionSample},
     output::OutEvent,
@@ -744,7 +744,7 @@ impl Engine {
                 return switch;
             }
             // Only presses matter: each one flips the inner action on or off.
-            ButtonAction::Toggle(inner) => {
+            ButtonAction::Toggle(Toggled { action: inner, .. }) => {
                 if !pressed {
                     return false;
                 }
@@ -753,12 +753,7 @@ impl Engine {
                     self.emit(src, &inner, false, slot + 1, out);
                     return false;
                 }
-                self.toggled.insert(id, (**inner).clone());
-                // A menu opened from here stays up until toggled off.
-                let was = std::mem::replace(&mut self.toggling, true);
-                let switch = self.emit(src, inner, true, slot + 1, out);
-                self.toggling = was;
-                return switch;
+                return self.toggle_on(src, inner, slot, out);
             }
             ButtonAction::Turbo { action: inner, rate } => {
                 let id = (src.clone(), slot);
@@ -798,6 +793,54 @@ impl Engine {
             }
         }
         false
+    }
+
+    /// Turns a Toggle (at `slot` of `src`'s action) on, pressing its inner action.
+    fn toggle_on(&mut self, src: &Source, inner: &ButtonAction, slot: usize, out: &mut Vec<OutEvent>) -> bool {
+        self.toggled.insert((src.clone(), slot), inner.clone());
+        // A menu opened from here stays up until toggled off.
+        let was = std::mem::replace(&mut self.toggling, true);
+        let switch = self.emit(src, inner, true, slot + 1, out);
+        self.toggling = was;
+        switch
+    }
+
+    /// Switches on every Toggle set to start on, in the profile's mappings and the game's menu
+    /// items, as if pressed (one that's on already stays on). For when the game starts.
+    pub fn start_toggles(&mut self, profile: &Profile, menus: &[Menu], out: &mut Vec<OutEvent>) -> bool {
+        let mut inputs: Vec<(Source, &ButtonAction)> = Vec::new();
+        inputs.extend(profile.buttons.iter().map(|(b, a)| (Source::Button(*b), a)));
+        for (b, g) in &profile.gestures {
+            inputs.extend(GestureKind::ALL.into_iter().filter_map(|k| g.get(k)).map(|a| (Source::Gesture(*b), a)));
+        }
+        for c in &profile.combos {
+            let mut id = c.buttons.clone();
+            id.sort();
+            id.dedup();
+            inputs.push((Source::Combo(id), &c.action));
+        }
+        for t in [Trigger::Left, Trigger::Right] {
+            if let TriggerAction::Button { action, .. } = profile.trigger(t) {
+                inputs.push((Source::Trigger(t), action));
+            }
+        }
+        for a in [Analog::Stick(Stick::Left), Analog::Stick(Stick::Right), Analog::Trigger(Trigger::Left), Analog::Trigger(Trigger::Right)] {
+            inputs.extend(profile.zones(a).iter().enumerate().map(|(i, z)| (Source::Zone(a, i), &z.action)));
+        }
+        for m in menus {
+            inputs.extend(m.items.iter().enumerate().map(|(i, item)| (Source::MenuItem(m.name.clone(), i), &item.action)));
+        }
+        let mut switch = false;
+        for (src, action) in inputs {
+            let mut starting = Vec::new();
+            start_on_toggles(action, 0, &mut starting);
+            for (slot, inner) in starting {
+                if !self.toggled.contains_key(&(src.clone(), slot)) {
+                    switch |= self.toggle_on(&src, inner, slot, out);
+                }
+            }
+        }
+        switch
     }
 
     /// Advances turbo actions: each flips between pressed and released every half period.
@@ -1239,10 +1282,32 @@ fn angle_diff(a: f32, b: f32) -> f32 {
     (a - b + 540.0).rem_euclid(360.0) - 180.0
 }
 
+/// The Toggles set to start on in `action` (at `slot`), with their slots, numbered as
+/// [`Engine::emit`] numbers them.
+fn start_on_toggles<'a>(action: &'a ButtonAction, slot: usize, found: &mut Vec<(usize, &'a ButtonAction)>) {
+    match action {
+        ButtonAction::Multi(list) => {
+            let mut next = slot;
+            for a in list {
+                start_on_toggles(a, next, found);
+                next += stateful_nodes(a);
+            }
+        }
+        ButtonAction::Toggle(t) => {
+            if t.start_on {
+                found.push((slot, &t.action));
+            }
+            start_on_toggles(&t.action, slot + 1, found);
+        }
+        ButtonAction::Turbo { action, .. } => start_on_toggles(action, slot + 1, found),
+        _ => {}
+    }
+}
+
 /// Number of Toggle/Turbo nodes in an action, each of which owns a [`StateId`] slot.
 fn stateful_nodes(action: &ButtonAction) -> usize {
     match action {
-        ButtonAction::Toggle(inner) | ButtonAction::Turbo { action: inner, .. } => 1 + stateful_nodes(inner),
+        ButtonAction::Toggle(Toggled { action: inner, .. }) | ButtonAction::Turbo { action: inner, .. } => 1 + stateful_nodes(inner),
         ButtonAction::Macro { .. } => 1,
         ButtonAction::Multi(actions) => actions.iter().map(stateful_nodes).sum(),
         _ => 0,
@@ -1849,7 +1914,7 @@ mod tests {
     }
 
     fn toggle(inner: ButtonAction) -> ButtonAction {
-        ButtonAction::Toggle(Box::new(inner))
+        ButtonAction::toggle(inner)
     }
 
     fn turbo(inner: ButtonAction, rate: f32) -> ButtonAction {
@@ -2406,6 +2471,48 @@ mod tests {
         assert_eq!(out, vec![OutEvent::Key(KeyCode::KEY_C, true), OutEvent::Key(KeyCode::KEY_C, false)], "a toggle item flips each time");
     }
 
+    #[test]
+    fn toggles_set_to_start_on_switch_on_when_the_game_starts() {
+        let starting = |inner| ButtonAction::Toggle(Toggled { action: Box::new(inner), start_on: true });
+        let mut p = Profile::passthrough("p");
+        p.set_button(Button::North, starting(ButtonAction::ShowInfo("Controls".into())));
+        // Inside a Multi, after a Turbo (which takes a slot of its own).
+        p.set_button(
+            Button::West,
+            ButtonAction::Multi(vec![
+                ButtonAction::Turbo { action: Box::new(ButtonAction::Mouse(MouseButton::Left)), rate: 5.0 },
+                starting(ButtonAction::Keys(vec!["KEY_C".into()])),
+            ]),
+        );
+        p.combos.push(Combo { buttons: vec![Button::RightBumper, Button::LeftBumper], action: starting(ButtonAction::Layer("L".into())) });
+        let menu = Menu {
+            name: "M".into(),
+            kind: crate::config::MenuKind::List,
+            items: vec![crate::config::MenuItem { label: "x".into(), action: starting(ButtonAction::Keys(vec!["KEY_M".into()])), button: None }],
+            cancel: None,
+            style: Default::default(),
+        };
+        let mut e = Engine::default();
+        let mut out = Vec::new();
+        e.start_toggles(&p, std::slice::from_ref(&menu), &mut out);
+        assert_eq!(e.shown_info().collect::<Vec<_>>(), ["Controls"]);
+        assert_eq!(e.layers(), ["L"]);
+        assert!(out.contains(&OutEvent::Key(KeyCode::KEY_C, true)) && out.contains(&OutEvent::Key(KeyCode::KEY_M, true)));
+        // Again does nothing: they're on already.
+        let mut again = Vec::new();
+        e.start_toggles(&p, std::slice::from_ref(&menu), &mut again);
+        assert!(again.is_empty(), "{again:?}");
+        // Pressing the button turns it off, like any toggle, and the Multi's toggle too.
+        run(&mut e, &p, InputEvent::Button(Button::North, true));
+        assert_eq!(e.shown_info().count(), 0);
+        let out = run(&mut e, &p, InputEvent::Button(Button::West, true));
+        assert!(out.contains(&OutEvent::Key(KeyCode::KEY_C, false)), "{out:?}");
+        // The menu item turns off when chosen.
+        let mut out = Vec::new();
+        e.tap_menu_item("M", 0, &menu.items[0].action, &mut out);
+        assert_eq!(out, [OutEvent::Key(KeyCode::KEY_M, false)]);
+    }
+
     // Layers: the engine keeps the stack; the daemon hands it the profile with them on top.
 
     fn layered(base: &Profile, layer: &crate::config::Layer) -> Profile {
@@ -2418,7 +2525,7 @@ mod tests {
         p.set_button(Button::LeftBumper, ButtonAction::Layer("A".into()));
         p.set_button(Button::RightBumper, ButtonAction::Layer("B".into()));
         p.set_button(Button::West, ButtonAction::Layer("A".into()));
-        p.set_button(Button::North, ButtonAction::Toggle(Box::new(ButtonAction::Layer("A".into()))));
+        p.set_button(Button::North, ButtonAction::toggle(ButtonAction::Layer("A".into())));
         let mut e = Engine::default();
         run(&mut e, &p, InputEvent::Button(Button::LeftBumper, true));
         run(&mut e, &p, InputEvent::Button(Button::RightBumper, true));
@@ -2440,7 +2547,7 @@ mod tests {
     #[test]
     fn toggled_layers_survive_menus_but_not_game_changes() {
         let mut p = Profile::passthrough("p");
-        p.set_button(Button::North, ButtonAction::Toggle(Box::new(ButtonAction::Layer("A".into()))));
+        p.set_button(Button::North, ButtonAction::toggle(ButtonAction::Layer("A".into())));
         p.set_button(Button::LeftBumper, ButtonAction::Layer("B".into()));
         let mut e = Engine::default();
         run(&mut e, &p, InputEvent::Button(Button::North, true));

@@ -17,7 +17,7 @@ use crate::{
         Analog, Button, ButtonAction, CarouselControls, Cluster, Combo, Config, Game, GestureKind, GyroActivation,
         GyroConfig, GyroHorizontal, GyroInput, GyroMode, InfoOverlay, ItemKind, Macro, MacroStep, Menu, MenuItem,
         MenuKind, MenuKindTag, MouseButton, OverlayStyle, Paint, Profile, ProfileRef, Rule, RuleKind, ScopeRef,
-        ScreenPosition, Stick, StickAction, StickConfig, Trigger, TriggerAction, WheelDirection, Zone, free_name,
+        ScreenPosition, Stick, StickAction, StickConfig, Toggled, Trigger, TriggerAction, WheelDirection, Zone, free_name,
     },
     engine::Opener,
     info::PadFamily,
@@ -469,7 +469,10 @@ fn origin_note(game: &Game) -> Option<String> {
 struct Names {
     macros: Vec<String>,
     menus: Vec<String>,
+    /// Info overlays an action can show: not those set to always show.
     infos: Vec<String>,
+    /// Info overlays always on screen, which actions can't show.
+    always_infos: Vec<String>,
     layers: Vec<String>,
     /// False for shared items, which can't use layers (they're always a game's own).
     layers_allowed: bool,
@@ -481,10 +484,12 @@ const NEW_LAYER: &str = "+ New layer";
 impl Names {
     fn of(scope: &ScopeRef, layers_allowed: bool) -> Self {
         let list = |kind| scope.names(kind).into_iter().map(str::to_string).collect();
+        let infos = |always: bool| scope.info.iter().filter(|o| o.always == always).map(|o| o.name.clone()).collect();
         Names {
             macros: list(ItemKind::Macro),
             menus: list(ItemKind::Menu),
-            infos: list(ItemKind::Info),
+            infos: infos(false),
+            always_infos: infos(true),
             layers: list(ItemKind::Layer),
             layers_allowed,
         }
@@ -782,6 +787,23 @@ impl fmt::Display for Motion {
     }
 }
 const DEFAULT_TAP_MS: u64 = 50;
+/// Where "When the game starts, for" and "stays for" start, in seconds.
+const DEFAULT_START_SECONDS: f32 = 5.0;
+const DEFAULT_LINGER_SECONDS: f32 = 3.0;
+
+/// A checkbox for an optional number of seconds, with a slider while it's ticked.
+fn seconds_option<'a>(label: &'static str, value: Option<f32>, default: f32, on_change: impl Fn(Option<f32>) -> Message + Clone + 'a) -> Element<'a, Message> {
+    let toggle = on_change.clone();
+    let mut line = row![checkbox(value.is_some()).label(label).on_toggle(move |on| toggle(on.then_some(default)))]
+        .spacing(10)
+        .align_y(Alignment::Center);
+    if let Some(seconds) = value {
+        line = line
+            .push(slider(1.0..=60.0, seconds, move |v| on_change(Some(v))).step(1.0_f32).width(180))
+            .push(text(format!("{seconds:.0} s")).size(13));
+    }
+    line.into()
+}
 const DEFAULT_WAIT_MS: u64 = 100;
 
 fn step_kind(step: &MacroStep) -> StepKind {
@@ -902,6 +924,10 @@ enum Message {
     DeleteInfo(usize),
     RenameInfo(usize, String),
     SetInfoAlways(usize, bool),
+    /// Seconds info overlay `.0` is shown for when the game starts, or `None` for not then.
+    SetInfoOnStart(usize, Option<f32>),
+    /// Seconds info overlay `.0` stays after being let go, or `None` to go at once.
+    SetInfoLinger(usize, Option<f32>),
     SetInfoStyle(usize, OverlayStyle),
     ToggleInfoAppearance(usize),
     AddInfoRow(usize),
@@ -1627,7 +1653,7 @@ impl App {
                 let cells = |a: &str, b: &str| vec![a.to_string(), b.to_string()];
                 let overlay = InfoOverlay {
                     name,
-                    always: true,
+                    always: true, on_start: None, linger: None,
                     style: OverlayStyle::info(),
                     rows: vec![cells("{south}", "Jump"), cells("{west}", "Reload")],
                 };
@@ -1661,6 +1687,16 @@ impl App {
                     let old = std::mem::replace(&mut o.name, name.clone());
                     // Keep every "Show info overlay" (in profiles and menus) pointing at it.
                     self.follow_item_rename(ItemKind::Info, &old, &name);
+                }
+            }
+            Message::SetInfoOnStart(i, on) => {
+                if let Some(o) = self.infos_mut().get_mut(i) {
+                    o.on_start = on;
+                }
+            }
+            Message::SetInfoLinger(i, seconds) => {
+                if let Some(o) = self.infos_mut().get_mut(i) {
+                    o.linger = seconds;
                 }
             }
             Message::SetInfoAlways(i, always) => {
@@ -2916,11 +2952,13 @@ impl App {
         let title = text(format!("{chevron}  {}", if o.name.is_empty() { "(unnamed)" } else { &o.name })).size(18);
         let title = if problem.is_some() { title.color(ERROR_COLOR) } else { title };
         let rows = o.rows.len();
-        let summary = format!(
-            "{rows} row{} · {}",
-            if rows == 1 { "" } else { "s" },
-            if o.always { "always shown" } else { "shown by an action" }
-        );
+        let shown = match (o.always, o.on_start) {
+            (true, _) => "always shown (not by actions)".to_string(),
+            (false, Some(s)) => format!("shown {s:.0} s when the game starts"),
+            (false, None) => "shown by an action".to_string(),
+        };
+        let lingers = o.linger.filter(|_| !o.always).map(|s| format!(" · lingers {s:.0} s")).unwrap_or_default();
+        let summary = format!("{rows} row{} · {shown}{lingers}", if rows == 1 { "" } else { "s" });
         let mut header = row![
             button(title).style(button::text).padding(0).on_press(Message::ToggleInfo(i)),
             text(summary).size(13).color(MUTED_COLOR),
@@ -2948,17 +2986,47 @@ impl App {
                     checkbox(o.always)
                         .label(if self.on_shared() { "Always, in every game" } else { "Always, while this game is active" })
                         .on_toggle(move |a| Message::SetInfoAlways(i, a)),
-                    text(
-                        "Or map \"Show info overlay…\" to a button: shown while held, or until pressed again \
-                         if wrapped in Toggle."
+                ]
+                .extend((!o.always).then(|| {
+                    seconds_option(
+                        if self.on_shared() { "When a game starts, for" } else { "When the game starts, for" },
+                        o.on_start,
+                        DEFAULT_START_SECONDS,
+                        move |v| Message::SetInfoOnStart(i, v),
                     )
+                }))
+                .push(
+                    text(if o.always {
+                        "Always on screen, so actions can't show it. For an overlay shown only sometimes, untick \
+                         this and map \"Toggle → Show info overlay…\" to a button (a Toggle can start on, to show \
+                         it at launch until dismissed)."
+                    } else {
+                        "\"Starts\" is the first time the game is focused after launching; it fades out at the end. \
+                         Or map \"Show info overlay…\" to a button: shown while held, or until pressed again if \
+                         wrapped in Toggle (which can be set to start on, to keep it up until dismissed)."
+                    })
                     .size(12)
                     .color(MUTED_COLOR),
-                ]
+                )
                 .spacing(4)
                 .into(),
             ),
         ];
+        // Lingering is about being let go, which an always-shown overlay never is.
+        if !o.always {
+            rows.push(labeled(
+                "Lingers",
+                row![
+                    seconds_option("After it's let go (or toggled off), stays for", o.linger, DEFAULT_LINGER_SECONDS, move |v| {
+                        Message::SetInfoLinger(i, v)
+                    }),
+                    help("Then it fades out. Pressing the button again while it lingers keeps it up as usual.".into()),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center)
+                .into(),
+            ));
+        }
 
         // Appearance, and a live preview with the fallback glyphs.
         let appearance_open = self.open_info_appearance.contains(&i);
@@ -3315,7 +3383,7 @@ fn action_at<'a>(action: &'a mut ButtonAction, path: &[usize]) -> Option<&'a mut
         Some((i, rest)) => match action {
             ButtonAction::Multi(list) => action_at(list.get_mut(*i)?, rest),
             // Toggle and Turbo wrap a single action, addressed as index 0.
-            ButtonAction::Toggle(inner) | ButtonAction::Turbo { action: inner, .. } if *i == 0 => {
+            ButtonAction::Toggle(Toggled { action: inner, .. }) | ButtonAction::Turbo { action: inner, .. } if *i == 0 => {
                 action_at(inner, rest)
             }
             _ => None,
@@ -3712,7 +3780,8 @@ fn summarize(action: &ButtonAction) -> String {
         ButtonAction::ShowInfo(name) => format!("Info “{name}”"),
         ButtonAction::Multi(list) if list.is_empty() => "(nothing)".into(),
         ButtonAction::Multi(list) => list.iter().map(summarize).collect::<Vec<_>>().join(" & "),
-        ButtonAction::Toggle(inner) => format!("Toggle {}", summarize(inner)),
+        ButtonAction::Toggle(t) if t.start_on => format!("Toggle {} (starts on)", summarize(&t.action)),
+        ButtonAction::Toggle(t) => format!("Toggle {}", summarize(&t.action)),
         ButtonAction::Turbo { action, rate } => format!("Turbo {} ({rate:.0}/s)", summarize(action)),
         ButtonAction::Macro { name, repeat: true } => format!("Macro “{name}” (repeat)"),
         ButtonAction::Macro { name, .. } => format!("Macro “{name}”"),
@@ -3738,6 +3807,9 @@ fn action_problem(action: &ButtonAction, names: &Names) -> Option<String> {
             }
             ButtonAction::OpenMenu(name) if !names.menus.contains(name) => {
                 problem = Some(format!("missing menu {name:?}"));
+            }
+            ButtonAction::ShowInfo(name) if names.always_infos.contains(name) => {
+                problem = Some(format!("info overlay {name:?} is always shown, so an action can't show it"));
             }
             ButtonAction::ShowInfo(name) if !names.infos.contains(name) => {
                 problem = Some(format!("missing info overlay {name:?}"));
@@ -3914,7 +3986,11 @@ fn layers_problem(g: &Game, names: &Names) -> Option<String> {
         if let Indicator::Info(info) = &l.indicator
             && !names.infos.contains(info)
         {
-            return Some(format!("{label}: missing info overlay {info:?} to show."));
+            return Some(if names.always_infos.contains(info) {
+                format!("{label}: info overlay {info:?} is always shown, so it can't show the layer is on.")
+            } else {
+                format!("{label}: missing info overlay {info:?} to show.")
+            });
         }
         if let Some(problem) = l.actions().into_iter().find_map(|a| action_problem(a, names)) {
             return Some(format!("{label}: {problem}."));
@@ -4587,7 +4663,7 @@ fn new_action(k: ActionKind, default_button: Button, current: &ButtonAction, nam
         ActionKind::Numpad => ButtonAction::ToggleNumpad,
         // Keep what was there as the first entry.
         ActionKind::Multiple => ButtonAction::Multi(wrappable.into_iter().collect()),
-        ActionKind::Toggle => ButtonAction::Toggle(Box::new(wrappable.unwrap_or(ButtonAction::Keys(Vec::new())))),
+        ActionKind::Toggle => ButtonAction::toggle(wrappable.unwrap_or(ButtonAction::Keys(Vec::new()))),
         ActionKind::Turbo => ButtonAction::Turbo {
             action: Box::new(wrappable.unwrap_or(ButtonAction::Mouse(MouseButton::Left))),
             rate: DEFAULT_TURBO_RATE,
@@ -4631,11 +4707,36 @@ fn action_value<'a>(
             Message::OpenKeyPicker(field, keys.clone(), false),
         ),
         ButtonAction::Multi(list) => multi_editor(list, default_button, on_change, field, names),
-        ButtonAction::Toggle(inner) => {
+        ButtonAction::Toggle(Toggled { action: inner, start_on }) => {
+            let start_on = *start_on;
             let parent = on_change.clone();
-            let wrap: OnAction<'a> = Rc::new(move |a| parent(ButtonAction::Toggle(Box::new(a))));
+            let wrap: OnAction<'a> =
+                Rc::new(move |a| parent(ButtonAction::Toggle(Toggled { action: Box::new(a), start_on })));
+            let starting = {
+                let inner = inner.clone();
+                move |on: bool| on_change(ButtonAction::Toggle(Toggled { action: inner.clone(), start_on: on }))
+            };
             column![
-                text("Each press turns this on or off:").size(12).color(MUTED_COLOR),
+                row![
+                    text("Each press turns this on or off:").size(12).color(MUTED_COLOR),
+                    space::horizontal(),
+                    tooltip(
+                        checkbox(start_on).label("On when the game starts").size(14).text_size(12).on_toggle(starting),
+                        container(
+                            text(
+                                "Switched on by itself the first time the game is focused after it starts, \
+                                 e.g. a controls overlay that stays up until this is pressed."
+                            )
+                            .size(13)
+                        )
+                        .padding(8)
+                        .max_width(320.0)
+                        .style(style::tooltip),
+                        tooltip::Position::Top,
+                    ),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
                 action_editor(inner, default_button, TOGGLE_INNER_KINDS, wrap, field.child(0), names),
             ]
             .spacing(4)
@@ -4692,16 +4793,18 @@ fn action_value<'a>(
             text("Hold B on the controller to close it.").size(12).color(MUTED_COLOR).into()
         }
         ButtonAction::ShowInfo(_) if names.infos.is_empty() => {
-            text("No info overlays yet: create one on the Info overlays tab.").size(12).color(MUTED_COLOR).into()
+            text("No info overlays to show: create one on the Info overlays tab (not set to always show).")
+                .size(12)
+                .color(MUTED_COLOR)
+                .into()
         }
         ButtonAction::ShowInfo(name) => {
-            let mut line = row![
-                dropdown(names.infos.clone(), Some(name.clone()), move |n| on_change(ButtonAction::ShowInfo(n))).width(200),
-                text("shown while held").size(12).color(MUTED_COLOR),
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center);
-            if !names.infos.contains(name) {
+            let mut line = row![dropdown(names.infos.clone(), Some(name.clone()), move |n| on_change(ButtonAction::ShowInfo(n))).width(200)]
+                .spacing(8)
+                .align_y(Alignment::Center);
+            if names.always_infos.contains(name) {
+                line = line.push(text("always shown").size(12).color(ERROR_COLOR));
+            } else if !names.infos.contains(name) {
                 line = line.push(text("not available").size(12).color(ERROR_COLOR));
             }
             line.into()
@@ -5294,13 +5397,13 @@ mod tests {
         let mut app = app();
         app.config.general.profiles[0].set_button(Button::RightStick, ButtonAction::Keys(vec!["KEY_C".into()]));
         // What choosing "Toggle" in the kind list produces for an existing key action.
-        let wrapped = ButtonAction::Toggle(Box::new(ButtonAction::Keys(vec!["KEY_C".into()])));
+        let wrapped = ButtonAction::toggle(ButtonAction::Keys(vec!["KEY_C".into()]));
         let _ = app.update(Message::SetAction(Target::Button(Button::RightStick), wrapped));
         let field = KeyField::root(Target::Button(Button::RightStick)).child(0);
         pick(&mut app, field, false, &["KEY_LEFTCTRL"]);
         assert_eq!(
             app.config.general.profiles[0].button(Button::RightStick),
-            &ButtonAction::Toggle(Box::new(ButtonAction::Keys(vec!["KEY_LEFTCTRL".into()])))
+            &ButtonAction::toggle(ButtonAction::Keys(vec!["KEY_LEFTCTRL".into()]))
         );
     }
 
@@ -5331,7 +5434,7 @@ mod tests {
         pick(&mut app, KeyField::root(Target::MacroStep(0, 0)), false, &["KEY_SPACE"]);
         assert_eq!(app.config.general.macros[0].steps[0].action(), Some(&ButtonAction::Keys(vec!["KEY_SPACE".into()])));
 
-        let mapped = ButtonAction::Toggle(Box::new(ButtonAction::Macro { name: "Macro".into(), repeat: true }));
+        let mapped = ButtonAction::toggle(ButtonAction::Macro { name: "Macro".into(), repeat: true });
         app.config.general.profiles[1].set_button(Button::West, mapped);
         let _ = app.update(Message::RenameMacro(0, "Jump spam".into()));
         // A second macro goes on top, and the first one's open card moves down with it.
@@ -5342,7 +5445,7 @@ mod tests {
         assert_eq!(app.open_macros, HashSet::from([0]));
         assert_eq!(
             app.config.general.profiles[1].button(Button::West),
-            &ButtonAction::Toggle(Box::new(ButtonAction::Macro { name: "Jump spam".into(), repeat: true }))
+            &ButtonAction::toggle(ButtonAction::Macro { name: "Jump spam".into(), repeat: true })
         );
         // Step 2 (Hold down) has no key yet, so saving is blocked until it gets one.
         assert!(app.validate().is_none() || app.validate().unwrap().contains("unknown key"));
@@ -5410,10 +5513,10 @@ mod tests {
         assert_eq!(summarize(&keys(&["KEY_LEFTCTRL", "KEY_C"])), "Left Ctrl + C");
         assert_eq!(summarize(&ButtonAction::Disabled), "—");
         assert_eq!(
-            summarize(&ButtonAction::Toggle(Box::new(ButtonAction::Turbo {
+            summarize(&ButtonAction::toggle(ButtonAction::Turbo {
                 action: Box::new(ButtonAction::Mouse(MouseButton::Left)),
                 rate: 12.0
-            }))),
+            })),
             "Toggle Turbo Left click (12/s)"
         );
         assert_eq!(summarize(&ButtonAction::Macro { name: "QCF".into(), repeat: true }), "Macro “QCF” (repeat)");
@@ -5425,7 +5528,7 @@ mod tests {
         let names = Names { macros: vec!["Known".to_string()], ..Names::default() };
         let nested = ButtonAction::Multi(vec![
             ButtonAction::Mouse(MouseButton::Left),
-            ButtonAction::Toggle(Box::new(ButtonAction::Keys(vec!["KEY_NOPE".into()]))),
+            ButtonAction::toggle(ButtonAction::Keys(vec!["KEY_NOPE".into()])),
         ]);
         assert_eq!(action_problem(&nested, &names).as_deref(), Some("unknown key \"NOPE\""));
         let missing = ButtonAction::Macro { name: "Gone".into(), repeat: false };
@@ -5658,9 +5761,9 @@ mod tests {
     fn items_are_copied_from_other_games() {
         let mut app = with_game();
         let mut quake = Game::new("Quake", vec![Profile::passthrough("P")]);
-        quake.info.push(InfoOverlay { name: "Controls".into(), always: true, style: OverlayStyle::info(), rows: vec![] });
+        quake.info.push(InfoOverlay { name: "Controls".into(), always: true, on_start: None, linger: None, style: OverlayStyle::info(), rows: vec![] });
         app.config.games.push(quake);
-        app.config.games[0].info.push(InfoOverlay { name: "Controls".into(), always: false, style: OverlayStyle::info(), rows: vec![] });
+        app.config.games[0].info.push(InfoOverlay { name: "Controls".into(), always: false, on_start: None, linger: None, style: OverlayStyle::info(), rows: vec![] });
         let _ = app.update(Message::OpenBrowse(ItemKind::Info));
         let _ = app.update(Message::BrowseFrom(BrowseSource::Game(Some("Quake".into()))));
         let _ = app.update(Message::CopyItem(0));
@@ -5675,7 +5778,7 @@ mod tests {
     fn every_page_tab_and_dialog_builds() {
         let mut app = with_game();
         app.config.shared.menus.push(Menu { name: "Wheel".into(), kind: MenuKind::List, items: vec![], cancel: None, style: OverlayStyle::default() });
-        app.config.games[0].info.push(InfoOverlay { name: "Controls".into(), always: true, style: OverlayStyle::info(), rows: vec![vec!["{south}".into()]] });
+        app.config.games[0].info.push(InfoOverlay { name: "Controls".into(), always: true, on_start: None, linger: None, style: OverlayStyle::info(), rows: vec![vec!["{south}".into()]] });
         app.config.games[0].macros.push(Macro { name: "Dodge".into(), steps: vec![MacroStep::Wait(5)] });
         app.config.games[0].layers.push(crate::config::Layer::new("Hotkeys"));
         app.status = Some(Status { devices: vec![device("Pad", true, false)], active_layers: vec!["Hotkeys".into()], ..Default::default() });
@@ -5835,14 +5938,14 @@ mod tests {
         let _ = app.update(Message::NewMenu(MenuKindTag::List));
         let _ = app.update(Message::SetAction(Target::MenuItem(0, 0), ButtonAction::Layer("Hotkeys".into())));
         assert!(app.validate().unwrap().contains("can only toggle a layer"), "{:?}", app.validate());
-        let _ = app.update(Message::SetAction(Target::MenuItem(0, 0), ButtonAction::Toggle(Box::new(ButtonAction::Layer("Hotkeys".into())))));
+        let _ = app.update(Message::SetAction(Target::MenuItem(0, 0), ButtonAction::toggle(ButtonAction::Layer("Hotkeys".into()))));
         assert_eq!(app.validate(), None);
 
         // Shared items can't use layers at all.
         app.config.shared.menus.push(Menu {
             name: "Everywhere".into(),
             kind: MenuKind::List,
-            items: vec![MenuItem { label: "x".into(), action: ButtonAction::Toggle(Box::new(ButtonAction::Layer("Hotkeys".into()))), button: None }],
+            items: vec![MenuItem { label: "x".into(), action: ButtonAction::toggle(ButtonAction::Layer("Hotkeys".into())), button: None }],
             cancel: None,
             style: OverlayStyle::default(),
         });
@@ -5877,6 +5980,28 @@ mod tests {
     }
 
     #[test]
+    fn info_overlays_can_show_at_start_and_fade() {
+        let mut app = with_game();
+        let _ = app.update(Message::SelectGameTab(GameTab::Info));
+        let _ = app.update(Message::NewInfo);
+        let _ = app.update(Message::SetInfoOnStart(0, Some(8.0)));
+        let _ = app.update(Message::SetInfoAlways(0, false));
+        let _ = app.update(Message::SetInfoLinger(0, Some(DEFAULT_LINGER_SECONDS)));
+        let o = &app.game().info[0];
+        assert_eq!((o.on_start, o.linger), (Some(8.0), Some(DEFAULT_LINGER_SECONDS)));
+        let _ = app.view();
+        let _ = app.update(Message::SetInfoLinger(0, None));
+        let _ = app.update(Message::SetInfoOnStart(0, None));
+        assert_eq!((app.game().info[0].on_start, app.game().info[0].linger), (None, None));
+
+        // A toggle that starts on keeps an overlay up until pressed.
+        let start = ButtonAction::Toggle(Toggled { action: Box::new(ButtonAction::ShowInfo("Info".into())), start_on: true });
+        let _ = app.update(Message::SetAction(Target::Button(Button::Select), start.clone()));
+        assert_eq!(summarize(&start), "Toggle Info “Info” (starts on)");
+        assert_eq!(app.validate(), None);
+    }
+
+    #[test]
     fn the_add_game_picker_and_page_changes_close_dialogs() {
         let mut app = app();
         let _ = app.update(Message::OpenAddGame);
@@ -5905,7 +6030,12 @@ mod tests {
         app.config.general.profiles[0].set_button(Button::Select, ButtonAction::ShowInfo("Info".into()));
         let _ = app.update(Message::RenameInfo(0, "Controls".into()));
         assert_eq!(app.config.general.profiles[0].button(Button::Select), &ButtonAction::ShowInfo("Controls".into()));
+        // New overlays always show, so no action can show them; shown sometimes, one can.
+        assert!(app.validate().unwrap().contains("always shown, so an action can't show it"), "{:?}", app.validate());
+        assert!(!app.names().infos.contains(&"Controls".to_string()), "not offered in pickers");
+        let _ = app.update(Message::SetInfoAlways(0, false));
         assert_eq!(app.validate(), None);
+        assert!(app.names().infos.contains(&"Controls".to_string()));
         let _ = app.update(Message::DeleteInfo(0));
         assert!(app.validate().unwrap().contains("missing info overlay"));
         assert!(app.open_infos.is_empty());

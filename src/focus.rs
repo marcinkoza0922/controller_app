@@ -263,6 +263,19 @@ pub fn profile_for_processes(config: &Config, processes: &[WindowInfo]) -> Optio
         .or_else(|| config.auto_switch.default_profile.clone())
 }
 
+/// The game a rule matches this window to, and the window's process: a launch is the first
+/// focus of a game with a process it hasn't had. (The default profile isn't a game launch.)
+pub fn game_launch(config: &Config, info: &WindowInfo) -> Option<(String, u32)> {
+    rules(config).find(|(_, r)| rule_matches(r.kind, &r.value, info)).map(|(game, _)| (game.to_string(), info.pid))
+}
+
+/// Like [`game_launch`], for the first rule that matches a running process.
+pub fn game_launch_in(config: &Config, processes: &[WindowInfo]) -> Option<(String, u32)> {
+    rules(config).find_map(|(game, r)| {
+        processes.iter().find(|p| rule_matches(r.kind, &r.value, p)).map(|p| (game.to_string(), p.pid))
+    })
+}
+
 /// Whether a rule matches any of these windows or processes.
 pub fn rule_matches_any(rule: &Rule, seen: &[WindowInfo]) -> bool {
     seen.iter().any(|w| rule_matches(rule.kind, &rule.value, w))
@@ -380,6 +393,17 @@ mod tests {
         assert_eq!(profile_for_processes(&config, &procs(&["bash", "game.exe"])), at("A"));
         assert_eq!(profile_for_processes(&config, &procs(&["bash"])), at("B"));
         assert_eq!(profile_for_processes(&config, &procs(&["zsh"])), Some(ProfileRef::new(None, "D")));
+    }
+
+    #[test]
+    fn launches_come_from_rules_with_the_matching_process() {
+        let mut config = config(&[("Doom", &[(RuleKind::Executable, "doom.exe")])]);
+        config.auto_switch.default_profile = Some(ProfileRef::new(None, "Desktop"));
+        let doom = WindowInfo { exe: "doom.exe".into(), pid: 42, ..Default::default() };
+        assert_eq!(game_launch(&config, &doom), Some(("Doom".into(), 42)));
+        let shell = WindowInfo { exe: "bash".into(), pid: 7, ..Default::default() };
+        assert_eq!(game_launch(&config, &shell), None, "the default profile isn't a launch");
+        assert_eq!(game_launch_in(&config, &[shell, doom]), Some(("Doom".into(), 42)));
     }
 
     #[test]

@@ -519,6 +519,22 @@ pub mod draw {
         if luminance > 0.6 { Color::from_rgb(0.08, 0.08, 0.1) } else { Color::WHITE }
     }
 
+    impl Colors {
+        /// Every color at `opacity` times its own, for fading out.
+        fn faded(self, opacity: f32) -> Colors {
+            let f = |c: Color| Color { a: c.a * opacity.clamp(0.0, 1.0), ..c };
+            Colors {
+                background: f(self.background),
+                background_text: f(self.background_text),
+                muted: f(self.muted),
+                item: f(self.item),
+                item_text: f(self.item_text),
+                selected: f(self.selected),
+                selected_text: f(self.selected_text),
+            }
+        }
+    }
+
     fn colors(style: &OverlayStyle) -> Colors {
         let background = paint(&style.background, [0x16, 0x18, 0x1c]);
         let item = paint(&style.items, [0x30, 0x34, 0x3c]);
@@ -573,7 +589,7 @@ pub mod draw {
 
     /// An info overlay: its cells in a grid, columns as wide as their widest cell.
     pub fn info_panel<'a, M: 'a>(v: &InfoView) -> Element<'a, M> {
-        let c = colors(&v.style);
+        let c = colors(&v.style).faded(v.opacity);
         let s = v.style.scale.clamp(0.5, 2.0);
         let line = 30.0 * s;
         let columns = v.rows.iter().map(Vec::len).max().unwrap_or(0);
@@ -582,7 +598,7 @@ pub mod draw {
             let mut col = column![].spacing(4.0 * s);
             for r in &v.rows {
                 let cell: Element<'a, M> = match r.get(j) {
-                    Some(segments) => info_cell(segments, c, s),
+                    Some(segments) => info_cell(segments, c, s, v.opacity),
                     None => space().into(),
                 };
                 col = col.push(container(cell).height(line).align_y(Vertical::Center));
@@ -592,21 +608,21 @@ pub mod draw {
         container(grid).padding([12.0 * s, 16.0 * s]).style(panel_style(c)).into()
     }
 
-    fn info_cell<'a, M: 'a>(segments: &[Segment], c: Colors, s: f32) -> Element<'a, M> {
+    fn info_cell<'a, M: 'a>(segments: &[Segment], c: Colors, s: f32, opacity: f32) -> Element<'a, M> {
         let mut line = row![].spacing(2.0 * s).align_y(Alignment::Center);
         for segment in segments {
             line = line.push(match segment {
                 Segment::Text(t) => Element::from(text(t.clone()).size(16.0 * s).color(c.background_text)),
-                Segment::Glyph { label, fill, round } => glyph(label, *fill, *round, c, s),
+                Segment::Glyph { label, fill, round } => glyph(label, *fill, *round, c, s, opacity),
             });
         }
         line.into()
     }
 
     /// A button glyph: a colored disc for face buttons, a rounded tag for the rest.
-    fn glyph<'a, M: 'a>(label: &str, fill: Option<[u8; 3]>, round: bool, c: Colors, s: f32) -> Element<'a, M> {
+    fn glyph<'a, M: 'a>(label: &str, fill: Option<[u8; 3]>, round: bool, c: Colors, s: f32, opacity: f32) -> Element<'a, M> {
         let (bg, fg) = match fill {
-            Some([r, g, b]) => (Color::from_rgb8(r, g, b), Color::WHITE),
+            Some([r, g, b]) => (Color::from_rgba8(r, g, b, opacity), Color { a: opacity, ..Color::WHITE }),
             None => (c.item, c.item_text),
         };
         let size = 24.0 * s;

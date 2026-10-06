@@ -281,7 +281,7 @@ impl App {
             }
             let sample = InfoOverlay {
                 name: layer.name.clone(),
-                always: true,
+                always: true, on_start: None, linger: None,
                 style: preview_style(&layer.indicator_style),
                 rows: vec![vec![layer.name.clone()]],
             };

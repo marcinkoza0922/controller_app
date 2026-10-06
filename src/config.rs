@@ -209,7 +209,7 @@ pub enum ButtonAction {
     /// Several actions at once, pressed in order and released in reverse.
     Multi(Vec<ButtonAction>),
     /// First press holds the inner action down, the next press releases it.
-    Toggle(Box<ButtonAction>),
+    Toggle(Toggled),
     /// While held, presses and releases the inner action `rate` times per second.
     Turbo { action: Box<ButtonAction>, rate: f32 },
     /// Plays the macro named `name`: once per press, or looping while held if `repeat`.
@@ -226,6 +226,57 @@ pub enum ButtonAction {
     /// While held, the game's layer named here applies on top of the active profile (wrap in
     /// Toggle to keep it on).
     Layer(String),
+}
+
+/// A Toggle's inner action, and whether it switches on by itself when the game starts.
+/// Written as just the inner action unless it starts on, so configs and packs without that
+/// read and write as before.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Toggled {
+    pub action: Box<ButtonAction>,
+    /// On when the game starts (its first focus after launching), as if pressed.
+    pub start_on: bool,
+}
+
+impl Serialize for Toggled {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        #[derive(Serialize)]
+        struct Full<'a> {
+            action: &'a ButtonAction,
+            start_on: bool,
+        }
+        if self.start_on {
+            Full { action: &self.action, start_on: true }.serialize(s)
+        } else {
+            self.action.serialize(s)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Toggled {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Repr {
+            Full {
+                action: Box<ButtonAction>,
+                #[serde(default)]
+                start_on: bool,
+            },
+            Plain(Box<ButtonAction>),
+        }
+        Ok(match Repr::deserialize(d)? {
+            Repr::Full { action, start_on } => Toggled { action, start_on },
+            Repr::Plain(action) => Toggled { action, start_on: false },
+        })
+    }
+}
+
+impl ButtonAction {
+    /// A Toggle of `inner` that starts off.
+    pub fn toggle(inner: ButtonAction) -> Self {
+        ButtonAction::Toggle(Toggled { action: Box::new(inner), start_on: false })
+    }
 }
 
 /// An on-screen action menu, usable by every profile of its game (or, when shared, of every
@@ -578,6 +629,14 @@ pub struct InfoOverlay {
     /// Shown whenever a profile of its game is active, rather than only by `ShowInfo`.
     #[serde(default)]
     pub always: bool,
+    /// Also shown for this many seconds when the game starts (its first focus after
+    /// launching), fading out at the end.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_start: Option<f32>,
+    /// Seconds it stays after the action showing it lets go (released, or toggled off),
+    /// fading out at the end.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linger: Option<f32>,
     #[serde(default = "OverlayStyle::info")]
     pub style: OverlayStyle,
     /// Rows of cells; cells line up in columns.
@@ -675,7 +734,7 @@ impl ButtonAction {
         match self {
             ButtonAction::Keys(keys) => keys.iter().collect(),
             ButtonAction::Multi(actions) => actions.iter().flat_map(|a| a.key_names()).collect(),
-            ButtonAction::Toggle(inner) | ButtonAction::Turbo { action: inner, .. } => inner.key_names(),
+            ButtonAction::Toggle(Toggled { action: inner, .. }) | ButtonAction::Turbo { action: inner, .. } => inner.key_names(),
             _ => Vec::new(),
         }
     }
@@ -685,7 +744,7 @@ impl ButtonAction {
         f(self);
         match self {
             ButtonAction::Multi(actions) => actions.iter().for_each(|a| a.walk(f)),
-            ButtonAction::Toggle(inner) | ButtonAction::Turbo { action: inner, .. } => inner.walk(f),
+            ButtonAction::Toggle(Toggled { action: inner, .. }) | ButtonAction::Turbo { action: inner, .. } => inner.walk(f),
             _ => {}
         }
     }
@@ -694,7 +753,7 @@ impl ButtonAction {
         f(self);
         match self {
             ButtonAction::Multi(actions) => actions.iter_mut().for_each(|a| a.walk_mut(f)),
-            ButtonAction::Toggle(inner) | ButtonAction::Turbo { action: inner, .. } => inner.walk_mut(f),
+            ButtonAction::Toggle(Toggled { action: inner, .. }) | ButtonAction::Turbo { action: inner, .. } => inner.walk_mut(f),
             _ => {}
         }
     }
@@ -2353,16 +2412,34 @@ mod tests {
     #[test]
     fn toggle_and_turbo_roundtrip_through_toml() {
         let mut config = Config::default();
-        let crouch = ButtonAction::Toggle(Box::new(ButtonAction::Keys(vec!["KEY_C".into()])));
-        let auto_fire = ButtonAction::Toggle(Box::new(ButtonAction::Turbo {
+        let crouch = ButtonAction::toggle(ButtonAction::Keys(vec!["KEY_C".into()]));
+        let auto_fire = ButtonAction::toggle(ButtonAction::Turbo {
             action: Box::new(ButtonAction::Mouse(MouseButton::Left)),
             rate: 12.0,
-        }));
+        });
         config.general.profiles[0].set_button(Button::RightStick, crouch);
         config.general.profiles[0].set_button(Button::West, auto_fire);
         let back: Config = toml::from_str(&toml::to_string_pretty(&config).unwrap()).unwrap();
         assert_eq!(config, back);
         assert_eq!(config.general.profiles[0].button(Button::RightStick).key_names(), [&"KEY_C".to_string()]);
+    }
+
+    #[test]
+    fn toggles_that_start_on_add_a_field_others_read_as_before() {
+        let plain = ButtonAction::toggle(ButtonAction::ShowInfo("Controls".into()));
+        let starting = ButtonAction::Toggle(Toggled { action: Box::new(ButtonAction::ShowInfo("Controls".into())), start_on: true });
+        let mut config = Config::default();
+        config.general.profiles[0].set_button(Button::North, plain.clone());
+        config.general.profiles[0].set_button(Button::West, starting.clone());
+        let text = toml::to_string_pretty(&config).unwrap();
+        assert!(text.contains("[general.profiles.buttons.North.toggle]\nshow_info = \"Controls\""), "{text}");
+        assert!(text.contains("start_on = true"));
+        let back: Config = toml::from_str(&text).unwrap();
+        assert_eq!(back.general.profiles[0].button(Button::North), &plain);
+        assert_eq!(back.general.profiles[0].button(Button::West), &starting);
+        // Over IPC too.
+        let json = serde_json::to_string(&config).unwrap();
+        assert_eq!(serde_json::from_str::<Config>(&json).unwrap(), config);
     }
 
     #[test]
@@ -2403,7 +2480,7 @@ mod tests {
                 MacroStep::Release(key("KEY_LEFTSHIFT")),
             ],
         });
-        let mapped = ButtonAction::Toggle(Box::new(ButtonAction::Macro { name: "Combo".into(), repeat: true }));
+        let mapped = ButtonAction::toggle(ButtonAction::Macro { name: "Combo".into(), repeat: true });
         config.general.profiles[0].set_button(Button::West, mapped);
         let back: Config = toml::from_str(&toml::to_string_pretty(&config).unwrap()).unwrap();
         assert_eq!(config, back);
@@ -2707,7 +2784,7 @@ always = true
     #[test]
     fn renames_follow_into_profiles_menus_and_macros() {
         let mut game = Game::new("G", vec![Profile::passthrough("P")]);
-        game.profiles[0].set_button(Button::West, ButtonAction::Toggle(Box::new(ButtonAction::Macro { name: "Old".into(), repeat: false })));
+        game.profiles[0].set_button(Button::West, ButtonAction::toggle(ButtonAction::Macro { name: "Old".into(), repeat: false }));
         game.menus.push(Menu {
             name: "M".into(),
             kind: MenuKind::List,
@@ -2717,7 +2794,7 @@ always = true
         });
         game.rename_refs(ItemKind::Macro, "Old", "New");
         game.rename_refs(ItemKind::Menu, "New", "Wrong kind");
-        assert_eq!(game.profiles[0].button(Button::West), &ButtonAction::Toggle(Box::new(ButtonAction::Macro { name: "New".into(), repeat: false })));
+        assert_eq!(game.profiles[0].button(Button::West), &ButtonAction::toggle(ButtonAction::Macro { name: "New".into(), repeat: false }));
         assert_eq!(game.menus[0].items[0].action, ButtonAction::Macro { name: "New".into(), repeat: false });
     }
 }

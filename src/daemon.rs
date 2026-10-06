@@ -38,6 +38,8 @@ use crate::{
 };
 
 const TICK: Duration = Duration::from_millis(4);
+/// How often a fading info overlay is redrawn.
+const FADE_FRAME: Duration = Duration::from_millis(33);
 /// How often info overlays with live values (time, CPU, …) update.
 const INFO_REFRESH: Duration = Duration::from_secs(1);
 const SCAN_INTERVAL: Duration = Duration::from_secs(2);
@@ -198,6 +200,12 @@ struct Daemon {
     last_frame: Option<OverlayFrame>,
     /// When shown info overlays with live values next refresh.
     info_refresh: Option<Instant>,
+    /// When an info overlay that hides after a while next needs redrawing (fading or gone).
+    info_fade: Option<Instant>,
+    /// Info overlays shown for a while: at the game's start, or lingering after being let go.
+    info_timers: crate::info::Timers,
+    /// Each game's process when it last started, so focusing it again isn't another start.
+    launches: HashMap<String, u32>,
     sampler: crate::info::Sampler,
     /// When the overlay window was last started, so a window that can't start (no
     /// layer-shell) isn't restarted every second for info overlays.
@@ -240,6 +248,9 @@ pub fn run() -> Result<()> {
         overlay_watchers: Vec::new(),
         last_frame: None,
         info_refresh: None,
+        info_fade: None,
+        info_timers: crate::info::Timers::default(),
+        launches: HashMap::new(),
         sampler: crate::info::Sampler::default(),
         overlay_started: None,
         overlay_process: None,
@@ -320,7 +331,13 @@ impl Daemon {
             Some(Active::Menu { session, .. }) => session.next_deadline(),
             None => None,
         };
-        self.devices.values().filter_map(|d| d.engine.next_deadline()).chain(overlay).chain(self.info_refresh).min()
+        self.devices
+            .values()
+            .filter_map(|d| d.engine.next_deadline())
+            .chain(overlay)
+            .chain(self.info_refresh)
+            .chain(self.info_fade)
+            .min()
     }
 
     /// Fires combo members whose combo window has expired.
@@ -328,6 +345,8 @@ impl Daemon {
         let now = Instant::now();
         if self.info_refresh.is_some_and(|t| t <= now) {
             self.sampler.sample();
+            self.broadcast_overlay();
+        } else if self.info_fade.is_some_and(|t| t <= now) {
             self.broadcast_overlay();
         }
         let (mut keyboard_actions, mut changed) = (Vec::new(), false);
@@ -544,42 +563,76 @@ impl Daemon {
     }
 
     fn overlay_frame(&mut self) -> OverlayFrame {
-        let shown = self.visible_info();
+        let shown = self.timed_info(Instant::now());
         // Live values (clock, CPU, …) refresh every second while shown.
-        let live = shown.iter().any(crate::info::is_live);
+        let live = shown.iter().any(|(o, _)| crate::info::is_live(o));
         self.info_refresh = live.then(|| Instant::now() + INFO_REFRESH);
         if live && self.sampler.sampled_at.is_none() {
             self.sampler.sample();
         }
         let values = self.live_values();
-        let info = shown.iter().map(|o| crate::info::resolve(o, &values)).collect();
+        let info = shown
+            .iter()
+            .map(|(o, opacity)| crate::info::InfoView { opacity: *opacity, ..crate::info::resolve(o, &values) })
+            .collect();
         OverlayFrame { info, active: self.overlay_view() }
     }
 
-    /// Info overlays to show now: those of the active profile set to always show, and any
-    /// a ShowInfo action holds up.
-    fn visible_info(&self) -> Vec<crate::config::InfoOverlay> {
+    /// The info overlays to draw now and how visible each is: steady ones fully, and those
+    /// shown for a while (at the game's start, or lingering after being let go) fading out at
+    /// the end of it.
+    fn timed_info(&mut self, now: Instant) -> Vec<(crate::config::InfoOverlay, f32)> {
+        let held: HashSet<String> = self.devices.values().flat_map(|d| d.engine.shown_info()).cloned().collect();
+        self.info_timers.update(held, &self.scope.info, now);
+        self.info_fade = self.info_timers.next_redraw(now, FADE_FRAME);
+        self.visible_info()
+            .into_iter()
+            .map(|(o, steady)| {
+                let opacity = if steady { 1.0 } else { self.info_timers.opacity(&o.name, now) };
+                (o, opacity)
+            })
+            .filter(|(_, opacity)| *opacity > 0.0)
+            .collect()
+    }
+
+    /// Info overlays to show now, and whether each is up steadily: those of the active game set
+    /// to always show, any an action holds up, those shown for a while (at the game's start,
+    /// or lingering), and active layers' indicators.
+    fn visible_info(&self) -> Vec<(crate::config::InfoOverlay, bool)> {
         use crate::config::{Indicator, InfoOverlay};
-        let held: HashSet<&String> = self.devices.values().flat_map(|d| d.engine.shown_info()).collect();
-        let mut shown: Vec<InfoOverlay> =
-            self.scope.info.iter().filter(|o| o.always || held.contains(&o.name)).cloned().collect();
+        let mut shown: Vec<(InfoOverlay, bool)> = self
+            .scope
+            .info
+            .iter()
+            .filter_map(|o| {
+                let steady = o.always || self.info_timers.held(&o.name);
+                let timed = self.info_timers.timed(&o.name);
+                (steady || timed).then(|| (o.clone(), steady))
+            })
+            .collect();
         // Each active layer's indicator: its name, or an info overlay of the game's.
         for name in self.active_layers() {
             let Some(layer) = self.scope.layers.iter().find(|l| l.name == name) else { continue };
             match &layer.indicator {
-                Indicator::Name => shown.push(InfoOverlay {
-                    name: format!("layer {name}"),
-                    always: true,
-                    style: layer.indicator_style.clone(),
-                    rows: vec![vec![name.clone()]],
-                }),
-                Indicator::Info(info) => {
-                    if !shown.iter().any(|o| &o.name == info)
-                        && let Some(o) = self.scope.info.iter().find(|o| &o.name == info)
-                    {
-                        shown.push(o.clone());
+                Indicator::Name => shown.push((
+                    InfoOverlay {
+                        name: format!("layer {name}"),
+                        always: true,
+                        on_start: None,
+                        linger: None,
+                        style: layer.indicator_style.clone(),
+                        rows: vec![vec![name.clone()]],
+                    },
+                    true,
+                )),
+                Indicator::Info(info) => match shown.iter_mut().find(|(o, _)| &o.name == info) {
+                    Some((_, steady)) => *steady = true,
+                    None => {
+                        if let Some(o) = self.scope.info.iter().find(|o| &o.name == info) {
+                            shown.push((o.clone(), true));
+                        }
                     }
-                }
+                },
                 Indicator::Off => {}
             }
         }
@@ -789,6 +842,41 @@ impl Daemon {
         if let Some(target) = focus::profile_for(&self.config, &window) {
             self.auto_switch_to(target, &describe(&window));
         }
+        if let Some((game, pid)) = focus::game_launch(&self.config, &window) {
+            self.launched(game, pid);
+        }
+    }
+
+    /// A rule matched `game` with process `pid`: if that's a process the game hasn't had,
+    /// the game has just started.
+    fn launched(&mut self, game: String, pid: u32) {
+        if self.launches.get(&game) == Some(&pid) {
+            return;
+        }
+        self.launches.insert(game.clone(), pid);
+        self.game_started(&game);
+    }
+
+    /// The active game has just started: shows its "when the game starts" info overlays and
+    /// switches on toggles set to start on.
+    fn game_started(&mut self, game: &str) {
+        if self.config.active_ref().game.as_deref() != Some(game) {
+            return;
+        }
+        log!("{game} started");
+        self.info_timers.game_started(&self.scope.info, Instant::now());
+        let Some(base) = self.config.active() else { return };
+        for dev in self.devices.values_mut() {
+            let mut out = Vec::new();
+            // A toggle starting "Next profile" would be odd; it isn't followed.
+            dev.engine.start_toggles(layered(&dev.layered, base), &self.scope.menus, &mut out);
+            if dev.refresh_layers(&self.config) {
+                dev.engine.resync(layered(&dev.layered, base), &mut out);
+            }
+            dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
+        }
+        self.check_info_changes();
+        self.broadcast_overlay();
     }
 
     /// Process-scan fallback for desktops without focus tracking.
@@ -797,13 +885,16 @@ impl Daemon {
         if self.focus_backend != FocusBackend::ProcessScan || !self.config.auto_switch.enabled || no_rules {
             return;
         }
-        let target = focus::profile_for_processes(&self.config, &focus::running_processes());
-        if target == self.scan_target {
-            return;
+        let processes = focus::running_processes();
+        let target = focus::profile_for_processes(&self.config, &processes);
+        if target != self.scan_target {
+            self.scan_target = target.clone();
+            if let Some(target) = target {
+                self.auto_switch_to(target, "running processes");
+            }
         }
-        self.scan_target = target.clone();
-        if let Some(target) = target {
-            self.auto_switch_to(target, "running processes");
+        if let Some((game, pid)) = focus::game_launch_in(&self.config, &processes) {
+            self.launched(game, pid);
         }
     }
 
@@ -1047,6 +1138,9 @@ impl Daemon {
         log!("switching to profile {target}");
         // An open menu refers to menus by position, which another game's list changes.
         let game_changes = target.game != self.config.active_ref().game;
+        if game_changes {
+            self.info_timers.clear();
+        }
         if game_changes && matches!(self.active, Some(Active::Menu { .. })) {
             self.close_overlay();
         }

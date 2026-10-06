@@ -119,7 +119,7 @@ Info overlays put text on screen without taking the controller, mainly to show a
 - **Button glyphs** drawn the way the controller in use labels them: `{south}` is A on Xbox, ✕ on PlayStation and B on Nintendo; also `{east}` `{west}` `{north}` `{lb}` `{rb}` `{lt}` `{rt}` `{select}` `{start}` `{guide}` `{ls}` `{rs}` `{l3}` `{r3}` `{dpad}` `{up}` `{down}` `{left}` `{right}`. Controllers that can't be recognized get the "Fallback glyphs" kind chosen on the Settings page.
 - **Live values**, updated every second: `{time}` `{time12}` `{date}` `{profile}` `{layer}` (the layers on, e.g. "Hotkeys + Build") `{app}` (the focused program's executable) `{title}` `{pid}` `{cpu}` `{ram}` `{gpu}` (AMD only) `{controller}`.
 
-An info overlay is either always shown while its game is active, or shown with the "Show info overlay…" action while that input is held (wrap it in Toggle to keep it up). Overlays at the same screen position stack.
+An info overlay is shown always while its game is active, for a few seconds when the game starts (the first time it's focused after launching, e.g. a "config loaded" note), or with the "Show info overlay…" action while that input is held (wrap it in Toggle to keep it up). An always-shown overlay can't also be mapped to an action; for one shown only sometimes, use an action (typically a Toggle). One shown by an action can **linger** for a few seconds after it's let go or toggled off. Timed ones fade out at the end. For an overlay that should stay up until dismissed, map "Toggle → Show info overlay…" to a button and tick **On when the game starts**: it shows at launch and goes when the button is pressed. Any Toggle can start on that way (a layer, a held key, …). Overlays at the same screen position stack.
 
 ## Gyro
 

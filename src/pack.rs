@@ -11,8 +11,9 @@ use crate::config::{
     PackInfo, PackRef, Profile, Rule, Shared, free_name,
 };
 
-/// The pack format this app writes, and the newest it reads. 2 added layers.
-pub const FORMAT: u32 = 2;
+/// The pack format this app writes, and the newest it reads. 2 added layers; 3, toggles
+/// that start on.
+pub const FORMAT: u32 = 3;
 pub const EXTENSION: &str = "padpack";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -783,13 +784,13 @@ mod tests {
         let mut deeper = Layer::new("Deeper");
         deeper.gyro = Some(crate::config::GyroConfig { mode: crate::config::GyroMode::Mouse { sensitivity: 10.0 }, ..Default::default() });
         config.games[0].layers = vec![layer.clone(), deeper];
-        config.shared.info.push(InfoOverlay { name: "Cheat sheet".into(), always: false, style: Default::default(), rows: vec![] });
+        config.shared.info.push(InfoOverlay { name: "Cheat sheet".into(), always: false, on_start: None, linger: None, style: Default::default(), rows: vec![] });
 
         let out = export(&config.games[0], &config.shared, &draft(&config.games[0], false));
         assert!(out.pulled_in.contains(&(ItemKind::Info, "Cheat sheet".into())), "an indicator's info overlay comes along");
         assert_eq!(out.features, [FeatureUse { feature: Feature::Gyro, place: "layer “Deeper”".into() }]);
         let text = out.pack.to_toml().unwrap();
-        assert!(text.contains("format = 2"));
+        assert!(text.contains(&format!("format = {FORMAT}")));
         let back = parse(&text).unwrap();
         assert_eq!(back.layers.len(), 2);
         assert_eq!(back.to_game().layers[0], layer);
