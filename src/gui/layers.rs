@@ -108,6 +108,7 @@ impl App {
         Message::SetAction(target, action)
     }
 
+    #[expect(clippy::too_many_lines, reason = "predates the size lints")]
     pub(super) fn update_layers(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::NewLayer => {
@@ -207,6 +208,7 @@ impl App {
         Task::none()
     }
 
+    #[expect(clippy::too_many_lines, reason = "predates the size lints")]
     pub(super) fn view_layers<'a>(&'a self, names: &Names) -> Element<'a, Message> {
         let game = self.game();
         let picker_row = {
@@ -313,6 +315,7 @@ mod tests {
     use crate::gui::tests::*;
 
     #[test]
+    #[expect(clippy::cognitive_complexity, reason = "predates the size lints")]
     fn editing_a_layer_records_only_overrides() {
         let mut app = with_game();
         let _ = app.update(Message::SelectGameTab(GameTab::Layers));

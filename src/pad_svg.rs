@@ -99,6 +99,7 @@ const RIGHT_LABELS: [(Spot, (f32, f32)); 9] = [
 
 /// Renders the controller, with `labels` (text per button) drawn in the side margins.
 /// With no input everything is drawn at rest.
+#[expect(clippy::too_many_lines, reason = "predates the size lints")]
 pub fn render(input: Option<&InputSnapshot>, labels: &[(Spot, String)]) -> String {
     let pressed = |b: Button| input.is_some_and(|i| i.buttons.contains(&b));
     let fill = |b: Button| if pressed(b) { ACTIVE } else { IDLE };

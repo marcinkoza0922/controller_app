@@ -58,6 +58,7 @@ pub(super) fn rule_for_window(w: &WindowInfo, profile: String) -> Rule {
 }
 
 impl App {
+    #[expect(clippy::too_many_lines, reason = "predates the size lints")]
     pub(super) fn update_games(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::TestRumble(path) => return call_ok(Request::TestRumble(path)),
@@ -224,6 +225,7 @@ impl App {
     }
 
     /// A game's (or General's) page: its name and sub-tabs.
+    #[expect(clippy::too_many_lines, reason = "predates the size lints")]
     pub(super) fn view_game(&self) -> Element<'_, Message> {
         let general = self.game_key().is_none();
         let game = self.game();
@@ -356,6 +358,7 @@ impl App {
         column![self.view_auto_switch(), self.view_keyboard_card(), self.view_numpad_card(), glyphs].spacing(16).into()
     }
 
+    #[expect(clippy::too_many_lines, reason = "predates the size lints")]
     pub(super) fn view_devices(&self) -> Element<'_, Message> {
         let mut list = column![text("Controllers").size(20)].spacing(8);
         match &self.status {
@@ -469,6 +472,7 @@ impl App {
     }
 
     /// A game's name, rules, pack details, export and deletion.
+    #[expect(clippy::too_many_lines, clippy::cognitive_complexity, reason = "predates the size lints")]
     pub(super) fn view_details(&self) -> Element<'_, Message> {
         let game = self.game();
         let names: Vec<String> = game.profiles.iter().map(|p| p.name.clone()).collect();

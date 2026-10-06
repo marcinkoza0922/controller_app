@@ -534,7 +534,7 @@ mod tests {
             name: "Keys".into(),
             always: true, on_start: None, linger: None,
             style: OverlayStyle::info(),
-            rows: rows.iter().map(|r| r.iter().map(|c| c.to_string()).collect()).collect(),
+            rows: rows.iter().map(|r| r.iter().map(std::string::ToString::to_string).collect()).collect(),
         }
     }
 

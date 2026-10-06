@@ -679,6 +679,7 @@ mod tests {
     }
 
     #[test]
+    #[expect(clippy::cognitive_complexity, reason = "predates the size lints")]
     fn importing_twice_renames_then_updates_by_id() {
         let mut config = setup();
         let mut pack = export(&config.games[0], &config.shared, &draft(&config.games[0], false)).pack;

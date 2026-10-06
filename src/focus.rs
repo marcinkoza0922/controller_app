@@ -55,7 +55,7 @@ struct FocusService {
 
 #[zbus::interface(name = "io.github.marcinkoza0922.ControllerApp.Focus")]
 impl FocusService {
-    fn window_activated(&self, class: String, pid: String, title: String) {
+    fn window_activated(&self, class: String, pid: &str, title: String) {
         let pid = pid.parse().unwrap_or(0);
         (self.notify)(FocusEvent::Focused(identify(class, title, pid)));
     }

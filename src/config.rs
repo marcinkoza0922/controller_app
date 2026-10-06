@@ -725,7 +725,7 @@ impl ButtonAction {
     pub fn wheel_directions(&self) -> Vec<WheelDirection> {
         match self {
             ButtonAction::Wheel(d) => vec![*d],
-            ButtonAction::Multi(actions) => actions.iter().flat_map(|a| a.wheel_directions()).collect(),
+            ButtonAction::Multi(actions) => actions.iter().flat_map(ButtonAction::wheel_directions).collect(),
             _ => Vec::new(),
         }
     }
@@ -1868,6 +1868,7 @@ impl ItemKind {
     }
 }
 
+#[expect(clippy::too_many_arguments, reason = "predates the size lints")]
 fn rename_in(
     profiles: &mut [Profile],
     menus: &mut [Menu],
@@ -2031,6 +2032,7 @@ impl Config {
     /// General. Macros, menus and info overlays shared by all profiles become shared items;
     /// one limited to some profiles goes with them if they all ended up in the same game (or
     /// General), and is shared otherwise.
+    #[expect(clippy::too_many_lines, reason = "predates the size lints")]
     pub fn from_legacy(text: &str) -> Result<Config> {
         #[derive(Deserialize)]
         struct Legacy {

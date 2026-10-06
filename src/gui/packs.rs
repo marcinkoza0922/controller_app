@@ -54,6 +54,7 @@ pub(super) enum PackField {
 const LIBRARY_LIST_HEIGHT: f32 = 380.0;
 
 impl App {
+    #[expect(clippy::too_many_lines, clippy::cognitive_complexity, reason = "predates the size lints")]
     pub(super) fn update_packs(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::OpenAddGame => {
@@ -215,7 +216,7 @@ impl App {
                 let Some(Dialog::Browse { kind, from: Some(source), .. }) = &self.dialog else { return Task::none() };
                 let (kind, source) = (*kind, source.clone());
                 let Some(items) = self.browse_items(&source) else { return Task::none() };
-                let Some(root) = items.names(kind).get(i).map(|n| n.to_string()) else { return Task::none() };
+                let Some(root) = items.names(kind).get(i).map(std::string::ToString::to_string) else { return Task::none() };
                 self.dialog = None;
                 self.copy_items(&items, kind, &root, &source);
             }
@@ -227,6 +228,7 @@ impl App {
     /// Copies `root` (a `kind` item of `items`) into the shown list, with whatever it refers
     /// to that isn't already usable here. Names taken here get "(2)", and references among the
     /// copies follow.
+    #[expect(clippy::too_many_lines, reason = "predates the size lints")]
     fn copy_items(&mut self, items: &Game, kind: ItemKind, root: &str, source: &BrowseSource) {
         let names = self.names();
         let needed = pack::dependencies(items, kind, root, |k, n| names.list(k).iter().any(|x| x == n));
@@ -331,6 +333,7 @@ impl App {
         modal(body)
     }
 
+    #[expect(clippy::too_many_lines, reason = "predates the size lints")]
     fn view_add_game<'a>(&'a self, search: &str, selected: Option<usize>) -> Element<'a, Message> {
         let query = search.trim().to_lowercase();
         let added = |id: &str| self.config.games.iter().find(|g| g.origin.as_ref().is_some_and(|o| o.id == id));
@@ -402,6 +405,7 @@ impl App {
         .into()
     }
 
+    #[expect(clippy::too_many_lines, reason = "predates the size lints")]
     fn view_import<'a>(&'a self, plan: &'a Plan, choices: &'a Choices) -> Element<'a, Message> {
         let p = &plan.pack;
         let verb = plan.update_kind.map_or("Add", |k| k.verb());
@@ -565,6 +569,7 @@ impl App {
             .into()
     }
 
+    #[expect(clippy::too_many_lines, reason = "predates the size lints")]
     fn view_browse<'a>(&'a self, kind: ItemKind, from: Option<&BrowseSource>, open: Option<usize>) -> Element<'a, Message> {
         let here = (!self.on_shared()).then(|| self.game_key().map(str::to_string));
         let mut sources: Vec<BrowseSource> = self

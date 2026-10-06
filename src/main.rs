@@ -37,6 +37,7 @@ commands:
   numpad-toggle    open or close the on-screen numpad overlay
   menu <name>      show an on-screen menu";
 
+#[expect(clippy::print_stdout, reason = "CLI output")]
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -44,15 +45,15 @@ fn main() -> Result<()> {
         [] | ["gui"] => gui::run().map_err(Into::into),
         ["daemon"] => daemon::run(),
         ["status"] => status(),
-        ["enable"] => send(Request::SetEnabled(true)),
-        ["disable"] => send(Request::SetEnabled(false)),
-        ["profile", name] => send(Request::SetProfile(name.to_string())),
-        ["next-profile"] => send(Request::NextProfile),
-        ["reload"] => send(Request::Reload),
+        ["enable"] => send(&Request::SetEnabled(true)),
+        ["disable"] => send(&Request::SetEnabled(false)),
+        ["profile", name] => send(&Request::SetProfile(name.to_string())),
+        ["next-profile"] => send(&Request::NextProfile),
+        ["reload"] => send(&Request::Reload),
         ["overlay"] => overlay::run(),
-        ["overlay-toggle"] => send(Request::ToggleOverlay),
-        ["numpad-toggle"] => send(Request::ToggleNumpad),
-        ["menu", name] => send(Request::OpenMenu(name.to_string())),
+        ["overlay-toggle"] => send(&Request::ToggleOverlay),
+        ["numpad-toggle"] => send(&Request::ToggleNumpad),
+        ["menu", name] => send(&Request::OpenMenu(name.to_string())),
         ["-h" | "--help" | "help"] => {
             println!("{USAGE}");
             Ok(())
@@ -61,11 +62,12 @@ fn main() -> Result<()> {
     }
 }
 
-fn send(req: Request) -> Result<()> {
-    ipc::request(&req)?;
+fn send(req: &Request) -> Result<()> {
+    ipc::request(req)?;
     Ok(())
 }
 
+#[expect(clippy::print_stdout, reason = "CLI output")]
 fn status() -> Result<()> {
     let Response::Status(s) = ipc::request(&Request::Status)? else {
         bail!("unexpected reply from daemon");

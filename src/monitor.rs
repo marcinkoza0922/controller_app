@@ -255,7 +255,7 @@ impl OutputView {
             parts.push(format!("keys {}", names.join("+")));
         }
 
-        let mut buttons: Vec<String> = self.mouse_buttons.keys().map(|b| b.to_string()).collect();
+        let mut buttons: Vec<String> = self.mouse_buttons.keys().map(std::string::ToString::to_string).collect();
         buttons.sort();
         if !buttons.is_empty() {
             parts.push(format!("click {}", buttons.join(" ")));

@@ -76,7 +76,7 @@ fn play_test_pattern(path: &PathBuf) -> io::Result<()> {
 }
 
 fn lock(pad: &Mutex<VirtualDevice>) -> MutexGuard<'_, VirtualDevice> {
-    pad.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    pad.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 fn run(pad: &Mutex<VirtualDevice>, physical: &PathBuf, stop: &AtomicBool) -> io::Result<()> {

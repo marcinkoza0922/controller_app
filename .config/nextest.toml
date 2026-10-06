@@ -1,0 +1,8 @@
+# Failures-only output, for agents and scripts:
+#   cargo nextest run --profile agent --hide-progress-bar --cargo-quiet
+[profile.agent]
+status-level = "fail"
+final-status-level = "fail"
+failure-output = "final"
+success-output = "never"
+fail-fast = true

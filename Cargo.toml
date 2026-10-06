@@ -20,3 +20,16 @@ zbus = "5"
 # iced_layershell's devtools (iced_exdevtools 0.19.1) don't build against winit-core
 # 0.31.0-beta.3; pin the beta they were written for. Not used directly.
 winit-core = "=0.31.0-beta.2"
+
+[lints.clippy]
+# Keep code compact and units small so they are cheaper to read.
+redundant_closure_for_method_calls = "warn"
+manual_let_else = "warn"
+needless_pass_by_value = "warn"
+too_many_lines = "warn"
+cognitive_complexity = "warn"
+too_many_arguments = "warn"
+# Keep debug noise out of test output.
+dbg_macro = "warn"
+print_stdout = "warn"
+print_stderr = "warn"

@@ -266,6 +266,7 @@ pub(super) fn set_action<'a>(target: Target) -> OnAction<'a> {
 }
 
 /// Editor for one action. `nested` editors (entries of a Multiple list) can't be Multiple.
+#[expect(clippy::too_many_arguments, reason = "predates the size lints")]
 pub(super) fn action_editor<'a>(
     action: &'a ButtonAction,
     default_button: Button,
@@ -340,6 +341,7 @@ pub(super) fn new_action(k: ActionKind, default_button: Button, current: &Button
 }
 
 /// The settings to the right of an action's kind picker.
+#[expect(clippy::too_many_lines, reason = "predates the size lints")]
 pub(super) fn action_value<'a>(
     action: &'a ButtonAction,
     default_button: Button,
@@ -499,6 +501,7 @@ pub(super) fn action_value<'a>(
 }
 
 /// List of simultaneous actions, each with its own editor and a remove button.
+#[expect(clippy::needless_pass_by_value, reason = "editors take their callbacks by value")]
 pub(super) fn multi_editor<'a>(
     list: &'a [ButtonAction],
     default_button: Button,
@@ -718,7 +721,7 @@ mod tests {
 
     #[test]
     fn summaries_read_like_the_mapping() {
-        let keys = |k: &[&str]| ButtonAction::Keys(k.iter().map(|s| s.to_string()).collect());
+        let keys = |k: &[&str]| ButtonAction::Keys(k.iter().map(std::string::ToString::to_string).collect());
         assert_eq!(summarize(&keys(&["KEY_LEFTCTRL", "KEY_C"])), "Left Ctrl + C");
         assert_eq!(summarize(&ButtonAction::Disabled), "—");
         assert_eq!(

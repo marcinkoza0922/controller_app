@@ -220,7 +220,7 @@ pub fn run() -> Result<()> {
     let listener = bind_socket()?;
     {
         let tx = tx.clone();
-        thread::spawn(move || ipc_server(listener, tx));
+        thread::spawn(move || ipc_server(&listener, &tx));
     }
 
     let kbm = VirtualKbm::new().context(
@@ -266,7 +266,7 @@ pub fn run() -> Result<()> {
     // Start the overlay window now so menus appear instantly; it idles invisibly.
     daemon.ensure_overlay_process();
     daemon.scan();
-    daemon.run(rx);
+    daemon.run(&rx);
     Ok(())
 }
 
@@ -282,7 +282,7 @@ fn bind_socket() -> Result<UnixListener> {
 }
 
 impl Daemon {
-    fn run(&mut self, rx: Receiver<Msg>) {
+    fn run(&mut self, rx: &Receiver<Msg>) {
         let mut next_scan = Instant::now() + SCAN_INTERVAL;
         let mut last_tick = Instant::now();
         loop {
@@ -390,7 +390,7 @@ impl Daemon {
             self.toggle_overlay(layout);
         }
         if let Some((id, (name, opener))) = menu_request {
-            self.open_menu(id, name, opener);
+            self.open_menu(id, &name, opener);
         }
         self.check_info_changes();
     }
@@ -413,11 +413,11 @@ impl Daemon {
         self.broadcast_overlay();
     }
 
-    fn open_menu(&mut self, device: u64, name: String, opener: Opener) {
+    fn open_menu(&mut self, device: u64, name: &str, opener: Opener) {
         if self.active.is_some() {
             return;
         }
-        let Some(mut session) = MenuSession::open(&self.scope.menus, &name, opener) else {
+        let Some(mut session) = MenuSession::open(&self.scope.menus, name, opener) else {
             log!("no menu named {name:?}, or it has no items");
             return;
         };
@@ -527,7 +527,7 @@ impl Daemon {
             self.toggle_overlay(layout);
         }
         if let Some((name, opener)) = menu_request {
-            self.open_menu(device, name, opener);
+            self.open_menu(device, &name, opener);
         }
         self.check_info_changes();
     }
@@ -736,7 +736,7 @@ impl Daemon {
                 // Re-evaluate from scratch the next time processes are scanned.
                 self.scan_target = None;
             }
-            Msg::Focus(FocusEvent::Focused(window)) => self.window_focused(window),
+            Msg::Focus(FocusEvent::Focused(window)) => self.window_focused(&window),
             Msg::Motion { id, sample } => self.motion(id, sample),
             Msg::WatchOverlay(watcher) => {
                 if watcher.send(self.overlay_frame()).is_ok() {
@@ -818,13 +818,13 @@ impl Daemon {
             dev.motion = Some(path);
             dev.gyro_bias = self.config.gyro_calibration.get(&dev.name).copied().unwrap_or_default();
             let (stop, tx) = (dev.stop.clone(), self.tx.clone());
-            thread::spawn(move || read_motion(id, motion_dev, stop, tx));
+            thread::spawn(move || read_motion(id, motion_dev, &stop, &tx));
         }
     }
 
-    fn window_focused(&mut self, window: WindowInfo) {
+    fn window_focused(&mut self, window: &WindowInfo) {
         // Editing settings while a game runs must not flip the profile.
-        if focus::is_own_window(&window) {
+        if focus::is_own_window(window) {
             return;
         }
         let same = |w: &WindowInfo| w.class == window.class && w.exe == window.exe && w.steam_app_id == window.steam_app_id;
@@ -839,22 +839,22 @@ impl Daemon {
         if !self.config.auto_switch.enabled {
             return;
         }
-        if let Some(target) = focus::profile_for(&self.config, &window) {
-            self.auto_switch_to(target, &describe(&window));
+        if let Some(target) = focus::profile_for(&self.config, window) {
+            self.auto_switch_to(target, &describe(window));
         }
-        if let Some((game, pid)) = focus::game_launch(&self.config, &window) {
-            self.launched(game, pid);
+        if let Some((game, pid)) = focus::game_launch(&self.config, window) {
+            self.launched(&game, pid);
         }
     }
 
     /// A rule matched `game` with process `pid`: if that's a process the game hasn't had,
     /// the game has just started.
-    fn launched(&mut self, game: String, pid: u32) {
-        if self.launches.get(&game) == Some(&pid) {
+    fn launched(&mut self, game: &str, pid: u32) {
+        if self.launches.get(game) == Some(&pid) {
             return;
         }
-        self.launches.insert(game.clone(), pid);
-        self.game_started(&game);
+        self.launches.insert(game.to_owned(), pid);
+        self.game_started(game);
     }
 
     /// The active game has just started: shows its "when the game starts" info overlays and
@@ -894,7 +894,7 @@ impl Daemon {
             }
         }
         if let Some((game, pid)) = focus::game_launch_in(&self.config, &processes) {
-            self.launched(game, pid);
+            self.launched(&game, pid);
         }
     }
 
@@ -910,8 +910,8 @@ impl Daemon {
         self.switch_profile(target);
     }
 
-    fn broadcast(&mut self, snapshot: Option<InputSnapshot>) {
-        self.watchers.retain(|w| w.send(snapshot.clone()).is_ok());
+    fn broadcast(&mut self, snapshot: Option<&InputSnapshot>) {
+        self.watchers.retain(|w| w.send(snapshot.cloned()).is_ok());
     }
 
     /// Called when a device stops being managed; watchers fall back to "no controller".
@@ -960,7 +960,7 @@ impl Daemon {
             self.toggle_overlay(layout);
         }
         if let Some((name, opener)) = menu_request {
-            self.open_menu(id, name, opener);
+            self.open_menu(id, &name, opener);
         }
         self.check_info_changes();
     }
@@ -1005,6 +1005,7 @@ impl Daemon {
         self.broadcast_overlay();
     }
 
+    #[expect(clippy::too_many_lines, reason = "predates the size lints")]
     fn request(&mut self, req: Request) -> Response {
         match req {
             Request::Status => Response::Status(self.status()),
@@ -1061,7 +1062,7 @@ impl Daemon {
                     return Response::Error(format!("no menu named {name:?}"));
                 }
                 let device = self.last_active.or_else(|| self.devices.keys().next().copied()).unwrap_or(u64::MAX);
-                self.open_menu(device, name, Opener::default());
+                self.open_menu(device, &name, Opener::default());
                 Response::Ok
             }
             Request::WatchOverlay => Response::Error("WatchOverlay must be the only request".into()),
@@ -1315,7 +1316,7 @@ impl Daemon {
             let stop = stop.clone();
             let tx = self.tx.clone();
             let xbox_labels = input::uses_xbox_labels(&path);
-            thread::spawn(move || read_device(id, dev, xbox_labels, stop, tx));
+            thread::spawn(move || read_device(id, dev, xbox_labels, &stop, &tx));
         }
         if has_rumble {
             rumble::spawn(pad.shared(), path.clone(), stop.clone());
@@ -1367,7 +1368,7 @@ fn hid_parent(dev_path: &Path) -> Option<PathBuf> {
     std::fs::canonicalize(Path::new("/sys/class/input").join(node).join("device/device")).ok()
 }
 
-fn read_motion(id: u64, mut dev: Device, stop: Arc<AtomicBool>, tx: Sender<Msg>) {
+fn read_motion(id: u64, mut dev: Device, stop: &AtomicBool, tx: &Sender<Msg>) {
     let mut norm = MotionNormalizer::new(&dev);
     if dev.set_nonblocking(true).is_err() {
         let _ = tx.send(Msg::MotionGone { id });
@@ -1400,7 +1401,7 @@ fn read_motion(id: u64, mut dev: Device, stop: Arc<AtomicBool>, tx: Sender<Msg>)
     let _ = tx.send(Msg::MotionGone { id });
 }
 
-fn read_device(id: u64, mut dev: Device, xbox_labels: bool, stop: Arc<AtomicBool>, tx: Sender<Msg>) {
+fn read_device(id: u64, mut dev: Device, xbox_labels: bool, stop: &AtomicBool, tx: &Sender<Msg>) {
     let mut norm = Normalizer::new(&dev, xbox_labels);
     if let Err(e) = dev.set_nonblocking(true) {
         log!("set_nonblocking: {e}");
@@ -1461,23 +1462,23 @@ fn dispatch(pad: &mut VirtualPad, view: &mut OutputView, kbm: &mut VirtualKbm, o
     }
 }
 
-fn ipc_server(listener: UnixListener, tx: Sender<Msg>) {
+fn ipc_server(listener: &UnixListener, tx: &Sender<Msg>) {
     for conn in listener.incoming() {
         let Ok(conn) = conn else { continue };
         let tx = tx.clone();
         // One thread per client: input watchers hold their connection open.
         thread::spawn(move || {
-            if let Err(e) = serve_client(conn, &tx) {
+            if let Err(e) = serve_client(&conn, &tx) {
                 log!("ipc: {e:#}");
             }
         });
     }
 }
 
-fn serve_client(conn: UnixStream, tx: &Sender<Msg>) -> Result<()> {
+fn serve_client(mut conn: &UnixStream, tx: &Sender<Msg>) -> Result<()> {
     conn.set_read_timeout(Some(Duration::from_secs(2)))?;
     let mut line = String::new();
-    BufReader::new(&conn).read_line(&mut line)?;
+    BufReader::new(conn).read_line(&mut line)?;
     let response = match serde_json::from_str::<Request>(&line) {
         Ok(Request::WatchInput) => return watch_input(conn, tx),
         Ok(Request::WatchOverlay) => return watch_overlay(conn, tx),
@@ -1490,13 +1491,13 @@ fn serve_client(conn: UnixStream, tx: &Sender<Msg>) -> Result<()> {
     };
     let mut out = serde_json::to_string(&response)?;
     out.push('\n');
-    (&conn).write_all(out.as_bytes())?;
+    conn.write_all(out.as_bytes())?;
     Ok(())
 }
 
 /// Streams overlay state to the (resident) overlay window until it goes away. An empty frame
 /// means nothing is shown; the window idles and keeps listening.
-fn watch_overlay(conn: UnixStream, tx: &Sender<Msg>) -> Result<()> {
+fn watch_overlay(mut conn: &UnixStream, tx: &Sender<Msg>) -> Result<()> {
     let (view_tx, view_rx) = mpsc::channel::<OverlayFrame>();
     tx.send(Msg::WatchOverlay(view_tx))?;
     while let Ok(mut view) = view_rx.recv() {
@@ -1505,7 +1506,7 @@ fn watch_overlay(conn: UnixStream, tx: &Sender<Msg>) -> Result<()> {
         }
         let mut line = serde_json::to_string(&view)?;
         line.push('\n');
-        if (&conn).write_all(line.as_bytes()).is_err() {
+        if conn.write_all(line.as_bytes()).is_err() {
             return Ok(());
         }
     }
@@ -1514,7 +1515,7 @@ fn watch_overlay(conn: UnixStream, tx: &Sender<Msg>) -> Result<()> {
 
 /// Streams snapshots to a client until it disconnects. Bursts are coalesced to the latest
 /// snapshot, so a fast-polling pad never floods the GUI.
-fn watch_input(conn: UnixStream, tx: &Sender<Msg>) -> Result<()> {
+fn watch_input(mut conn: &UnixStream, tx: &Sender<Msg>) -> Result<()> {
     let (snap_tx, snap_rx) = mpsc::channel();
     tx.send(Msg::Watch(snap_tx))?;
     // Blocks until the next update; ends when the daemon drops this watcher.
@@ -1524,7 +1525,7 @@ fn watch_input(conn: UnixStream, tx: &Sender<Msg>) -> Result<()> {
         }
         let mut line = serde_json::to_string(&snapshot)?;
         line.push('\n');
-        if (&conn).write_all(line.as_bytes()).is_err() {
+        if conn.write_all(line.as_bytes()).is_err() {
             // Client went away; the daemon drops our sender on its next send.
             return Ok(());
         }

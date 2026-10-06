@@ -281,6 +281,7 @@ pub(super) const MENUS_HELP: &str = "On-screen menus you open with the \"Open me
     same kind (not from radial menus), which closes along with it.";
 
 impl App {
+    #[expect(clippy::too_many_lines, clippy::cognitive_complexity, reason = "predates the size lints")]
     pub(super) fn update_items(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::SetAction(Target::MenuItem(m, i), action) => {
@@ -663,6 +664,7 @@ impl App {
         container(col).padding(14).width(Length::Fill).style(style::card).into()
     }
 
+    #[expect(clippy::too_many_lines, reason = "predates the size lints")]
     pub(super) fn view_macro_editor<'a>(&'a self, mi: usize, m: &'a Macro, names: &Names) -> Element<'a, Message> {
         let last = m.steps.len().saturating_sub(1);
         let mut steps = column![].spacing(8);
@@ -860,6 +862,7 @@ impl App {
         container(col).padding(14).width(Length::Fill).style(style::card).into()
     }
 
+    #[expect(clippy::too_many_lines, reason = "predates the size lints")]
     pub(super) fn view_info_editor<'a>(&'a self, i: usize, o: &'a InfoOverlay) -> Element<'a, Message> {
         let mut rows: Vec<Element<'a, Message>> = vec![
             labeled("Name", field("Info overlay name", &o.name).on_input(move |n| Message::RenameInfo(i, n)).width(240).into()),
@@ -1008,6 +1011,7 @@ impl App {
         container(col).padding(14).width(Length::Fill).style(style::card).into()
     }
 
+    #[expect(clippy::too_many_lines, reason = "predates the size lints")]
     pub(super) fn view_menu_editor<'a>(&'a self, mi: usize, menu: &'a Menu, names: &Names, reachable: &[&Menu]) -> Element<'a, Message> {
         let mut rows: Vec<Element<'a, Message>> = vec![labeled(
             "Name",

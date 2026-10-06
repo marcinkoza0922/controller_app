@@ -19,6 +19,8 @@ pub(super) const SWATCHES: [&str; 12] = [
 ];
 
 /// Position, size and colors of an overlay.
+#[expect(clippy::needless_pass_by_value, reason = "editors take their callbacks by value")]
+#[expect(clippy::too_many_lines, reason = "predates the size lints")]
 pub(super) fn style_editor<'a>(style: &OverlayStyle, on_change: OnStyle<'a>) -> Element<'a, Message> {
     let with = |f: &dyn Fn(&mut OverlayStyle)| {
         let mut s = style.clone();
@@ -236,6 +238,7 @@ pub(super) fn labeled<'a>(label: impl text::IntoFragment<'a>, editor: Element<'a
         .into()
 }
 
+#[expect(clippy::too_many_arguments, reason = "predates the size lints")]
 pub(super) fn value_slider<'a>(
     label: &'a str,
     range: std::ops::RangeInclusive<f32>,

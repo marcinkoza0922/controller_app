@@ -60,6 +60,7 @@ impl LayerMarks<'_> {
 /// In a layer, a part it doesn't override reads "Same as Gameplay: …" with an Override
 /// button; an overridden one gets its editor and "Back to base". Outside layers, just the
 /// editor.
+#[expect(clippy::needless_pass_by_value, reason = "labels go into `text`, which needs them owned for 'a")]
 pub(super) fn layer_part<'a>(ui: &Ui, part: LayerPart, label: String, summary: String, editor: impl FnOnce() -> Vec<Element<'a, Message>>) -> Vec<Element<'a, Message>> {
     let Some(marks) = ui.layer else { return editor() };
     if marks.overrides(part) {
@@ -253,6 +254,7 @@ pub(super) fn drawing_labels(p: &Profile) -> Vec<(pad_svg::Spot, String)> {
     labels
 }
 
+#[expect(clippy::too_many_lines, reason = "predates the size lints")]
 pub(super) fn view_profile<'a>(p: &'a Profile, ui: &Ui, tab: ProfileTab) -> Element<'a, Message> {
     let names = ui.names;
     let sections: Vec<Element<'a, Message>> = match tab {
@@ -443,6 +445,7 @@ impl fmt::Display for RecenterChoice {
     }
 }
 
+#[expect(clippy::too_many_lines, reason = "predates the size lints")]
 pub(super) fn gyro_rows(cfg: &GyroConfig, any_gyro: bool) -> Vec<Element<'_, Message>> {
     let with = move |f: &dyn Fn(&mut GyroConfig)| {
         let mut c = cfg.clone();
@@ -610,7 +613,7 @@ pub(super) fn button_rows<'a>(p: &'a Profile, ui: &Ui) -> Vec<Element<'a, Messag
 
 /// One button's action editor with its "+ Gesture" picker and any gesture rows.
 /// The label column of a collapsible row: click to open or close it.
-pub(super) fn row_toggle<'a>(label: String, target: Target, open: bool, problem: bool) -> Element<'a, Message> {
+pub(super) fn row_toggle<'a>(label: &str, target: Target, open: bool, problem: bool) -> Element<'a, Message> {
     let chevron = if open { "▾" } else { "▸" };
     let label = text(format!("{chevron} {label}"));
     let label = if problem { label.color(ERROR_COLOR) } else { label };
@@ -624,6 +627,7 @@ pub(super) fn row_toggle<'a>(label: String, target: Target, open: bool, problem:
 
 /// One button: collapsed to a summary ("A ▸ E · double tap: Q"), or open with its action
 /// editor, "+ Gesture" picker and gesture rows.
+#[expect(clippy::too_many_lines, reason = "predates the size lints")]
 pub(super) fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<'a, Message>> {
     if let Some(marks) = ui.layer
         && !marks.overrides(LayerPart::Button(b))
@@ -651,7 +655,7 @@ pub(super) fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<
         }
         let disabled = matches!(p.button(b), ButtonAction::Disabled) && set_gestures.is_empty();
         let summary = text(summary).color_maybe(disabled.then_some(MUTED_COLOR));
-        let mut line = row![row_toggle(b.to_string(), target, false, problem.is_some()), summary]
+        let mut line = row![row_toggle(&b.to_string(), target, false, problem.is_some()), summary]
             .spacing(10)
             .align_y(Alignment::Center);
         if let Some(problem) = problem {
@@ -671,7 +675,7 @@ pub(super) fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<
         .filter(|k| gestures.and_then(|g| g.get(*k)).is_none())
         .collect();
     // The name gets a line of its own so the open editor reads as sitting under it.
-    let mut header = row![row_toggle(b.to_string(), target, true, problem.is_some()), space::horizontal()]
+    let mut header = row![row_toggle(&b.to_string(), target, true, problem.is_some()), space::horizontal()]
         .spacing(10)
         .align_y(Alignment::Center);
     if !missing.is_empty() {
@@ -714,6 +718,7 @@ pub(super) fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<
     vec![container(column(rows).spacing(8)).padding(6).style(style::highlight(border)).into()]
 }
 
+#[expect(clippy::too_many_lines, reason = "predates the size lints")]
 pub(super) fn combo_rows<'a>(p: &'a Profile, ui: &Ui) -> Vec<Element<'a, Message>> {
     let mut rows: Vec<Element<'a, Message>> = Vec::new();
     if ui.layer.is_none() {
@@ -730,7 +735,7 @@ pub(super) fn combo_rows<'a>(p: &'a Profile, ui: &Ui) -> Vec<Element<'a, Message
             action_problem(&combo.action, ui.names)
         };
         if !open {
-            let mut line = row![row_toggle(name, target, false, problem.is_some()), text(summarize(&combo.action))]
+            let mut line = row![row_toggle(&name, target, false, problem.is_some()), text(summarize(&combo.action))]
                 .spacing(10)
                 .align_y(Alignment::Center);
             if let Some(problem) = problem {
@@ -759,7 +764,7 @@ pub(super) fn combo_rows<'a>(p: &'a Profile, ui: &Ui) -> Vec<Element<'a, Message
         );
         let mut body = column![
             row![
-                row_toggle(name, target, true, problem.is_some()),
+                row_toggle(&name, target, true, problem.is_some()),
                 members,
                 space::horizontal(),
                 button(text("Remove combo").size(13))
@@ -829,6 +834,7 @@ impl fmt::Display for StickKind {
     }
 }
 
+#[expect(clippy::too_many_lines, reason = "predates the size lints")]
 pub(super) fn stick_editor<'a>(s: Stick, cfg: &'a StickConfig, names: &Names) -> Element<'a, Message> {
     let kind = match cfg.action {
         StickAction::Disabled => StickKind::Disabled,
@@ -893,7 +899,7 @@ pub(super) fn stick_editor<'a>(s: Stick, cfg: &'a StickConfig, names: &Names) ->
             }));
         }
         StickAction::Keys { up, down, left, right } => {
-            let full = [up, down, left, right].map(|k| k.clone());
+            let full = [up, down, left, right].map(std::clone::Clone::clone);
             let keys = full.clone().map(|k| short_key(&k).to_string());
             let current = keys.clone();
             let set = move |i: usize, v: String| {
@@ -1037,6 +1043,7 @@ impl fmt::Display for TriggerChoice {
     }
 }
 
+#[expect(clippy::too_many_lines, reason = "predates the size lints")]
 pub(super) fn trigger_editor<'a>(
     t: Trigger,
     action: &'a TriggerAction,
@@ -1118,6 +1125,7 @@ pub(super) fn trigger_editor<'a>(
 }
 
 impl App {
+    #[expect(clippy::too_many_lines, clippy::cognitive_complexity, reason = "predates the size lints")]
     pub(super) fn update_profile(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::SetGyro(gyro) => {

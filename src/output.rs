@@ -95,7 +95,7 @@ impl VirtualPad {
     }
 
     fn emit(&self, events: &[InputEvent]) -> Result<()> {
-        let mut dev = self.dev.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut dev = self.dev.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         dev.emit(events)?;
         Ok(())
     }

@@ -179,6 +179,7 @@ pub(super) fn reachable_menus<'a>(config: &'a Config, game: Option<&'a Game>) ->
 /// The first thing saving would reject in a list of macros, menus and info overlays.
 /// `names` is what they may refer to; `shared` holds the shared items' names, which a game's
 /// items may not reuse.
+#[expect(clippy::too_many_arguments, reason = "predates the size lints")]
 pub(super) fn items_problem(macros: &[Macro], menus: &[Menu], info: &[InfoOverlay], names: &Names, reachable: &[&Menu], shared: Option<&Names>) -> Option<String> {
     let clash = |kind: ItemKind, name: &str| shared.is_some_and(|s| s.list(kind).iter().any(|n| n == name));
     for (i, m) in macros.iter().enumerate() {

@@ -233,8 +233,8 @@ impl Engine {
     /// keep their state per item. Returns true if it asks for the next profile.
     pub fn tap_menu_item(&mut self, menu: &str, item: usize, action: &ButtonAction, out: &mut Vec<OutEvent>) -> bool {
         let src = Source::MenuItem(menu.to_string(), item);
-        let switch = self.digital(src.clone(), action, true, out);
-        self.digital(src, action, false, out);
+        let switch = self.digital(&src, action, true, out);
+        self.digital(&src, action, false, out);
         switch
     }
 
@@ -429,7 +429,7 @@ impl Engine {
                             .cloned()
                             .collect();
                         for src in combos {
-                            self.digital(src, &ButtonAction::Disabled, false, out);
+                            self.digital(&src, &ButtonAction::Disabled, false, out);
                         }
                         false
                     }
@@ -468,7 +468,7 @@ impl Engine {
         let mut id = combo.buttons.clone();
         id.sort();
         id.dedup();
-        self.digital(Source::Combo(id), &combo.action, true, out)
+        self.digital(&Source::Combo(id), &combo.action, true, out)
     }
 
     /// Fires combo members whose window has run out. Returns true on a profile switch request.
@@ -507,14 +507,14 @@ impl Engine {
                 GestureState::Down { long_deadline: Some(_), .. } => {
                     self.gestures.insert(b, GestureState::Holding);
                     if let Some(action) = &gestures.long_press {
-                        switch |= self.digital(Source::Gesture(b), action, true, out);
+                        switch |= self.digital(&Source::Gesture(b), action, true, out);
                     }
                 }
                 // Held past the tap window with no long press set: a plain press, held (so
                 // e.g. a menu on it stays up while held).
                 GestureState::Down { .. } => {
                     self.gestures.insert(b, GestureState::Pressed);
-                    switch |= self.digital(Source::Button(b), profile.button(b), true, out);
+                    switch |= self.digital(&Source::Button(b), profile.button(b), true, out);
                 }
                 // No further tap came: the sequence so far is final.
                 GestureState::Up { taps, .. } => {
@@ -543,21 +543,22 @@ impl Engine {
 
     /// A button acting on its own (not as part of a combo). Runs gesture detection if the
     /// button has gestures, otherwise presses/releases its action directly.
+    #[expect(clippy::too_many_arguments, reason = "predates the size lints")]
     fn solo(&mut self, profile: &Profile, b: Button, pressed: bool, now: Instant, out: &mut Vec<OutEvent>) -> bool {
         let Some(gestures) = profile.gestures(b) else {
             // Gestures may have been removed mid-sequence; a release still has to land.
             if !pressed {
                 match self.gestures.remove(&b) {
                     Some(GestureState::Holding) => {
-                        return self.digital(Source::Gesture(b), &ButtonAction::Disabled, false, out);
+                        return self.digital(&Source::Gesture(b), &ButtonAction::Disabled, false, out);
                     }
                     Some(GestureState::Pressed) => {
-                        return self.digital(Source::Button(b), &ButtonAction::Disabled, false, out);
+                        return self.digital(&Source::Button(b), &ButtonAction::Disabled, false, out);
                     }
                     _ => {}
                 }
             }
-            return self.digital(Source::Button(b), profile.button(b), pressed, out);
+            return self.digital(&Source::Button(b), profile.button(b), pressed, out);
         };
         let max_taps = gestures.max_taps();
         if pressed {
@@ -569,7 +570,7 @@ impl Engine {
                 // Final tap of the longest sequence: fire now and hold until release.
                 self.gestures.insert(b, GestureState::Holding);
                 let action = gestures.for_taps(taps).unwrap_or(profile.button(b));
-                return self.digital(Source::Gesture(b), action, true, out);
+                return self.digital(&Source::Gesture(b), action, true, out);
             }
             let long_deadline = (taps == 1 && gestures.long_press.is_some())
                 .then(|| now + Duration::from_millis(profile.long_press_ms));
@@ -580,9 +581,9 @@ impl Engine {
         } else {
             match self.gestures.remove(&b) {
                 Some(GestureState::Holding) => {
-                    self.digital(Source::Gesture(b), &ButtonAction::Disabled, false, out)
+                    self.digital(&Source::Gesture(b), &ButtonAction::Disabled, false, out)
                 }
-                Some(GestureState::Pressed) => self.digital(Source::Button(b), &ButtonAction::Disabled, false, out),
+                Some(GestureState::Pressed) => self.digital(&Source::Button(b), &ButtonAction::Disabled, false, out),
                 Some(GestureState::Down { taps, .. }) if taps < max_taps => {
                     let deadline = now + Duration::from_millis(profile.tap_window_ms);
                     self.gestures.insert(b, GestureState::Up { taps, deadline });
@@ -600,39 +601,39 @@ impl Engine {
         let gestures = profile.gestures(b);
         let mut switch = false;
         match gestures.and_then(|g| g.for_taps(taps)) {
-            Some(action) => switch |= self.tap(Source::Gesture(b), action, out),
+            Some(action) => switch |= self.tap(&Source::Gesture(b), action, out),
             // e.g. a double tap when only a triple tap is set: that many normal taps.
             None => {
                 for _ in 0..taps {
-                    switch |= self.tap(Source::Button(b), profile.button(b), out);
+                    switch |= self.tap(&Source::Button(b), profile.button(b), out);
                 }
             }
         }
         switch
     }
 
-    fn tap(&mut self, src: Source, action: &ButtonAction, out: &mut Vec<OutEvent>) -> bool {
-        let switch = self.digital(src.clone(), action, true, out);
+    fn tap(&mut self, src: &Source, action: &ButtonAction, out: &mut Vec<OutEvent>) -> bool {
+        let switch = self.digital(src, action, true, out);
         self.digital(src, action, false, out);
         switch
     }
 
     fn digital(
         &mut self,
-        src: Source,
+        src: &Source,
         action: &ButtonAction,
         pressed: bool,
         out: &mut Vec<OutEvent>,
     ) -> bool {
         if pressed {
-            if self.held.contains_key(&src) {
+            if self.held.contains_key(src) {
                 return false;
             }
             self.held.insert(src.clone(), action.clone());
-            self.emit(&src, action, true, 0, out)
+            self.emit(src, action, true, 0, out)
         } else {
-            if let Some(action) = self.held.remove(&src) {
-                self.emit(&src, &action, false, 0, out);
+            if let Some(action) = self.held.remove(src) {
+                self.emit(src, &action, false, 0, out);
             }
             false
         }
@@ -641,6 +642,7 @@ impl Engine {
     /// Emits press/release for an action. `slot` is the position of this node among the
     /// Toggle/Turbo nodes of the input's action (see [`StateId`]). Returns true if it
     /// requests the next profile.
+    #[expect(clippy::too_many_lines, clippy::too_many_arguments, clippy::cognitive_complexity, reason = "predates the size lints")]
     fn emit(&mut self, src: &Source, action: &ButtonAction, pressed: bool, slot: usize, out: &mut Vec<OutEvent>) -> bool {
         match action {
             ButtonAction::Disabled => {}
@@ -882,7 +884,7 @@ impl Engine {
             && value < threshold - TRIGGER_HYSTERESIS
         {
             self.trigger_release.remove(&t);
-            switch |= self.digital(src.clone(), &ButtonAction::Disabled, false, out);
+            switch |= self.digital(&src, &ButtonAction::Disabled, false, out);
         }
         match action {
             TriggerAction::Disabled => {}
@@ -893,7 +895,7 @@ impl Engine {
             TriggerAction::Button { action, threshold } => {
                 if !self.trigger_release.contains_key(&t) && value >= *threshold {
                     self.trigger_release.insert(t, *threshold);
-                    switch |= self.digital(src, action, true, out);
+                    switch |= self.digital(&src, action, true, out);
                 }
             }
         }
@@ -919,13 +921,13 @@ impl Engine {
             .collect();
         for i in leaving {
             self.zone_bounds.remove(&(analog, i));
-            switch |= self.digital(Source::Zone(analog, i), &ButtonAction::Disabled, false, out);
+            switch |= self.digital(&Source::Zone(analog, i), &ButtonAction::Disabled, false, out);
         }
         for (i, zone) in profile.zones(analog).iter().enumerate() {
             let bounds = (zone.min, zone.max);
             if !self.zone_bounds.contains_key(&(analog, i)) && inside(bounds, 0.0) {
                 self.zone_bounds.insert((analog, i), bounds);
-                switch |= self.digital(Source::Zone(analog, i), &zone.action, true, out);
+                switch |= self.digital(&Source::Zone(analog, i), &zone.action, true, out);
             }
         }
         switch
@@ -2041,6 +2043,7 @@ mod tests {
     }
 
     /// `seconds` of turning at constant rates (degrees/second), held flat, at 250 Hz.
+    #[expect(clippy::too_many_arguments, reason = "predates the size lints")]
     fn turn(e: &mut Engine, p: &Profile, pitch: f32, yaw: f32, roll: f32, seconds: f32) -> Vec<OutEvent> {
         let mut out = Vec::new();
         for _ in 0..(seconds * 250.0).round() as usize {

@@ -519,16 +519,17 @@ impl App {
 
     /// Shows a game's page, editing its active profile if it has it.
     fn show_game(&mut self, key: Option<String>) {
-        self.page = Page::Game(key.clone());
-        let active = self.config.active_ref();
-        self.editing = if active.game == key {
+        let has_active = self.config.active_ref().game == key;
+        if key.is_some() {
+            self.shared_view = false;
+        }
+        self.page = Page::Game(key);
+        self.editing = if has_active {
+            let active = self.config.active_ref();
             self.game().profiles.iter().position(|p| p.name == active.profile).unwrap_or(0)
         } else {
             0
         };
-        if key.is_some() {
-            self.shared_view = false;
-        }
         self.layer = 0;
         self.compare = self.editing;
         self.reset_page_state();
@@ -556,6 +557,7 @@ impl App {
 
     /// The app-wide messages: polling, status, saving. Each module handles its own and passes
     /// the rest on: games → items → profile → actions → layers → packs.
+    #[expect(clippy::too_many_lines, reason = "predates the size lints")]
     fn handle(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Poll => {

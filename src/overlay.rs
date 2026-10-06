@@ -620,6 +620,7 @@ pub mod draw {
     }
 
     /// A button glyph: a colored disc for face buttons, a rounded tag for the rest.
+    #[expect(clippy::too_many_arguments, reason = "predates the size lints")]
     fn glyph<'a, M: 'a>(label: &str, fill: Option<[u8; 3]>, round: bool, c: Colors, s: f32, opacity: f32) -> Element<'a, M> {
         let (bg, fg) = match fill {
             Some([r, g, b]) => (Color::from_rgba8(r, g, b, opacity), Color { a: opacity, ..Color::WHITE }),
@@ -645,6 +646,7 @@ pub mod draw {
         .into()
     }
 
+    #[expect(clippy::too_many_lines, reason = "predates the size lints")]
     pub fn keyboard_panel<'a, M: 'a>(v: &KeyboardView) -> Element<'a, M> {
         let c = colors(&v.style);
         let s = v.style.scale.clamp(0.5, 2.0);
