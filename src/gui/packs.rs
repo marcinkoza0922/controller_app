@@ -801,10 +801,129 @@ async fn save_pack(file_name: String, text: String, dir: Option<PathBuf>) -> Opt
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gui::tests::*;
 
     #[test]
     fn pack_file_names_are_tidy() {
         assert_eq!(file_stem("ELDEN RING: Nightreign"), "elden-ring-nightreign.padpack");
         assert_eq!(file_stem("  "), "game.padpack");
+    }
+
+    #[test]
+    fn importing_a_pack_file_previews_then_adds_the_game() {
+        let mut app = with_game();
+        app.config.shared.macros.push(Macro { name: "Heal".into(), steps: vec![MacroStep::Wait(10)] });
+        app.config.games[0].profiles[0].set_button(Button::North, ButtonAction::Macro { name: "Heal".into(), repeat: false });
+        let text = pack::export(&app.config.games[0], &app.config.shared, &pack::draft(&app.config.games[0], false))
+            .pack
+            .to_toml()
+            .unwrap();
+
+        let _ = app.update(Message::PackFileRead(Some(Ok(text))));
+        let Some(Dialog::Import { plan, .. }) = &app.dialog else { panic!("no preview") };
+        assert!(plan.name_clash && plan.shared_clashes.len() == 1 && plan.rule_clashes.len() == 1);
+        assert_eq!(app.config.games.len(), 1, "nothing changes before confirming");
+        let _ = app.update(Message::SetKeepMine(0, true));
+        let _ = app.update(Message::ConfirmImport);
+        assert_eq!(app.page, Page::Game(Some("Doom (2)".into())));
+        let imported = app.game();
+        assert_eq!(imported.macros[0].name, "Heal (2)");
+        assert!(!imported.rules[0].enabled && app.config.games[0].rules[0].enabled, "kept mine");
+        assert_eq!(app.validate(), None);
+
+        let _ = app.update(Message::PackFileRead(Some(Ok("format = 9".into()))));
+        assert!(app.message.as_ref().is_some_and(|(m, err)| *err && m.contains("newer version")));
+    }
+
+    #[test]
+    fn export_drafts_fork_and_remember_their_details() {
+        let mut app = with_game();
+        let _ = app.update(Message::OpenExport);
+        let Some(Dialog::Export { info, .. }) = &app.dialog else { panic!("no export dialog") };
+        let id = info.id.clone();
+        assert_eq!(info.version, "1.0");
+        let _ = app.update(Message::SetPackField(PackField::Author, "me".into()));
+        let _ = app.update(Message::Exported(Some(Ok("/tmp/doom.padpack".into()))));
+        assert!(app.dialog.is_none());
+        assert_eq!((app.game().pack.id.as_str(), app.game().pack.author.as_str()), (id.as_str(), "me"));
+        let _ = app.update(Message::OpenExport);
+        let Some(Dialog::Export { info, .. }) = &app.dialog else { panic!() };
+        assert_eq!(info.id, id, "my own pack keeps its ID");
+
+        // General has no Details tab, so nothing to export.
+        let _ = app.update(Message::CloseDialog);
+        let _ = app.update(Message::SelectPage(Page::Game(None)));
+        let _ = app.update(Message::OpenExport);
+        assert!(app.dialog.is_none());
+    }
+
+    #[test]
+    fn items_are_copied_from_other_games() {
+        let mut app = with_game();
+        let mut quake = Game::new("Quake", vec![Profile::passthrough("P")]);
+        quake.info.push(InfoOverlay { name: "Controls".into(), always: true, on_start: None, linger: None, style: OverlayStyle::info(), rows: vec![] });
+        app.config.games.push(quake);
+        app.config.games[0].info.push(InfoOverlay { name: "Controls".into(), always: false, on_start: None, linger: None, style: OverlayStyle::info(), rows: vec![] });
+        let _ = app.update(Message::OpenBrowse(ItemKind::Info));
+        let _ = app.update(Message::BrowseFrom(BrowseSource::Game(Some("Quake".into()))));
+        let _ = app.update(Message::CopyItem(0));
+        assert!(app.dialog.is_none());
+        let names: Vec<&str> = app.game().info.iter().map(|o| o.name.as_str()).collect();
+        assert_eq!(names, ["Controls (2)", "Controls"]);
+        assert!(app.game().info[0].always);
+        assert!(app.open_infos.contains(&0));
+    }
+
+    #[test]
+    fn copying_a_menu_brings_the_macros_it_runs() {
+        let mut app = with_game();
+        let heal = |steps: usize| Macro { name: "Heal".into(), steps: vec![MacroStep::Wait(1); steps] };
+        let mut quake = Game::new("Quake", vec![Profile::passthrough("P")]);
+        quake.macros = vec![heal(1), Macro { name: "Taunt".into(), steps: vec![] }];
+        quake.menus.push(Menu {
+            name: "Wheel".into(),
+            kind: MenuKind::List,
+            items: ["Heal", "Taunt"].map(|n| MenuItem { label: n.into(), action: ButtonAction::Macro { name: n.into(), repeat: false }, button: None }).into(),
+            cancel: None,
+            style: OverlayStyle::default(),
+        });
+        app.config.games.push(quake);
+        // Doom has its own "Taunt", which the copy can use, but no "Heal".
+        app.config.games[0].macros.push(Macro { name: "Taunt".into(), steps: vec![MacroStep::Wait(9)] });
+        app.config.games[0].menus.push(Menu { name: "Wheel".into(), kind: MenuKind::List, items: vec![], cancel: None, style: OverlayStyle::default() });
+        let _ = app.update(Message::SelectGameTab(GameTab::Menus));
+        let _ = app.update(Message::OpenBrowse(ItemKind::Menu));
+        let _ = app.update(Message::BrowseFrom(BrowseSource::Game(Some("Quake".into()))));
+        let _ = app.update(Message::CopyItem(0));
+        let doom = app.game();
+        assert_eq!(doom.menus.iter().map(|m| m.name.as_str()).collect::<Vec<_>>(), ["Wheel (2)", "Wheel"]);
+        assert_eq!(doom.macros.iter().map(|m| m.name.as_str()).collect::<Vec<_>>(), ["Heal", "Taunt"]);
+        assert!(app.open_menus.contains(&0));
+        assert!(app.message.as_ref().is_some_and(|(m, _)| m.contains("with macro “Heal”")), "{:?}", app.message);
+        assert_eq!(app.validate(), None);
+    }
+
+    #[test]
+    fn every_library_game_adds_and_saves_cleanly() {
+        let mut app = app();
+        assert!(!app.library.is_empty());
+        for i in 0..app.library.len() {
+            let _ = app.update(Message::PreviewLibrary(i));
+            let _ = app.view();
+            let _ = app.update(Message::ConfirmImport);
+            assert_eq!(app.validate(), None, "{}", app.library[i].file);
+            let _ = app.update(Message::SelectGameTab(GameTab::Info));
+            let _ = app.view();
+        }
+    }
+
+    #[test]
+    fn the_add_game_picker_and_page_changes_close_dialogs() {
+        let mut app = app();
+        let _ = app.update(Message::OpenAddGame);
+        let _ = app.update(Message::SetLibrarySearch("doo".into()));
+        assert!(matches!(&app.dialog, Some(Dialog::AddGame { search, .. }) if search == "doo"));
+        let _ = app.update(Message::SelectPage(Page::Settings));
+        assert!(app.dialog.is_none() && app.page == Page::Settings);
     }
 }
