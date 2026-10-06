@@ -20,20 +20,27 @@ pub enum PadFamily {
 impl PadFamily {
     pub const ALL: [PadFamily; 3] = [PadFamily::Xbox, PadFamily::PlayStation, PadFamily::Nintendo];
 
-    /// Guesses the family from the USB/Bluetooth vendor ID, then the device name.
-    pub fn detect(vendor: u16, name: &str) -> Self {
+    /// Recognizes the family from the USB/Bluetooth vendor ID, then the device name; `None`
+    /// when neither gives it away, so the caller can fall back to the user's choice.
+    pub fn detect(vendor: u16, name: &str) -> Option<Self> {
         match vendor {
-            0x054c => return PadFamily::PlayStation,
-            0x057e => return PadFamily::Nintendo,
+            0x045e => return Some(PadFamily::Xbox),
+            0x054c => return Some(PadFamily::PlayStation),
+            0x057e => return Some(PadFamily::Nintendo),
+            // Steam Deck and Steam Controller label their face buttons like Xbox pads.
+            0x28de => return Some(PadFamily::Xbox),
             _ => {}
         }
         let name = name.to_lowercase();
-        if ["dualsense", "dualshock", "playstation", "sony"].iter().any(|n| name.contains(n)) {
-            PadFamily::PlayStation
-        } else if ["nintendo", "pro controller", "joy-con"].iter().any(|n| name.contains(n)) {
-            PadFamily::Nintendo
+        let has = |names: &[&str]| names.iter().any(|n| name.contains(n));
+        if has(&["dualsense", "dualshock", "playstation", "sony"]) {
+            Some(PadFamily::PlayStation)
+        } else if has(&["nintendo", "pro controller", "joy-con"]) {
+            Some(PadFamily::Nintendo)
+        } else if has(&["xbox", "x-box", "microsoft"]) {
+            Some(PadFamily::Xbox)
         } else {
-            PadFamily::Xbox
+            None
         }
     }
 }
@@ -459,11 +466,13 @@ mod tests {
 
     #[test]
     fn families_from_vendor_and_name() {
-        assert_eq!(PadFamily::detect(0x054c, "Wireless Controller"), PadFamily::PlayStation);
-        assert_eq!(PadFamily::detect(0x057e, "Pro Controller"), PadFamily::Nintendo);
-        assert_eq!(PadFamily::detect(0x045e, "Xbox Wireless Controller"), PadFamily::Xbox);
-        assert_eq!(PadFamily::detect(0x0000, "Nintendo Switch Pro Controller"), PadFamily::Nintendo);
-        assert_eq!(PadFamily::detect(0x28de, "Steam Deck"), PadFamily::Xbox);
+        assert_eq!(PadFamily::detect(0x054c, "Wireless Controller"), Some(PadFamily::PlayStation));
+        assert_eq!(PadFamily::detect(0x057e, "Pro Controller"), Some(PadFamily::Nintendo));
+        assert_eq!(PadFamily::detect(0x045e, "Xbox Wireless Controller"), Some(PadFamily::Xbox));
+        assert_eq!(PadFamily::detect(0x0000, "Nintendo Switch Pro Controller"), Some(PadFamily::Nintendo));
+        assert_eq!(PadFamily::detect(0x0000, "Generic X-Box pad"), Some(PadFamily::Xbox));
+        assert_eq!(PadFamily::detect(0x28de, "Steam Deck"), Some(PadFamily::Xbox));
+        assert_eq!(PadFamily::detect(0x2dc8, "8BitDo Ultimate 2C"), None, "unknown pads use the fallback setting");
     }
 
     #[test]

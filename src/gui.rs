@@ -71,8 +71,6 @@ struct App {
     open_info_appearance: HashSet<usize>,
     /// Which profile's macros and overlays the Macros and Overlays tabs list.
     filter: ScopeFilter,
-    /// Whose button glyphs info overlay previews use.
-    preview_family: PadFamily,
 }
 
 /// Which macros, menus and info overlays the Macros and Overlays tabs list.
@@ -794,7 +792,7 @@ enum Message {
     SetInfoCell(usize, usize, usize, String),
     InsertInfoToken(usize, usize, usize, TokenChoice),
     RemoveInfoCell(usize, usize, usize),
-    SetPreviewFamily(PadFamily),
+    SetInfoGlyphs(PadFamily),
     NewMacro,
     DeleteMacro(usize),
     RenameMacro(usize, String),
@@ -912,7 +910,6 @@ impl App {
             open_infos: HashSet::new(),
             open_info_appearance: HashSet::new(),
             filter: ScopeFilter::All,
-            preview_family: PadFamily::Xbox,
         };
         let load = Task::perform(
             async {
@@ -1240,7 +1237,7 @@ impl App {
                 }
             },
             Message::SetFilter(filter) => self.filter = filter,
-            Message::SetPreviewFamily(family) => self.preview_family = family,
+            Message::SetInfoGlyphs(family) => self.config.info_glyphs = family,
             Message::NewInfo => {
                 let name = (1..)
                     .map(|i| if i == 1 { "Info".to_string() } else { format!("Info {i}") })
@@ -2491,17 +2488,28 @@ impl App {
             ),
         ];
 
-        // Appearance, and a live preview with glyphs for the chosen kind of controller.
+        // Appearance, and a live preview with the fallback glyphs.
         let appearance_open = self.open_info_appearance.contains(&i);
         rows.push(labeled("", disclosure("Appearance", appearance_open, Message::ToggleInfoAppearance(i))));
         if appearance_open {
             rows.push(style_editor(&o.style, Rc::new(move |s| Message::SetInfoStyle(i, s))));
         }
         let sample = InfoOverlay { style: preview_style(&o.style), ..o.clone() };
-        let view = crate::info::resolve(&sample, &crate::info::Live::sample(self.preview_family));
+        let view = crate::info::resolve(&sample, &crate::info::Live::sample(self.config.info_glyphs));
         rows.push(labeled(
-            "Glyphs as",
-            dropdown(PadFamily::ALL, Some(self.preview_family), Message::SetPreviewFamily).width(170).into(),
+            "Fallback glyphs",
+            row![
+                dropdown(PadFamily::ALL, Some(self.config.info_glyphs), Message::SetInfoGlyphs).width(170),
+                help(
+                    "Glyphs follow the controller in use: Xbox, PlayStation or Nintendo labels. For a \
+                     controller that can't be recognized, they're drawn like this kind instead. Shared \
+                     by all info overlays, and used for the preview below."
+                        .into(),
+                ),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .into(),
         ));
         rows.push(preview(crate::overlay::draw::info_panel(&view)));
 

@@ -65,8 +65,8 @@ enum Msg {
 struct Managed {
     path: PathBuf,
     name: String,
-    /// Whose button names glyphs use.
-    family: crate::info::PadFamily,
+    /// Whose button names glyphs use, if recognized; otherwise `Config::info_glyphs`.
+    family: Option<crate::info::PadFamily>,
     engine: Engine,
     pad: VirtualPad,
     stop: Arc<AtomicBool>,
@@ -539,7 +539,7 @@ impl Daemon {
             title: window.title,
             pid: window.pid,
             controller: pad.map(|d| d.name.clone()).unwrap_or_default(),
-            family: pad.map(|d| d.family).unwrap_or_default(),
+            family: pad.and_then(|d| d.family).unwrap_or(self.config.info_glyphs),
             system: self.sampler.stats.clone(),
         }
     }

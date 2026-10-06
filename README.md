@@ -92,7 +92,7 @@ Each menu is a collapsible card on the Overlays tab, with a live preview; "Add a
 
 Info overlays put text on screen without taking the controller, mainly to show a game's controls. Each one is a grid of cells (rows of cells that line up in columns), with its own position, size and colors. Cells can hold tokens:
 
-- **Button glyphs** drawn the way the controller in use labels them: `{south}` is A on Xbox, ✕ on PlayStation and B on Nintendo; also `{east}` `{west}` `{north}` `{lb}` `{rb}` `{lt}` `{rt}` `{select}` `{start}` `{guide}` `{ls}` `{rs}` `{l3}` `{r3}` `{dpad}` `{up}` `{down}` `{left}` `{right}`.
+- **Button glyphs** drawn the way the controller in use labels them: `{south}` is A on Xbox, ✕ on PlayStation and B on Nintendo; also `{east}` `{west}` `{north}` `{lb}` `{rb}` `{lt}` `{rt}` `{select}` `{start}` `{guide}` `{ls}` `{rs}` `{l3}` `{r3}` `{dpad}` `{up}` `{down}` `{left}` `{right}`. Controllers that can't be recognized get the "Fallback glyphs" kind chosen in the editor.
 - **Live values**, updated every second: `{time}` `{time12}` `{date}` `{profile}` `{app}` (the focused program's executable) `{title}` `{pid}` `{cpu}` `{ram}` `{gpu}` (AMD only) `{controller}`.
 
 An info overlay is either always shown while one of its profiles is active, or shown with the "Show info overlay…" action while that input is held (wrap it in Toggle to keep it up). Overlays at the same screen position stack.

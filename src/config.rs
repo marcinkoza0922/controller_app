@@ -1410,6 +1410,9 @@ pub struct Config {
     /// Info overlays, shown by `ButtonAction::ShowInfo` or always for their profiles.
     #[serde(default, rename = "info_overlays")]
     pub info: Vec<InfoOverlay>,
+    /// Whose button glyphs info overlays use when the controller in use isn't recognized.
+    #[serde(default)]
+    pub info_glyphs: crate::info::PadFamily,
     pub profiles: Vec<Profile>,
 }
 
@@ -1426,6 +1429,7 @@ impl Default for Config {
             keyboard_style: OverlayStyle::keyboard(),
             numpad_style: OverlayStyle::numpad(),
             info: Vec::new(),
+            info_glyphs: crate::info::PadFamily::default(),
             profiles: vec![Profile::passthrough("Gamepad"), Profile::desktop("Desktop")],
         }
     }
