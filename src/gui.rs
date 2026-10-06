@@ -6002,6 +6002,20 @@ mod tests {
     }
 
     #[test]
+    fn every_library_game_adds_and_saves_cleanly() {
+        let mut app = app();
+        assert!(!app.library.is_empty());
+        for i in 0..app.library.len() {
+            let _ = app.update(Message::PreviewLibrary(i));
+            let _ = app.view();
+            let _ = app.update(Message::ConfirmImport);
+            assert_eq!(app.validate(), None, "{}", app.library[i].file);
+            let _ = app.update(Message::SelectGameTab(GameTab::Info));
+            let _ = app.view();
+        }
+    }
+
+    #[test]
     fn the_add_game_picker_and_page_changes_close_dialogs() {
         let mut app = app();
         let _ = app.update(Message::OpenAddGame);

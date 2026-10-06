@@ -52,6 +52,23 @@ pub fn problems(pack: &Pack) -> Vec<String> {
     if pack.rules.is_empty() {
         problems.push("has no auto-switch rule".into());
     }
+    // Every key it presses must be a real key name.
+    let game = pack.to_game();
+    let mut actions: Vec<&crate::config::ButtonAction> = game.profiles.iter().flat_map(|p| p.actions()).collect();
+    actions.extend(game.layers.iter().flat_map(|l| l.actions()));
+    actions.extend(game.menus.iter().flat_map(|m| m.items.iter().map(|i| &i.action)));
+    actions.extend(game.macros.iter().flat_map(|m| m.steps.iter().filter_map(crate::config::MacroStep::action)));
+    let mut keys: Vec<&String> = actions.into_iter().flat_map(|a| a.key_names()).collect();
+    for s in game.profiles.iter().flat_map(|p| [&p.left_stick, &p.right_stick]) {
+        if let crate::config::StickAction::Keys { up, down, left, right } = &s.action {
+            keys.extend([up, down, left, right]);
+        }
+    }
+    for k in keys {
+        if <evdev::KeyCode as std::str::FromStr>::from_str(k).is_err() {
+            problems.push(format!("presses unknown key {k:?}"));
+        }
+    }
     let used: BTreeSet<_> = out.features.iter().map(|f| f.feature).collect();
     let declared: BTreeSet<_> = pack.pack.requires.iter().copied().collect();
     if used != declared {
@@ -92,6 +109,8 @@ mod tests {
         assert_eq!(found.len(), 3, "{found:?}");
         pack.rules.push(Rule::new(RuleKind::Executable, "doom.exe", "P"));
         assert_eq!(problems(&pack).len(), 2);
+        pack.profiles[0].set_button(Button::South, ButtonAction::Keys(vec!["KEY_NOPE".into()]));
+        assert!(problems(&pack).iter().any(|p| p.contains("KEY_NOPE")));
     }
 
     #[test]

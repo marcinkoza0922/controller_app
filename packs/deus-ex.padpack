@@ -1,0 +1,415 @@
+format = 3
+macros = []
+
+[pack]
+id = "744efa38-f5b0-4a49-bc95-126809ef6fc2"
+name = "Deus Ex"
+version = "1.0"
+author = "controller_app"
+description = "The original Deus Ex (2000) on an Xbox-style pad, for the game's default keys. Belt slots and augmentations on radial menus (hold LB / RB, aim with the right stick), crouch toggle on L3, quick save and load on Start. Start + Select shows every control; a small hint at launch shows how to reach the numpad (keypads) and keyboard."
+made_with = "Xbox controller"
+requires = []
+
+[[rules]]
+kind = "executable"
+value = "DeusEx.exe"
+profile = "Deus Ex"
+
+[[rules]]
+kind = "steam_app_id"
+value = "6910"
+profile = "Deus Ex"
+
+[[profiles]]
+name = "Deus Ex"
+combo_window_ms = 120
+tap_window_ms = 250
+long_press_ms = 500
+
+[profiles.buttons]
+Guide = "next_profile"
+DpadUp = "disabled"
+
+[profiles.buttons.South]
+keys = ["KEY_SPACE"]
+
+[profiles.buttons.East]
+mouse = "Right"
+
+[profiles.buttons.North]
+keys = ["KEY_F1"]
+
+[profiles.buttons.West]
+keys = ["KEY_SEMICOLON"]
+
+[profiles.buttons.LeftBumper]
+open_menu = "Belt"
+
+[profiles.buttons.RightBumper]
+open_menu = "Augmentations"
+
+[profiles.buttons.Select]
+keys = ["KEY_F2"]
+
+[profiles.buttons.Start]
+keys = ["KEY_ESC"]
+
+[profiles.buttons.LeftStick.toggle]
+keys = ["KEY_X"]
+
+[profiles.buttons.RightStick]
+keys = ["KEY_RIGHTBRACE"]
+
+[profiles.buttons.DpadDown]
+keys = ["KEY_TAB"]
+
+[profiles.buttons.DpadLeft]
+keys = ["KEY_Q"]
+
+[profiles.buttons.DpadRight]
+keys = ["KEY_E"]
+
+[profiles.left_stick]
+deadzone = 0.12
+curve = 1.0
+key_threshold = 0.25
+
+[profiles.left_stick.action.keys]
+up = "KEY_W"
+down = "KEY_S"
+left = "KEY_A"
+right = "KEY_D"
+
+[[profiles.left_stick.zones]]
+min = 0.0
+max = 0.6
+
+[profiles.left_stick.zones.action]
+keys = ["KEY_LEFTSHIFT"]
+
+[profiles.right_stick]
+deadzone = 0.1
+curve = 2.0
+key_threshold = 0.5
+
+[profiles.right_stick.action.mouse]
+speed = 1600.0
+
+[profiles.left_trigger.action.button]
+threshold = 0.4
+
+[profiles.left_trigger.action.button.action]
+keys = ["KEY_LEFTBRACE"]
+
+[profiles.right_trigger.action.button]
+threshold = 0.3
+
+[profiles.right_trigger.action.button.action]
+mouse = "Left"
+
+[[profiles.combos]]
+buttons = [
+    "Start",
+    "Select",
+]
+
+[profiles.combos.action]
+show_info = "Controls"
+
+[profiles.gestures.West.long_press]
+keys = ["KEY_APOSTROPHE"]
+
+[profiles.gestures.LeftBumper.double_tap]
+keys = ["KEY_BACKSPACE"]
+
+[profiles.gestures.Select.double_tap.toggle]
+start_on = true
+
+[profiles.gestures.Select.double_tap.toggle.action]
+show_info = "Hints"
+
+[profiles.gestures.Start.double_tap]
+keys = ["KEY_KPPLUS"]
+
+[profiles.gestures.Start.long_press]
+keys = ["KEY_KPSLASH"]
+
+[profiles.gestures.DpadUp]
+double_tap = "toggle_numpad"
+long_press = "toggle_overlay"
+
+[profiles.gyro]
+mode = "off"
+horizontal = "yaw"
+invert_x = false
+invert_y = false
+activation = "always"
+noise_threshold = 1.0
+
+[[menus]]
+name = "Belt"
+
+[menus.kind.radial]
+stick = "Right"
+
+[[menus.items]]
+label = "Belt 1"
+
+[menus.items.action]
+keys = ["KEY_1"]
+
+[[menus.items]]
+label = "Belt 2"
+
+[menus.items.action]
+keys = ["KEY_2"]
+
+[[menus.items]]
+label = "Belt 3"
+
+[menus.items.action]
+keys = ["KEY_3"]
+
+[[menus.items]]
+label = "Belt 4"
+
+[menus.items.action]
+keys = ["KEY_4"]
+
+[[menus.items]]
+label = "Belt 5"
+
+[menus.items.action]
+keys = ["KEY_5"]
+
+[[menus.items]]
+label = "Belt 6"
+
+[menus.items.action]
+keys = ["KEY_6"]
+
+[[menus.items]]
+label = "Belt 7"
+
+[menus.items.action]
+keys = ["KEY_7"]
+
+[[menus.items]]
+label = "Belt 8"
+
+[menus.items.action]
+keys = ["KEY_8"]
+
+[[menus.items]]
+label = "Belt 9"
+
+[menus.items.action]
+keys = ["KEY_9"]
+
+[[menus.items]]
+label = "Belt 0"
+
+[menus.items.action]
+keys = ["KEY_0"]
+
+[menus.style]
+position = "center"
+scale = 1.0
+
+[menus.style.background]
+color = "#16181c"
+opacity = 0.92
+
+[menus.style.items]
+color = "#30343c"
+opacity = 0.95
+
+[menus.style.selected]
+color = "#2f5db0"
+opacity = 1.0
+
+[[menus]]
+name = "Augmentations"
+
+[menus.kind.radial]
+stick = "Right"
+
+[[menus.items]]
+label = "Aug F3"
+
+[menus.items.action]
+keys = ["KEY_F3"]
+
+[[menus.items]]
+label = "Aug F4"
+
+[menus.items.action]
+keys = ["KEY_F4"]
+
+[[menus.items]]
+label = "Aug F5"
+
+[menus.items.action]
+keys = ["KEY_F5"]
+
+[[menus.items]]
+label = "Aug F6"
+
+[menus.items.action]
+keys = ["KEY_F6"]
+
+[[menus.items]]
+label = "Aug F7"
+
+[menus.items.action]
+keys = ["KEY_F7"]
+
+[[menus.items]]
+label = "Aug F8"
+
+[menus.items.action]
+keys = ["KEY_F8"]
+
+[[menus.items]]
+label = "Aug F9"
+
+[menus.items.action]
+keys = ["KEY_F9"]
+
+[[menus.items]]
+label = "Aug F10"
+
+[menus.items.action]
+keys = ["KEY_F10"]
+
+[[menus.items]]
+label = "Aug F11"
+
+[menus.items.action]
+keys = ["KEY_F11"]
+
+[[menus.items]]
+label = "Aug F12"
+
+[menus.items.action]
+keys = ["KEY_F12"]
+
+[menus.style]
+position = "center"
+scale = 1.0
+
+[menus.style.background]
+color = "#16181c"
+opacity = 0.92
+
+[menus.style.items]
+color = "#30343c"
+opacity = 0.95
+
+[menus.style.selected]
+color = "#2f5db0"
+opacity = 1.0
+
+[[info_overlays]]
+name = "Controls"
+always = false
+linger = 2.0
+rows = [
+    [
+    "{ls}",
+    "Move (half push: walk)",
+    "{rs}",
+    "Look",
+],
+    [
+    "{rt}",
+    "Fire",
+    "{lt}",
+    "Scope",
+],
+    [
+    "{south}",
+    "Jump",
+    "{east}",
+    "Use",
+],
+    [
+    "{west}",
+    "Reload · hold: change ammo",
+    "{north}",
+    "Inventory",
+],
+    [
+    "{lb}",
+    "Hold: belt · double tap: holster",
+    "{rb}",
+    "Hold: augmentations",
+],
+    [
+    "{l3}",
+    "Click: crouch (toggle)",
+    "{r3}",
+    "Click: laser sight",
+],
+    [
+    "{left} {right}",
+    "Lean",
+    "{down}",
+    "Drop / throw",
+],
+    [
+    "{up}{up}",
+    "Numpad · hold {up}: keyboard",
+    "{select}",
+    "Goals · double tap: hints",
+],
+    [
+    "{start}",
+    "Menu · double tap: quick save",
+    "hold {start}",
+    "Quick load",
+],
+]
+
+[info_overlays.style]
+position = "center"
+scale = 0.9
+
+[info_overlays.style.background]
+color = "#16181c"
+opacity = 0.88
+
+[info_overlays.style.items]
+color = "#30343c"
+opacity = 0.95
+
+[info_overlays.style.selected]
+color = "#2f5db0"
+opacity = 1.0
+
+[[info_overlays]]
+name = "Hints"
+always = false
+rows = [[
+    "{up}{up} Numpad",
+    "hold {up} Keyboard",
+    "{start}+{select} All controls",
+    "{select}{select} Hide",
+]]
+
+[info_overlays.style]
+position = "top_center"
+scale = 0.65
+
+[info_overlays.style.background]
+color = "#16181c"
+opacity = 0.35
+
+[info_overlays.style.items]
+color = "#30343c"
+opacity = 0.6
+
+[info_overlays.style.selected]
+color = "#2f5db0"
+opacity = 1.0
+
