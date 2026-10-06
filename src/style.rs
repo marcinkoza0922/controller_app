@@ -29,18 +29,6 @@ pub fn inset(theme: &Theme) -> container::Style {
     }
 }
 
-/// A row picked out by "Find by pressing" or flagged by validation.
-pub fn highlight(color: Color) -> impl Fn(&Theme) -> container::Style {
-    move |theme| {
-        let p = theme.extended_palette();
-        container::Style {
-            background: Some(p.background.weakest.color.into()),
-            border: Border { width: 2.0, radius: 6.0.into(), color },
-            ..container::Style::default()
-        }
-    }
-}
-
 /// Tooltip bubbles.
 pub fn tooltip(theme: &Theme) -> container::Style {
     let p = theme.extended_palette();

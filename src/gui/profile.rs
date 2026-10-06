@@ -683,7 +683,6 @@ pub(super) fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<
             button(text("Back to base").size(13)).style(button::text).on_press(Message::RevertInput(LayerPart::Button(b))),
         );
     }
-    rows.push(header.into());
     rows.push(labeled(
         "    Press",
         action_editor(p.button(b), b, &ACTION_KINDS, set_action(target), KeyField::root(target), ui.names),
@@ -717,9 +716,18 @@ pub(super) fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<
     if let Some(problem) = problem {
         rows.push(labeled("", text(format!("⚠ {problem}")).size(12).color(ERROR_COLOR).into()));
     }
-    // An open row sits in a framed box, picked out in the accent color when it was just found.
-    let border = if ui.found == Some(b) { style_accent() } else { Color::TRANSPARENT };
-    vec![container(column(rows).spacing(8)).padding(6).style(style::highlight(border)).into()]
+    // The details sit in a box under the name, like a combo's, picked out in the accent color
+    // when the button was just found. The name stays outside so it doesn't move on opening.
+    let found = ui.found == Some(b);
+    let details = container(column(rows).spacing(8)).padding(10).width(Length::Fill).style(move |t| {
+        let mut s = style::inset(t);
+        if found {
+            s.border.color = style_accent();
+            s.border.width = 2.0;
+        }
+        s
+    });
+    vec![column![header, details].spacing(4).into()]
 }
 
 #[expect(clippy::too_many_lines, reason = "predates the size lints")]
@@ -738,14 +746,15 @@ pub(super) fn combo_rows<'a>(p: &'a Profile, ui: &Ui) -> Vec<Element<'a, Message
         } else {
             action_problem(&combo.action, ui.names)
         };
+        let remove = button(text("Remove combo").size(13)).style(button::danger).on_press(Message::RemoveCombo(i));
         if !open {
-            let mut line = row![row_toggle(&name, target, false, problem.is_some()), text(summarize(&combo.action))]
+            let mut line = row![row_toggle(&name, target, false, problem.is_some()), text(summarize(&combo.action)), space::horizontal()]
                 .spacing(10)
                 .align_y(Alignment::Center);
             if let Some(problem) = problem {
-                line = line.push(space::horizontal()).push(text(format!("⚠ {problem}")).size(12).color(ERROR_COLOR));
+                line = line.push(text(format!("⚠ {problem}")).size(12).color(ERROR_COLOR));
             }
-            rows.push(line.into());
+            rows.push(line.push(remove).into());
             continue;
         }
         let mut members = row![].spacing(6).align_y(Alignment::Center);
@@ -770,10 +779,6 @@ pub(super) fn combo_rows<'a>(p: &'a Profile, ui: &Ui) -> Vec<Element<'a, Message
             row![
                 row_toggle(&name, target, true, problem.is_some()),
                 members,
-                space::horizontal(),
-                button(text("Remove combo").size(13))
-                    .style(button::danger)
-                    .on_press(Message::RemoveCombo(i)),
             ]
             .spacing(10)
             .align_y(Alignment::Center),
@@ -783,7 +788,15 @@ pub(super) fn combo_rows<'a>(p: &'a Profile, ui: &Ui) -> Vec<Element<'a, Message
         if let Some(problem) = problem {
             body = body.push(labeled("", text(format!("⚠ {problem}")).size(12).color(ERROR_COLOR).into()));
         }
-        rows.push(container(body).padding(10).style(style::inset).into());
+        // Removing sits beside the box rather than inside it, apart from the combo's own controls.
+        rows.push(
+            row![
+                container(body).padding(10).style(style::inset).width(Length::Fill),
+                remove,
+            ]
+            .spacing(8)
+            .into(),
+        );
     }
     rows.push(button(text("+ Add combo")).style(button::secondary).on_press(Message::AddCombo).into());
     rows
