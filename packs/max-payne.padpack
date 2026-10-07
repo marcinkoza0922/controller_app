@@ -182,7 +182,6 @@ opacity = 1.0
 [[info_overlays]]
 name = "Controls"
 always = false
-linger = 2.0
 rows = [
     [
     "{ls}",

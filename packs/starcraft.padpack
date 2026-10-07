@@ -1,0 +1,382 @@
+format = 6
+macros = []
+overlay_font = "Rajdhani"
+
+[pack]
+id = "61b6cfbf-9932-4091-89e9-6cf0f6fa5a6e"
+name = "StarCraft"
+version = "1.0"
+author = "controller_app"
+description = "StarCraft: Remastered (Battle.net) on an Xbox-style pad, for the default hotkeys. Left stick moves the cursor, RT left-clicks, LT right-clicks, right stick scrolls the map. Face buttons are Attack / Cancel / Stop / Hold, the d-pad is Move / Patrol / Basic and Advanced structures, RB is Shift (queue). Hold LB for control groups 1-8 (also hold RB in there to assign the group instead), R3 opens a radial menu of worker and unit commands. Start is the game menu, Select jumps to the last alert, Hold Select for the on-screen keyboard (profile names, chat); Start + Select shows every control. Unit-specific keys (siege, cloak, burrow...) aren't mapped; add them to the radial menu if you want them."
+made_with = "Xbox controller"
+requires = []
+
+[[rules]]
+kind = "executable"
+value = "StarCraft.exe"
+profile = "Gameplay"
+
+[[profiles]]
+name = "Gameplay"
+combo_window_ms = 120
+tap_window_ms = 250
+long_press_ms = 500
+
+[profiles.buttons]
+Guide = "next_profile"
+
+[profiles.buttons.South]
+keys = ["KEY_A"]
+
+[profiles.buttons.East]
+keys = ["KEY_ESC"]
+
+[profiles.buttons.West]
+keys = ["KEY_S"]
+
+[profiles.buttons.North]
+keys = ["KEY_H"]
+
+[profiles.buttons.DpadUp]
+keys = ["KEY_M"]
+
+[profiles.buttons.DpadRight]
+keys = ["KEY_P"]
+
+[profiles.buttons.DpadLeft]
+keys = ["KEY_B"]
+
+[profiles.buttons.DpadDown]
+keys = ["KEY_V"]
+
+[profiles.buttons.RightBumper]
+keys = ["KEY_LEFTSHIFT"]
+
+[profiles.buttons.Start]
+keys = ["KEY_F10"]
+
+[profiles.buttons.Select]
+keys = ["KEY_SPACE"]
+
+[profiles.buttons.LeftBumper]
+layer = "Groups"
+
+[profiles.buttons.RightStick]
+open_menu = "Commands"
+
+[profiles.buttons.LeftStick]
+multi = [
+    { keys = ["KEY_LEFTCTRL"] },
+    { mouse = "Left" },
+]
+
+[profiles.left_stick]
+deadzone = 0.1
+curve = 1.6
+key_threshold = 0.25
+
+[profiles.left_stick.action.mouse]
+speed = 1500.0
+
+[profiles.right_stick]
+deadzone = 0.2
+curve = 1.0
+key_threshold = 0.45
+
+[profiles.right_stick.action.keys]
+up = "KEY_UP"
+down = "KEY_DOWN"
+left = "KEY_LEFT"
+right = "KEY_RIGHT"
+
+[profiles.left_trigger.action.button]
+threshold = 0.4
+
+[profiles.left_trigger.action.button.action]
+mouse = "Right"
+
+[profiles.right_trigger.action.button]
+threshold = 0.3
+
+[profiles.right_trigger.action.button.action]
+mouse = "Left"
+
+[[profiles.combos]]
+buttons = [
+    "Start",
+    "Select",
+]
+
+[profiles.combos.action]
+show_info = "Controls"
+
+[profiles.gestures.Select]
+long_press = "toggle_overlay"
+
+[profiles.gyro]
+mode = "off"
+horizontal = "yaw"
+invert_x = false
+invert_y = false
+activation = "always"
+noise_threshold = 1.0
+
+[[profiles]]
+name = "Menus"
+combo_window_ms = 120
+tap_window_ms = 250
+long_press_ms = 500
+
+[profiles.buttons]
+Guide = "next_profile"
+East = { keys = ["KEY_ESC"] }
+South = { mouse = "Left" }
+West = { mouse = "Right" }
+Start = { keys = ["KEY_ESC"] }
+DpadUp = { keys = ["KEY_UP"] }
+DpadDown = { keys = ["KEY_DOWN"] }
+DpadLeft = { keys = ["KEY_LEFT"] }
+DpadRight = { keys = ["KEY_RIGHT"] }
+North = { keys = ["KEY_ENTER"] }
+Select = "toggle_overlay"
+
+[profiles.left_stick]
+deadzone = 0.1
+curve = 1.6
+key_threshold = 0.25
+
+[profiles.left_stick.action.mouse]
+speed = 1500.0
+
+[profiles.right_stick]
+deadzone = 0.15
+curve = 1.0
+key_threshold = 0.5
+
+[profiles.right_stick.action.scroll]
+speed = 12.0
+
+[profiles.left_trigger.action.button]
+threshold = 0.4
+
+[profiles.left_trigger.action.button.action]
+mouse = "Right"
+
+[profiles.right_trigger.action.button]
+threshold = 0.3
+
+[profiles.right_trigger.action.button.action]
+mouse = "Left"
+
+[profiles.gyro]
+mode = "off"
+horizontal = "yaw"
+invert_x = false
+invert_y = false
+activation = "always"
+noise_threshold = 1.0
+
+[[layers]]
+name = "Groups"
+indicator = "name"
+
+[layers.buttons.South]
+keys = ["KEY_1"]
+
+[layers.buttons.West]
+keys = ["KEY_2"]
+
+[layers.buttons.East]
+keys = ["KEY_3"]
+
+[layers.buttons.North]
+keys = ["KEY_4"]
+
+[layers.buttons.DpadUp]
+keys = ["KEY_5"]
+
+[layers.buttons.DpadRight]
+keys = ["KEY_6"]
+
+[layers.buttons.DpadDown]
+keys = ["KEY_7"]
+
+[layers.buttons.DpadLeft]
+keys = ["KEY_8"]
+
+[layers.buttons.RightBumper]
+layer = "Assign group"
+
+[[layers]]
+name = "Assign group"
+indicator = "name"
+
+[layers.buttons.South]
+keys = ["KEY_LEFTCTRL", "KEY_1"]
+
+[layers.buttons.West]
+keys = ["KEY_LEFTCTRL", "KEY_2"]
+
+[layers.buttons.East]
+keys = ["KEY_LEFTCTRL", "KEY_3"]
+
+[layers.buttons.North]
+keys = ["KEY_LEFTCTRL", "KEY_4"]
+
+[layers.buttons.DpadUp]
+keys = ["KEY_LEFTCTRL", "KEY_5"]
+
+[layers.buttons.DpadRight]
+keys = ["KEY_LEFTCTRL", "KEY_6"]
+
+[layers.buttons.DpadDown]
+keys = ["KEY_LEFTCTRL", "KEY_7"]
+
+[layers.buttons.DpadLeft]
+keys = ["KEY_LEFTCTRL", "KEY_8"]
+
+[[menus]]
+name = "Commands"
+
+[menus.kind.radial]
+stick = "Right"
+
+[[menus.items]]
+label = "Gather"
+
+[menus.items.action]
+keys = ["KEY_G"]
+
+[[menus.items]]
+label = "Return cargo"
+
+[menus.items.action]
+keys = ["KEY_C"]
+
+[[menus.items]]
+label = "Repair"
+
+[menus.items.action]
+keys = ["KEY_R"]
+
+[[menus.items]]
+label = "Rally point"
+
+[menus.items.action]
+keys = ["KEY_Y"]
+
+[[menus.items]]
+label = "Load"
+
+[menus.items.action]
+keys = ["KEY_L"]
+
+[[menus.items]]
+label = "Unload all"
+
+[menus.items.action]
+keys = ["KEY_D"]
+
+[menus.style]
+position = "center"
+scale = 1.0
+
+[menus.style.background]
+color = "#0b1624"
+opacity = 0.9
+
+[menus.style.items]
+color = "#1c2b40"
+opacity = 0.95
+
+[menus.style.selected]
+color = "#2fa4e7"
+opacity = 1.0
+
+[[info_overlays]]
+name = "Controls"
+always = false
+rows = [
+    [
+    "{ls}",
+    "Cursor",
+    "{rs}",
+    "Scroll map",
+],
+    [
+    "{rt}",
+    "Left click (select)",
+    "{lt}",
+    "Right click (move / target)",
+],
+    [
+    "{south}",
+    "Attack",
+    "{east}",
+    "Cancel",
+],
+    [
+    "{west}",
+    "Stop",
+    "{north}",
+    "Hold position",
+],
+    [
+    "{up}",
+    "Move",
+    "{right}",
+    "Patrol",
+],
+    [
+    "{left}",
+    "Basic structures",
+    "{down}",
+    "Advanced structures",
+],
+    [
+    "{rb}",
+    "Shift (queue)",
+    "{l3}",
+    "Click: ctrl-click (select same type)",
+],
+    [
+    "{lb}",
+    "Hold: control groups 1-8",
+    "{lb} + {rb}",
+    "Assign group instead",
+],
+    [
+    "{r3}",
+    "Worker / unit commands",
+    "{select}",
+    "Jump to last alert",
+],
+    [
+    "{start}",
+    "Game menu",
+    "{guide}",
+    "Gameplay / Menus profile",
+],
+    [
+    "hold {select}",
+    "On-screen keyboard (hold {east} to close)",
+    "",
+    "",
+],
+]
+
+[info_overlays.style]
+position = "center"
+scale = 0.9
+
+[info_overlays.style.background]
+color = "#0b1624"
+opacity = 0.9
+
+[info_overlays.style.items]
+color = "#1c2b40"
+opacity = 0.95
+
+[info_overlays.style.selected]
+color = "#2fa4e7"
+opacity = 1.0
