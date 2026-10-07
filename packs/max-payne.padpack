@@ -1,0 +1,251 @@
+format = 5
+macros = []
+overlay_font = "Source Code Pro"
+
+[pack]
+id = "7b1d3c52-4f0a-4c1e-9a64-2e8f5d0b9a11"
+name = "Max Payne"
+version = "1.0"
+author = "controller_app"
+description = "Max Payne (2001) on an Xbox-style pad, for the game's default keys. LT is bullet time, RB shoot-dodge (move + RB), LB opens a radial menu of weapon groups (aim with the right stick), L3 toggles crouch, North takes painkillers. Start + Select shows every control."
+made_with = "Xbox controller"
+requires = []
+
+[[rules]]
+kind = "executable"
+value = "maxpayne.exe"
+profile = "Max Payne"
+
+[[rules]]
+kind = "steam_app_id"
+value = "12140"
+profile = "Max Payne"
+
+[[profiles]]
+name = "Max Payne"
+combo_window_ms = 120
+tap_window_ms = 250
+long_press_ms = 500
+
+[profiles.buttons]
+Guide = "next_profile"
+DpadDown = "disabled"
+
+[profiles.buttons.South]
+keys = ["KEY_SPACE"]
+
+[profiles.buttons.East]
+keys = ["KEY_E"]
+
+[profiles.buttons.North]
+keys = ["KEY_TAB"]
+
+[profiles.buttons.West]
+keys = ["KEY_R"]
+
+[profiles.buttons.LeftBumper]
+open_menu = "Weapons"
+
+[profiles.buttons.RightBumper]
+mouse = "Right"
+
+[profiles.buttons.Select]
+keys = ["KEY_P"]
+
+[profiles.buttons.Start]
+keys = ["KEY_ESC"]
+
+[profiles.buttons.LeftStick.toggle]
+keys = ["KEY_C"]
+
+[profiles.buttons.DpadUp]
+keys = ["KEY_G"]
+
+[profiles.buttons.DpadLeft]
+wheel = "Up"
+
+[profiles.buttons.DpadRight]
+wheel = "Down"
+
+[profiles.left_stick]
+deadzone = 0.12
+curve = 1.0
+key_threshold = 0.25
+
+[profiles.left_stick.action.keys]
+up = "KEY_W"
+down = "KEY_S"
+left = "KEY_A"
+right = "KEY_D"
+
+[profiles.right_stick]
+deadzone = 0.1
+curve = 2.0
+key_threshold = 0.5
+
+[profiles.right_stick.action.mouse]
+speed = 1300.0
+
+[profiles.left_trigger.action.button]
+threshold = 0.4
+
+[profiles.left_trigger.action.button.action]
+keys = ["KEY_LEFTSHIFT"]
+
+[profiles.right_trigger.action.button]
+threshold = 0.3
+
+[profiles.right_trigger.action.button.action]
+mouse = "Left"
+
+[[profiles.combos]]
+buttons = [
+    "Start",
+    "Select",
+]
+
+[profiles.combos.action]
+show_info = "Controls"
+
+[profiles.gestures.Start.double_tap]
+keys = ["KEY_F5"]
+
+[profiles.gestures.Start.long_press]
+keys = ["KEY_F9"]
+
+[profiles.gyro]
+mode = "off"
+horizontal = "yaw"
+invert_x = false
+invert_y = false
+activation = "always"
+noise_threshold = 1.0
+
+[[menus]]
+name = "Weapons"
+
+[menus.kind.radial]
+stick = "Right"
+
+[[menus.items]]
+label = "Melee"
+
+[menus.items.action]
+keys = ["KEY_1"]
+
+[[menus.items]]
+label = "Handguns"
+
+[menus.items.action]
+keys = ["KEY_2"]
+
+[[menus.items]]
+label = "Shotguns"
+
+[menus.items.action]
+keys = ["KEY_3"]
+
+[[menus.items]]
+label = "Automatic"
+
+[menus.items.action]
+keys = ["KEY_4"]
+
+[[menus.items]]
+label = "Throwables"
+
+[menus.items.action]
+keys = ["KEY_5"]
+
+[[menus.items]]
+label = "Sniper rifle"
+
+[menus.items.action]
+keys = ["KEY_6"]
+
+[menus.style]
+position = "center"
+scale = 1.0
+
+[menus.style.background]
+color = "#101214"
+opacity = 0.92
+
+[menus.style.items]
+color = "#2a2d31"
+opacity = 0.95
+
+[menus.style.selected]
+color = "#c9a227"
+opacity = 1.0
+
+[[info_overlays]]
+name = "Controls"
+always = false
+linger = 2.0
+rows = [
+    [
+    "{ls}",
+    "Move",
+    "{rs}",
+    "Aim",
+],
+    [
+    "{lt}",
+    "Bullet time",
+    "{rb}",
+    "Shoot-dodge (move + {rb})",
+],
+    [
+    "{rt}",
+    "Shoot",
+    "{south}",
+    "Jump",
+],
+    [
+    "{east}",
+    "Use · hold: sniper zoom",
+    "{west}",
+    "Reload",
+],
+    [
+    "{north}",
+    "Painkillers",
+    "{lb}",
+    "Hold: weapon groups",
+],
+    [
+    "{l3}",
+    "Click: crouch (toggle)",
+    "{up}",
+    "Best weapon",
+],
+    [
+    "{left} {right}",
+    "Previous / next weapon",
+    "{start}",
+    "Menu · double tap: quick save",
+],
+    [
+    "{select}",
+    "Pause",
+    "hold {start}",
+    "Quick load",
+],
+]
+
+[info_overlays.style]
+position = "center"
+scale = 0.9
+
+[info_overlays.style.background]
+color = "#101214"
+opacity = 0.88
+
+[info_overlays.style.items]
+color = "#2a2d31"
+opacity = 0.95
+
+[info_overlays.style.selected]
+color = "#c9a227"
+opacity = 1.0
