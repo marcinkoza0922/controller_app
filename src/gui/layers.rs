@@ -216,7 +216,7 @@ impl App {
             let current = game.layers.get(self.layer).map(|l| l.name.clone());
             row![
                 dropdown(names, current, Message::SelectLayer).placeholder("No layers yet").width(220),
-                button(text("+ New layer")).style(button::secondary).on_press(Message::NewLayer),
+                button(text("+ New layer")).style(style::secondary).on_press(Message::NewLayer),
                 space::horizontal(),
                 button(text("Copy from another game…").size(13)).style(button::text).on_press(Message::OpenBrowse(ItemKind::Layer)),
                 help(

@@ -73,8 +73,9 @@ pub struct PlacedLabel {
 }
 
 /// Where each label's leader line meets its button (before the margin offset), split into
-/// the column its label goes in, top to bottom. Buttons with a letter on them are met at
-/// their edge so the line doesn't cover the letter.
+/// the column its label goes in, top to bottom in the order that keeps the lines from
+/// crossing (X, boxed in by Y, B and A, comes after them). Buttons with a letter on them are
+/// met at their edge so the line doesn't cover the letter.
 const LEFT_LABELS: [(Spot, (f32, f32)); 8] = [
     (Spot::Trigger(Trigger::Left), (95.0, 21.0)),
     (Spot::Button(Button::LeftBumper), (112.0, 47.0)),
@@ -90,9 +91,9 @@ const RIGHT_LABELS: [(Spot, (f32, f32)); 9] = [
     (Spot::Button(Button::RightBumper), (308.0, 47.0)),
     (Spot::Button(Button::Guide), (210.0, 88.0)),
     (Spot::Button(Button::North), (313.0, 96.0)),
-    (Spot::Button(Button::West), (280.0, 129.0)),
     (Spot::Button(Button::East), (335.0, 118.0)),
     (Spot::Button(Button::South), (313.0, 140.0)),
+    (Spot::Button(Button::West), (280.0, 129.0)),
     (Spot::Button(Button::Start), (238.0, 118.0)),
     (Spot::Button(Button::RightStick), (255.0, 168.0)),
 ];

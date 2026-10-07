@@ -347,7 +347,7 @@ impl App {
         let mut list = column![
             row![
                 dropdown(Template::NEW, None::<Template>, Message::AddEmptyGame).placeholder("Empty game from a template…").width(300),
-                button(text("Import a file…")).style(button::secondary).on_press(Message::ImportFile),
+                button(text("Import a file…")).style(style::secondary).on_press(Message::ImportFile),
             ]
             .spacing(8),
             text(match &self.installed {
@@ -398,7 +398,7 @@ impl App {
             text("Add a game").size(22),
             field("Search the library", search).on_input(Message::SetLibrarySearch),
             row![list.width(Length::Fill), rule::vertical(1), details].spacing(16),
-            row![space::horizontal(), button(text("Cancel")).style(button::secondary).on_press(Message::CloseDialog)],
+            row![space::horizontal(), button(text("Cancel")).style(style::secondary).on_press(Message::CloseDialog)],
         ]
         .spacing(12)
         .width(820)
@@ -433,10 +433,10 @@ impl App {
                     text(format!("You already have a game named {}.", p.pack.name)),
                     row![
                         button(text(format!("Add as {}", plan.renamed)).size(13))
-                            .style(if choices.replace { button::secondary } else { button::primary })
+                            .style(if choices.replace { style::secondary } else { button::primary })
                             .on_press(Message::SetReplaceGame(false)),
                         button(text("Replace mine").size(13))
-                            .style(if choices.replace { button::danger } else { button::secondary })
+                            .style(if choices.replace { button::danger } else { style::secondary })
                             .on_press(Message::SetReplaceGame(true)),
                     ]
                     .spacing(8),
@@ -468,7 +468,7 @@ impl App {
         col.push(text("Nothing changes until you Save & apply.").size(13).color(MUTED_COLOR))
             .push(row![
                 space::horizontal(),
-                button(text("Cancel")).style(button::secondary).on_press(Message::CloseDialog),
+                button(text("Cancel")).style(style::secondary).on_press(Message::CloseDialog),
                 button(text(verb)).on_press(Message::ConfirmImport),
             ]
             .spacing(8))
@@ -529,7 +529,7 @@ impl App {
         }
         col.push(row![
             space::horizontal(),
-            button(text("Cancel")).style(button::secondary).on_press(Message::CloseDialog),
+            button(text("Cancel")).style(style::secondary).on_press(Message::CloseDialog),
             button(text("Save…")).on_press(Message::SaveExport),
         ]
         .spacing(8))
@@ -561,7 +561,7 @@ impl App {
         col.push(text("Nothing changes until you Save & apply.").size(13).color(MUTED_COLOR))
             .push(row![
                 space::horizontal(),
-                button(text("Cancel")).style(button::secondary).on_press(Message::CloseDialog),
+                button(text("Cancel")).style(style::secondary).on_press(Message::CloseDialog),
                 button(text("Delete")).style(button::danger).on_press(Message::ConfirmDeleteGame),
             ]
             .spacing(8))
@@ -646,7 +646,7 @@ impl App {
             }
             col = col.push(scrollable(list).height(Length::Shrink));
         }
-        col.push(row![space::horizontal(), button(text("Close")).style(button::secondary).on_press(Message::CloseDialog)])
+        col.push(row![space::horizontal(), button(text("Close")).style(style::secondary).on_press(Message::CloseDialog)])
             .width(680)
             .into()
     }

@@ -31,7 +31,7 @@ impl fmt::Display for QuickChoice {
 pub(super) fn view_new_info_card<'a>() -> Element<'a, Message> {
     container(
         row![
-            button(text("+ New info overlay")).style(button::secondary).on_press(Message::NewInfo),
+            button(text("+ New info overlay")).style(style::secondary).on_press(Message::NewInfo),
             text("Text and button glyphs on screen, e.g. a game's controls.").size(13).color(MUTED_COLOR),
             space::horizontal(),
             help(
@@ -55,7 +55,7 @@ pub(super) fn view_new_info_card<'a>() -> Element<'a, Message> {
 pub(super) fn view_new_menu_card<'a>() -> Element<'a, Message> {
     let mut kinds = row![text("Add a menu:")].spacing(8).align_y(Alignment::Center);
     for kind in MenuKindTag::ALL {
-        kinds = kinds.push(button(text(kind.short()).size(14)).style(button::secondary).on_press(Message::NewMenu(kind)));
+        kinds = kinds.push(button(text(kind.short()).size(14)).style(style::secondary).on_press(Message::NewMenu(kind)));
     }
     container(row![kinds, space::horizontal(), help(MENUS_HELP.into())].align_y(Alignment::Center))
         .padding(14)
@@ -133,7 +133,7 @@ kind_row.into()
 /// "+ Add item", greyed out with a note once a grid is full.
 fn add_menu_item_row<'a>(mi: usize, menu: &Menu) -> Element<'a, Message> {
     let full = item_limit(menu.kind).is_some_and(|limit| menu.items.len() >= limit);
-    let mut add = row![button(text("+ Add item").size(13)).style(button::secondary).on_press_maybe((!full).then_some(Message::AddMenuItem(mi)))]
+    let mut add = row![button(text("+ Add item").size(13)).style(style::secondary).on_press_maybe((!full).then_some(Message::AddMenuItem(mi)))]
         .spacing(10)
         .align_y(Alignment::Center);
     if full {
@@ -682,7 +682,7 @@ impl App {
     pub(super) fn view_macros(&self, names: &Names) -> Element<'_, Message> {
         let add = container(
             row![
-                button(text("+ New macro")).style(button::secondary).on_press(Message::NewMacro),
+                button(text("+ New macro")).style(style::secondary).on_press(Message::NewMacro),
                 text("A macro plays a sequence of inputs.").size(13).color(MUTED_COLOR),
                 space::horizontal(),
                 button(text("Copy from another game…").size(13)).style(button::text).on_press(Message::OpenBrowse(ItemKind::Macro)),
@@ -825,7 +825,7 @@ impl App {
                 ),
             };
             let small = |label: &'static str, msg: Option<Message>| {
-                button(text(label).size(13)).style(button::secondary).on_press_maybe(msg)
+                button(text(label).size(13)).style(style::secondary).on_press_maybe(msg)
             };
             steps = steps.push(
                 container(
@@ -850,11 +850,11 @@ impl App {
         let mut footer = column![
             row![
                 text("Add step:").size(13),
-                button(text("Tap").size(13)).style(button::secondary).on_press(Message::AddMacroStep(mi, StepKind::Tap)),
-                button(text("Hold down").size(13)).style(button::secondary).on_press(Message::AddMacroStep(mi, StepKind::Press)),
-                button(text("Release").size(13)).style(button::secondary).on_press(Message::AddMacroStep(mi, StepKind::Release)),
-                button(text("Wait").size(13)).style(button::secondary).on_press(Message::AddMacroStep(mi, StepKind::Wait)),
-                button(text("Move stick").size(13)).style(button::secondary).on_press(Message::AddMacroStep(mi, StepKind::Stick)),
+                button(text("Tap").size(13)).style(style::secondary).on_press(Message::AddMacroStep(mi, StepKind::Tap)),
+                button(text("Hold down").size(13)).style(style::secondary).on_press(Message::AddMacroStep(mi, StepKind::Press)),
+                button(text("Release").size(13)).style(style::secondary).on_press(Message::AddMacroStep(mi, StepKind::Release)),
+                button(text("Wait").size(13)).style(style::secondary).on_press(Message::AddMacroStep(mi, StepKind::Wait)),
+                button(text("Move stick").size(13)).style(style::secondary).on_press(Message::AddMacroStep(mi, StepKind::Stick)),
                 dropdown(Motion::ALL, None::<Motion>, move |m| Message::InsertMotion(mi, m)).placeholder("Insert motion…").width(230),
                 space::horizontal(),
                 text(format!("Plays for {total} ms")).size(13).color(MUTED_COLOR),
@@ -997,7 +997,7 @@ impl App {
         rows.push(preview(crate::overlay::draw::info_panel(&view, self.preview_font())));
 
         // The grid: rows of cells, which line up in columns on screen.
-        let small = |label: &'static str, msg: Option<Message>| button(text(label).size(13)).style(button::secondary).on_press_maybe(msg);
+        let small = |label: &'static str, msg: Option<Message>| button(text(label).size(13)).style(style::secondary).on_press_maybe(msg);
         let tokens: Vec<TokenChoice> = crate::info::TOKENS.iter().map(|(t, d)| TokenChoice(t, d)).collect();
         let mut grid = column![
             row![
@@ -1048,7 +1048,7 @@ impl App {
                 .style(style::inset),
             );
         }
-        grid = grid.push(button(text("+ Add row").size(13)).style(button::secondary).on_press(Message::AddInfoRow(i)));
+        grid = grid.push(button(text("+ Add row").size(13)).style(style::secondary).on_press(Message::AddInfoRow(i)));
         rows.push(grid.into());
         column(rows).spacing(10).into()
     }
@@ -1149,7 +1149,7 @@ impl App {
             line = line.push(action_editor(&item.action, Button::South, item_kinds, set_action(target), KeyField::root(target), &item_names));
             if direction_slots.is_none() {
                 let small = |label: &'static str, msg: Option<Message>| {
-                    button(text(label).size(13)).style(button::secondary).on_press_maybe(msg)
+                    button(text(label).size(13)).style(style::secondary).on_press_maybe(msg)
                 };
                 line = line
                     .push(space::horizontal())

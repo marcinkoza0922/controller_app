@@ -38,7 +38,7 @@ pub(super) fn style_editor<'a>(style: &OverlayStyle, on_change: OnStyle<'a>) -> 
                 tooltip(
                     button(space().width(22).height(12))
                         .padding(2)
-                        .style(if chosen { button::primary } else { button::secondary })
+                        .style(if chosen { button::primary } else { style::secondary })
                         .on_press(with(&|s| s.position = pos)),
                     container(text(pos.to_string()).size(13)).padding(6).style(style::tooltip),
                     tooltip::Position::Top,

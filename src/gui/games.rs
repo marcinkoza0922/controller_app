@@ -223,7 +223,7 @@ impl App {
         if self.config.games.is_empty() {
             col = col.push(text("No games yet.").size(13).color(MUTED_COLOR));
         }
-        col = col.push(button(text("+ Add game").size(14)).width(Length::Fill).style(button::secondary).on_press(Message::OpenAddGame));
+        col = col.push(button(text("+ Add game").size(14)).width(Length::Fill).style(style::secondary).on_press(Message::OpenAddGame));
         container(scrollable(col.padding(12)).height(Length::Fill)).width(SIDEBAR_WIDTH).into()
     }
 
@@ -383,7 +383,7 @@ impl App {
                     let state = if d.gyro { format!("{state} · gyro") } else { state };
                     let calibrate: Element<'_, Message> = if d.gyro {
                         button(text("Calibrate gyro").size(13))
-                            .style(button::secondary)
+                            .style(style::secondary)
                             .on_press(Message::CalibrateGyro(d.path.clone()))
                             .into()
                     } else {
@@ -392,7 +392,7 @@ impl App {
                     let name = d.name.clone();
                     let rumble: Element<'_, Message> = if d.rumble {
                         button(text("Test rumble").size(13))
-                            .style(button::secondary)
+                            .style(style::secondary)
                             .on_press(Message::TestRumble(d.path.clone()))
                             .into()
                     } else {
@@ -431,7 +431,7 @@ impl App {
                     row![
                         text(motion_rule_command()).size(11).font(iced::Font::MONOSPACE).width(Length::Fill),
                         button(text("Copy command").size(13))
-                            .style(button::secondary)
+                            .style(style::secondary)
                             .on_press(Message::CopyMotionRuleCommand),
                     ]
                     .spacing(8)
@@ -496,7 +496,7 @@ impl App {
                 field(placeholder, &r.value).on_input(move |v| Message::SetRuleValue(i, v)).width(200),
                 text("use").size(14),
                 dropdown(names.clone(), Some(r.profile.clone()), move |p| Message::SetRuleProfile(i, p)).width(160),
-                button(text("✕").size(13)).style(button::secondary).on_press(Message::RemoveRule(i)),
+                button(text("✕").size(13)).style(style::secondary).on_press(Message::RemoveRule(i)),
             ]
             .spacing(8)
             .align_y(Alignment::Center);
@@ -511,26 +511,33 @@ impl App {
         if game.rules.is_empty() {
             rules = rules.push(text("No rules: this game is only used when picked by hand.").size(13).color(MUTED_COLOR));
         }
-        rules = rules.push(button(text("+ Add rule").size(13)).style(button::secondary).on_press(Message::AddRule(None)));
-        let recent = self.status.as_ref().map(|s| s.recent_windows.as_slice()).unwrap_or_default();
+        rules = rules.push(button(text("+ Add rule").size(13)).style(style::secondary).on_press(Message::AddRule(None)));
+        // This app's own window is never a game.
+        let recent: Vec<_> =
+            self.status.iter().flat_map(|s| &s.recent_windows).filter(|w| w.exe != env!("CARGO_PKG_NAME")).collect();
         if !recent.is_empty() {
             let mut list = column![
                 text("Recently focused (adds a rule for the profile being edited on the Profiles tab)").size(13).color(MUTED_COLOR)
             ]
             .spacing(6);
             for w in recent {
-                let mut details = vec![w.exe.clone()];
+                let mut details = Vec::new();
+                if !w.exe.is_empty() {
+                    details.push(w.exe.clone());
+                }
                 if let Some(id) = &w.steam_app_id {
                     details.push(format!("Steam {id}"));
                 }
                 if !w.class.is_empty() {
                     details.push(format!("class {}", w.class));
                 }
-                let title: String = w.title.chars().take(60).collect();
+                // Untitled windows (e.g. plasmashell) go by their executable instead.
+                let name = [&w.title, &w.exe, &w.class].into_iter().find(|s| !s.is_empty()).map_or("Untitled window", |s| s.as_str());
+                let title: String = name.chars().take(60).collect();
                 list = list.push(
                     row![
                         column![text(title).size(14), text(details.join(" · ")).size(12).color(MUTED_COLOR)].width(Length::Fill),
-                        button(text("+ Rule").size(13)).style(button::secondary).on_press(Message::AddRule(Some(w.clone()))),
+                        button(text("+ Rule").size(13)).style(style::secondary).on_press(Message::AddRule(Some(w.clone()))),
                     ]
                     .spacing(8)
                     .align_y(Alignment::Center),
@@ -603,7 +610,7 @@ impl App {
         let mut rows: Vec<Element<'_, Message>> = vec![
             row![
                 button(text(if keyboard_open { "Close it" } else { "Open it now" }).size(14))
-                    .style(button::secondary)
+                    .style(style::secondary)
                     .on_press(Message::ToggleOverlay),
                 disclosure("Appearance", appearance_open, Message::ToggleAppearance(None)),
             ]
@@ -641,7 +648,7 @@ impl App {
         let mut rows: Vec<Element<'_, Message>> = vec![
             row![
                 button(text(if numpad_open { "Close it" } else { "Open it now" }).size(14))
-                    .style(button::secondary)
+                    .style(style::secondary)
                     .on_press(Message::ToggleNumpad),
                 disclosure("Appearance", self.numpad_appearance, Message::ToggleNumpadAppearance),
             ]

@@ -743,7 +743,7 @@ impl App {
             row![
                 msg,
                 space::horizontal(),
-                button(text("Revert")).style(button::secondary).on_press_maybe(dirty.then_some(Message::Revert)),
+                button(text("Revert")).style(style::secondary).on_press_maybe(dirty.then_some(Message::Revert)),
                 button(text("Save & apply")).on_press_maybe(dirty.then_some(Message::Save)),
             ]
             .spacing(8)

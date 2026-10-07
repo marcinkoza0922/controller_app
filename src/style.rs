@@ -100,6 +100,26 @@ pub fn segment(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Sty
     }
 }
 
+/// Ordinary buttons. iced's own secondary is a flat mid-grey that looks the same as a
+/// disabled button; this one is a light field-like surface with an edge, so it reads as
+/// clickable, and fades out when disabled.
+pub fn secondary(theme: &Theme, status: button::Status) -> button::Style {
+    let p = theme.extended_palette();
+    let (background, border_color) = match status {
+        button::Status::Active => (p.background.weak.color, p.background.strong.color),
+        button::Status::Hovered => (p.background.strong.color, p.primary.base.color),
+        button::Status::Pressed => (p.background.stronger.color, p.primary.base.color),
+        button::Status::Disabled => (p.background.weakest.color, p.background.weak.color),
+    };
+    let text_color = if status == button::Status::Disabled { muted(p.background.weak.text) } else { p.background.weak.text };
+    button::Style {
+        background: Some(background.into()),
+        text_color,
+        border: Border { width: 1.0, radius: 5.0.into(), color: border_color },
+        ..button::Style::default()
+    }
+}
+
 /// Field surface shared by dropdowns and text inputs: lighter than both page and cards.
 fn field(theme: &Theme, emphasized: bool) -> (Background, Border, Color) {
     let p = theme.extended_palette();

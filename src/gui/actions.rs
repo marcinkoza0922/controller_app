@@ -68,9 +68,9 @@ pub(super) fn view_picker(picker: &KeyPicker) -> Element<'_, Message> {
         ("Pick keys", "Click keys to toggle them. Selected keys are pressed together, in the order chosen.")
     };
     let mut actions = row![
-        button(text("Clear")).style(button::secondary).on_press(Message::PickerClear),
+        button(text("Clear")).style(style::secondary).on_press(Message::PickerClear),
         space::horizontal(),
-        button(text("Cancel")).style(button::secondary).on_press(Message::PickerClose { apply: false }),
+        button(text("Cancel")).style(style::secondary).on_press(Message::PickerClose { apply: false }),
     ]
     .spacing(8);
     if !picker.single {
@@ -525,7 +525,7 @@ pub(super) fn multi_editor<'a>(
         col = col.push(
             row![
                 action_editor(sub, default_button, MULTI_ENTRY_KINDS, entry, field.child(i), names),
-                button(text("✕").size(13)).style(button::secondary).on_press(with(&|v| {
+                button(text("✕").size(13)).style(style::secondary).on_press(with(&|v| {
                     v.remove(i);
                 })),
             ]
@@ -535,7 +535,7 @@ pub(super) fn multi_editor<'a>(
     }
     col.push(
         button(text("+ Add output").size(13))
-            .style(button::secondary)
+            .style(style::secondary)
             .on_press(with(&|v| v.push(ButtonAction::Keys(Vec::new())))),
     )
     .into()
@@ -552,7 +552,7 @@ pub(super) fn key_input<'a>(
     let valid = value.is_empty()
         || value.split('+').all(|k| KeyCode::from_str(&format!("KEY_{k}")).is_ok());
     let input = field(placeholder, value).on_input(on_input).width(180);
-    let pick = button(text("⌨").size(14)).style(button::secondary).on_press(open_picker);
+    let pick = button(text("⌨").size(14)).style(style::secondary).on_press(open_picker);
     let mut r = row![input, pick].spacing(6).align_y(Alignment::Center);
     if !valid {
         r = r.push(text("unknown key").size(12).color(ERROR_COLOR));

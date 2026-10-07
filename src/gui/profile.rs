@@ -81,7 +81,7 @@ pub(super) fn layer_part<'a>(ui: &Ui, part: LayerPart, label: String, summary: S
             text(label).width(LABEL_WIDTH).color(MUTED_COLOR),
             text(format!("Same as {}: {summary}", marks.base.name)).color(MUTED_COLOR),
             space::horizontal(),
-            button(text("Override").size(13)).style(button::secondary).on_press(Message::OverrideInput(part)),
+            button(text("Override").size(13)).style(style::secondary).on_press(Message::OverrideInput(part)),
         ]
         .spacing(10)
         .align_y(Alignment::Center)
@@ -694,7 +694,7 @@ pub(super) fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<
             row![
                 action_editor(action, b, &ACTION_KINDS, set_action(Target::Gesture(b, kind)), KeyField::root(Target::Gesture(b, kind)), ui.names),
                 button(text("✕").size(13))
-                    .style(button::secondary)
+                    .style(style::secondary)
                     .on_press(Message::RemoveGesture(b, kind)),
             ]
             .spacing(6)
@@ -706,7 +706,7 @@ pub(super) fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<
     if !missing.is_empty() {
         let adds = missing.into_iter().map(|k| {
             button(text(format!("+ {k}")).size(13))
-                .style(button::secondary)
+                .style(style::secondary)
                 .padding([3, 10])
                 .on_press(Message::AddGesture(b, k))
                 .into()
@@ -764,7 +764,7 @@ pub(super) fn combo_rows<'a>(p: &'a Profile, ui: &Ui) -> Vec<Element<'a, Message
             }
             members = members.push(
                 button(text(format!("{} ✕", short_button(b))).size(13))
-                    .style(button::secondary)
+                    .style(style::secondary)
                     .on_press(Message::RemoveComboButton(i, b)),
             );
         }
@@ -798,7 +798,7 @@ pub(super) fn combo_rows<'a>(p: &'a Profile, ui: &Ui) -> Vec<Element<'a, Message
             .into(),
         );
     }
-    rows.push(button(text("+ Add combo")).style(button::secondary).on_press(Message::AddCombo).into());
+    rows.push(button(text("+ Add combo")).style(style::secondary).on_press(Message::AddCombo).into());
     rows
 }
 
@@ -937,8 +937,8 @@ pub(super) fn stick_editor<'a>(s: Stick, cfg: &'a StickConfig, names: &Names) ->
                     row![field(0, "Up"), field(1, "Down")].spacing(8),
                     row![field(2, "Left"), field(3, "Right")].spacing(8),
                     row![
-                        button(text("WASD").size(13)).style(button::secondary).on_press(with(wasd())),
-                        button(text("Arrows").size(13)).style(button::secondary).on_press(with(arrows())),
+                        button(text("WASD").size(13)).style(style::secondary).on_press(with(wasd())),
+                        button(text("Arrows").size(13)).style(style::secondary).on_press(with(arrows())),
                     ]
                     .spacing(8),
                 ]
@@ -994,7 +994,7 @@ pub(super) fn zone_editor<'a>(analog: Analog, zones: &'a [Zone], names: &Names) 
             slider(0.0..=1.0, max, move |v| Message::SetZoneRange(analog, i, min, v)).step(0.05_f32).width(140),
             text(format!("{max:.2}")).size(13),
             space::horizontal(),
-            button(text("✕").size(13)).style(button::secondary).on_press(Message::RemoveZone(analog, i)),
+            button(text("✕").size(13)).style(style::secondary).on_press(Message::RemoveZone(analog, i)),
         ]
         .spacing(8)
         .align_y(Alignment::Center);
@@ -1010,14 +1010,14 @@ pub(super) fn zone_editor<'a>(analog: Analog, zones: &'a [Zone], names: &Names) 
     }
 
     let mut buttons = row![
-        button(text("+ Add zone").size(13)).style(button::secondary).on_press(Message::AddZone(analog, ZonePreset::Empty)),
+        button(text("+ Add zone").size(13)).style(style::secondary).on_press(Message::AddZone(analog, ZonePreset::Empty)),
     ]
     .spacing(8)
     .align_y(Alignment::Center);
     if matches!(analog, Analog::Stick(_)) {
         buttons = buttons.push(
             button(text("+ Walk modifier (Shift on partial push)").size(13))
-                .style(button::secondary)
+                .style(style::secondary)
                 .on_press(Message::AddZone(analog, ZonePreset::Walk)),
         );
     }
@@ -1400,14 +1400,14 @@ impl App {
         let find: Element<'_, Message> = if self.finding {
             row![
                 text("Press a button or push a stick on your controller…").color(style_accent()),
-                button(text("Cancel")).style(button::secondary).on_press(Message::CancelFind),
+                button(text("Cancel")).style(style::secondary).on_press(Message::CancelFind),
             ]
             .spacing(10)
             .align_y(Alignment::Center)
             .into()
         } else {
             row![
-                button(text("Find by pressing")).style(button::secondary).on_press_maybe(self.status.is_some().then_some(Message::StartFind)),
+                button(text("Find by pressing")).style(style::secondary).on_press_maybe(self.status.is_some().then_some(Message::StartFind)),
                 help("Press a button or push a stick on your controller to jump to its mapping (needs the daemon).".into()),
             ]
             .spacing(8)
@@ -1477,7 +1477,7 @@ impl App {
         let active = self.profile_ref().is_some_and(|at| at == self.saved.active);
         let activate: Element<'_, Message> = match self.profile_ref() {
             Some(at) if !active && self.status.is_some() => {
-                button(text("Make active").size(13)).style(button::secondary).on_press(Message::ActivateProfile(at)).into()
+                button(text("Make active").size(13)).style(style::secondary).on_press(Message::ActivateProfile(at)).into()
             }
             _ if active => text("● active").size(13).color(style_accent()).into(),
             _ => space().into(),
@@ -1493,7 +1493,7 @@ impl App {
                 dropdown(Template::NEW, None::<Template>, Message::AddProfile)
                     .placeholder("+ From template…")
                     .width(200),
-                button(text("Duplicate")).style(button::secondary).on_press(Message::AddProfile(Template::Duplicate)),
+                button(text("Duplicate")).style(style::secondary).on_press(Message::AddProfile(Template::Duplicate)),
                 button(text("Delete"))
                     .style(button::danger)
                     .on_press_maybe(can_delete.then_some(Message::DeleteProfile)),
