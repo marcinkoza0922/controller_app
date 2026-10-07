@@ -2,6 +2,7 @@ mod config;
 mod daemon;
 mod engine;
 mod focus;
+mod font;
 mod gui;
 mod info;
 mod input;

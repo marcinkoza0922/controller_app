@@ -48,11 +48,11 @@ use profile::*;
 use widgets::*;
 
 pub fn run() -> iced::Result {
-    iced::application(App::boot, App::update, App::view)
+    let app = iced::application(App::boot, App::update, App::view)
         .title("Controller App")
         .subscription(App::subscription)
-        .window_size((1100.0, 900.0))
-        .run()
+        .window_size((1100.0, 900.0));
+    crate::font::BUNDLED.iter().fold(app, |app, b| app.font(b.bytes)).run()
 }
 
 const LABEL_WIDTH: f32 = 170.0;
@@ -299,6 +299,9 @@ enum Message {
     SetMenuKind(usize, MenuKind),
     SetMenuStyle(usize, OverlayStyle),
     SetKeyboardStyle(OverlayStyle),
+    /// The font of all overlays (`None`: the system's), or the shown game's own.
+    SetOverlayFont(Option<String>),
+    SetGameOverlayFont(Option<String>),
     /// A game's own style for the keyboard or numpad, or back to the global one.
     SetGameOverlayStyle(crate::keyboard::Layout, Option<OverlayStyle>),
     AddMenuItem(usize),

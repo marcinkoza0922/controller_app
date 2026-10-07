@@ -288,7 +288,7 @@ impl App {
                 rows: vec![vec![layer.name.clone()]],
             };
             let view = crate::info::resolve(&sample, &crate::info::Live::sample(self.config.info_glyphs));
-            settings.push(preview(crate::overlay::draw::info_panel(&view)));
+            settings.push(preview(crate::overlay::draw::info_panel(&view, self.preview_font())));
         }
         settings.push(labeled(
             "Shown over",

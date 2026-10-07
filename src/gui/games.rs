@@ -146,6 +146,8 @@ impl App {
             }
             Message::SetInfoGlyphs(family) => self.config.info_glyphs = family,
             Message::SetKeyboardStyle(style) => self.config.keyboard_style = style,
+            Message::SetOverlayFont(font) => self.config.overlay_font = font,
+            Message::SetGameOverlayFont(font) => self.game_mut().overlay_font = font,
             Message::SetGameOverlayStyle(layout, style) => self.set_game_overlay_style(layout, style),
             Message::SetIgnored(name, ignored) => {
                 // Applies immediately, independent of unsaved profile edits.
@@ -356,7 +358,9 @@ impl App {
                 .into(),
             )],
         );
-        column![self.view_auto_switch(), self.view_keyboard_card(), self.view_numpad_card(), glyphs].spacing(16).into()
+        column![self.view_auto_switch(), self.view_font_card(), self.view_keyboard_card(), self.view_numpad_card(), glyphs]
+            .spacing(16)
+            .into()
     }
 
     #[expect(clippy::too_many_lines, reason = "predates the size lints")]
@@ -618,7 +622,7 @@ impl App {
                 pressed: None,
                 closing: 0.0,
             };
-            rows.push(preview(crate::overlay::draw::keyboard_panel(&sample)));
+            rows.push(preview(crate::overlay::draw::keyboard_panel(&sample, self.preview_font())));
         }
         section(
             "On-screen keyboard",
@@ -656,7 +660,7 @@ impl App {
                 pressed: None,
                 closing: 0.0,
             };
-            rows.push(preview(crate::overlay::draw::keyboard_panel(&sample)));
+            rows.push(preview(crate::overlay::draw::keyboard_panel(&sample, self.preview_font())));
         }
         section(
             "On-screen numpad",

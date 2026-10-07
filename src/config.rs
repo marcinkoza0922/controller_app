@@ -1737,6 +1737,10 @@ pub struct Game {
     pub keyboard_style: Option<OverlayStyle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub numpad_style: Option<OverlayStyle>,
+    /// Font of every overlay, menu and keyboard while this game is active; `Config::overlay_font`
+    /// applies when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overlay_font: Option<String>,
 }
 
 impl Game {
@@ -1753,6 +1757,7 @@ impl Game {
             layers: Vec::new(),
             keyboard_style: None,
             numpad_style: None,
+            overlay_font: None,
         }
     }
 
@@ -1969,6 +1974,10 @@ pub struct Config {
     /// Whose button glyphs info overlays use when the controller in use isn't recognized.
     #[serde(default)]
     pub info_glyphs: crate::info::PadFamily,
+    /// Font of every overlay, menu and keyboard (a bundled or installed family); the system's
+    /// own when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overlay_font: Option<String>,
     /// Profiles that aren't for a particular game (desktop, plain gamepad).
     pub general: Game,
     #[serde(default)]
@@ -1988,6 +1997,7 @@ impl Default for Config {
             keyboard_style: OverlayStyle::keyboard(),
             numpad_style: OverlayStyle::numpad(),
             info_glyphs: crate::info::PadFamily::default(),
+            overlay_font: None,
             general: Game::new("General", vec![Profile::passthrough("Gamepad"), Profile::desktop("Desktop")]),
             shared: Shared::default(),
             games: Vec::new(),
@@ -2099,6 +2109,7 @@ impl Config {
             keyboard_style: old.keyboard_style,
             numpad_style: old.numpad_style,
             info_glyphs: old.info_glyphs,
+            overlay_font: None,
             general: Game::new("General", Vec::new()),
             shared: Shared::default(),
             games: Vec::new(),
@@ -2204,6 +2215,11 @@ impl Config {
     /// Like [`Config::active_keyboard_style`], for the numpad.
     pub fn active_numpad_style(&self) -> &OverlayStyle {
         self.active_game().numpad_style.as_ref().unwrap_or(&self.numpad_style)
+    }
+
+    /// The font overlays are drawn in now: the active game's own, else the global one.
+    pub fn active_font(&self) -> Option<&str> {
+        self.active_game().overlay_font.as_deref().or(self.overlay_font.as_deref())
     }
 
     /// The active profile's game, or General if it's gone.

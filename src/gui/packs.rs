@@ -606,14 +606,14 @@ impl App {
                         let m = &items.menus[i];
                         let view = MenuSession::open(std::slice::from_ref(m), &m.name, Opener { buttons: vec![Button::LeftBumper], ..Opener::default() })
                             .and_then(|s| s.view(std::slice::from_ref(m)))
-                            .map(|v| preview(crate::overlay::draw::menu_panel(&crate::menu::MenuView { style: preview_style(&m.style), ..v })));
+                            .map(|v| preview(crate::overlay::draw::menu_panel(&crate::menu::MenuView { style: preview_style(&m.style), ..v }, self.preview_font())));
                         (m.name.clone(), format!("{} · {} items", m.kind.tag().short(), m.items.len()), view)
                     }
                     ItemKind::Info => {
                         let o = &items.info[i];
                         let sample = InfoOverlay { style: preview_style(&o.style), ..o.clone() };
                         let view = crate::info::resolve(&sample, &crate::info::Live::sample(self.config.info_glyphs));
-                        (o.name.clone(), format!("{} rows", o.rows.len()), Some(preview(crate::overlay::draw::info_panel(&view))))
+                        (o.name.clone(), format!("{} rows", o.rows.len()), Some(preview(crate::overlay::draw::info_panel(&view, self.preview_font()))))
                     }
                     ItemKind::Layer => {
                         let l = &items.layers[i];

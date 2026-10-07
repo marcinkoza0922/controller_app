@@ -922,7 +922,7 @@ impl App {
         }
         let sample = InfoOverlay { style: preview_style(&o.style), ..o.clone() };
         let view = crate::info::resolve(&sample, &crate::info::Live::sample(self.config.info_glyphs));
-        rows.push(preview(crate::overlay::draw::info_panel(&view)));
+        rows.push(preview(crate::overlay::draw::info_panel(&view, self.preview_font())));
 
         // The grid: rows of cells, which line up in columns on screen.
         let small = |label: &'static str, msg: Option<Message>| button(text(label).size(13)).style(button::secondary).on_press_maybe(msg);
@@ -1056,7 +1056,7 @@ impl App {
             .and_then(|s| s.view(std::slice::from_ref(menu)))
         {
             let view = crate::menu::MenuView { style: preview_style(&menu.style), ..view };
-            rows.push(preview(crate::overlay::draw::menu_panel(&view)));
+            rows.push(preview(crate::overlay::draw::menu_panel(&view, self.preview_font())));
         }
 
         // Items.

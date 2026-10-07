@@ -12,8 +12,8 @@ use crate::config::{
 };
 
 /// The pack format this app writes, and the newest it reads. 2 added layers; 3, toggles
-/// that start on; 4, the keyboard and numpad styles.
-pub const FORMAT: u32 = 4;
+/// that start on; 4, the keyboard and numpad styles; 5, the overlay font.
+pub const FORMAT: u32 = 5;
 pub const EXTENSION: &str = "padpack";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -37,6 +37,9 @@ pub struct Pack {
     pub keyboard_style: Option<OverlayStyle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub numpad_style: Option<OverlayStyle>,
+    /// The font of this game's overlays, menus and keyboards, if the author set one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overlay_font: Option<String>,
 }
 
 /// What a pack says about itself.
@@ -120,6 +123,7 @@ impl Pack {
             layers: self.layers.clone(),
             keyboard_style: self.keyboard_style.clone(),
             numpad_style: self.numpad_style.clone(),
+            overlay_font: self.overlay_font.clone(),
         }
     }
 
@@ -364,6 +368,7 @@ pub fn export(game: &Game, shared: &Shared, info: &PackInfo) -> Export {
         layers: pack_game.layers,
         keyboard_style: pack_game.keyboard_style,
         numpad_style: pack_game.numpad_style,
+        overlay_font: pack_game.overlay_font,
     };
     Export { pack, pulled_in, dangling: dangling.into_iter().collect(), features }
 }
@@ -621,6 +626,7 @@ pub fn apply(config: &mut Config, plan: &Plan, choices: &Choices) -> String {
             let old = &config.games[i];
             game.keyboard_style = game.keyboard_style.or_else(|| old.keyboard_style.clone());
             game.numpad_style = game.numpad_style.or_else(|| old.numpad_style.clone());
+            game.overlay_font = game.overlay_font.or_else(|| old.overlay_font.clone());
             config.games[i] = game;
         }
         None => config.games.push(game),
@@ -815,6 +821,15 @@ mod tests {
         // ("Heal" is shared rather than the game's own, so it isn't the source's to copy.)
         let needs = dependencies(&config.games[0], ItemKind::Layer, "Hotkeys", |_, _| false);
         assert_eq!(needs, [(ItemKind::Layer, "Hotkeys".to_string()), (ItemKind::Layer, "Deeper".to_string())]);
+    }
+
+    #[test]
+    fn the_overlay_font_travels_in_packs() {
+        let mut config = setup();
+        config.games[0].overlay_font = Some("Comfortaa".into());
+        let out = export(&config.games[0], &config.shared, &draft(&config.games[0], false));
+        let pack = parse(&out.pack.to_toml().unwrap()).unwrap();
+        assert_eq!(pack.to_game().overlay_font.as_deref(), Some("Comfortaa"));
     }
 
     #[test]

@@ -56,6 +56,9 @@ pub enum OverlayView {
 pub struct OverlayFrame {
     pub info: Vec<crate::info::InfoView>,
     pub active: Option<OverlayView>,
+    /// The font everything here is drawn in; the system's when unset.
+    #[serde(default)]
+    pub font: Option<String>,
 }
 
 impl OverlayFrame {
@@ -379,8 +382,11 @@ mod ui {
 
     pub fn run() -> anyhow::Result<()> {
         let (anchor, size) = idle();
-        iced_layershell::application(boot, namespace, update, view)
-            .style(|_, _| iced::theme::Style { background_color: Color::TRANSPARENT, text_color: Color::WHITE })
+        let app = iced_layershell::application(boot, namespace, update, view)
+            .style(|_, _| iced::theme::Style { background_color: Color::TRANSPARENT, text_color: Color::WHITE });
+        crate::font::BUNDLED
+            .iter()
+            .fold(app, |app, b| app.font(b.bytes))
             .subscription(subscription)
             .settings(Settings {
                 layer_settings: LayerShellSettings {
@@ -454,18 +460,19 @@ mod ui {
         if state.frame.is_empty() {
             return space().into();
         }
+        let font = crate::font::resolve(state.frame.font.as_deref());
         // Info overlays sharing a spot stack up there; the keyboard or a menu goes on top.
         let mut layers: Vec<Element<'_, Message>> = Vec::new();
         for spot in crate::config::ScreenPosition::GRID {
             let here: Vec<_> = state.frame.info.iter().filter(|v| v.style.position == spot).collect();
             if let Some(first) = here.first() {
-                let panels = column(here.iter().map(|v| draw::info_panel(v))).spacing(12);
+                let panels = column(here.iter().map(|v| draw::info_panel(v, font))).spacing(12);
                 layers.push(draw::place(panels.into(), &first.style));
             }
         }
         match &state.frame.active {
-            Some(OverlayView::Keyboard(k)) => layers.push(draw::place(draw::keyboard_panel(k), &k.style)),
-            Some(OverlayView::Menu(m)) => layers.push(draw::place(draw::menu_panel(m), &m.style)),
+            Some(OverlayView::Keyboard(k)) => layers.push(draw::place(draw::keyboard_panel(k, font), &k.style)),
+            Some(OverlayView::Menu(m)) => layers.push(draw::place(draw::menu_panel(m, font), &m.style)),
             None => {}
         }
         stack(layers).into()
@@ -482,6 +489,7 @@ pub mod draw {
         alignment::{Horizontal, Vertical},
         widget::{column, container, pin, progress_bar, row, space, stack, text},
     };
+    use iced::Font;
 
     use super::KeyboardView;
     use crate::{
@@ -496,9 +504,10 @@ pub mod draw {
     /// Distance from the screen edge for edge and corner positions.
     const EDGE_MARGIN: f32 = 40.0;
 
-    /// Resolved colors for one overlay.
+    /// Resolved colors and font for one overlay.
     #[derive(Clone, Copy)]
     pub struct Colors {
+        font: Font,
         background: Color,
         background_text: Color,
         muted: Color,
@@ -524,6 +533,7 @@ pub mod draw {
         fn faded(self, opacity: f32) -> Colors {
             let f = |c: Color| Color { a: c.a * opacity.clamp(0.0, 1.0), ..c };
             Colors {
+                font: self.font,
                 background: f(self.background),
                 background_text: f(self.background_text),
                 muted: f(self.muted),
@@ -535,12 +545,13 @@ pub mod draw {
         }
     }
 
-    fn colors(style: &OverlayStyle) -> Colors {
+    fn colors(style: &OverlayStyle, font: Font) -> Colors {
         let background = paint(&style.background, [0x16, 0x18, 0x1c]);
         let item = paint(&style.items, [0x30, 0x34, 0x3c]);
         let selected = paint(&style.selected, [0x2f, 0x5d, 0xb0]);
         let background_text = text_on(background);
         Colors {
+            font,
             background,
             background_text,
             muted: Color { a: 0.75, ..background_text },
@@ -588,8 +599,8 @@ pub mod draw {
     }
 
     /// An info overlay: its cells in a grid, columns as wide as their widest cell.
-    pub fn info_panel<'a, M: 'a>(v: &InfoView) -> Element<'a, M> {
-        let c = colors(&v.style).faded(v.opacity);
+    pub fn info_panel<'a, M: 'a>(v: &InfoView, font: Font) -> Element<'a, M> {
+        let c = colors(&v.style, font).faded(v.opacity);
         let s = v.style.scale.clamp(0.5, 2.0);
         let line = 30.0 * s;
         let columns = v.rows.iter().map(Vec::len).max().unwrap_or(0);
@@ -612,7 +623,7 @@ pub mod draw {
         let mut line = row![].spacing(2.0 * s).align_y(Alignment::Center);
         for segment in segments {
             line = line.push(match segment {
-                Segment::Text(t) => Element::from(text(t.clone()).size(16.0 * s).color(c.background_text)),
+                Segment::Text(t) => Element::from(text(t.clone()).font(c.font).size(16.0 * s).color(c.background_text)),
                 Segment::Glyph { label, fill, round } => glyph(label, *fill, *round, c, s, opacity),
             });
         }
@@ -628,7 +639,7 @@ pub mod draw {
         };
         let size = 24.0 * s;
         let disc = round && label.chars().count() <= 2;
-        let body = container(text(label.to_string()).size(13.0 * s).color(fg));
+        let body = container(text(label.to_string()).font(c.font).size(13.0 * s).color(fg));
         let body = if disc {
             body.center_x(size).center_y(size)
         } else {
@@ -647,8 +658,8 @@ pub mod draw {
     }
 
     #[expect(clippy::too_many_lines, reason = "predates the size lints")]
-    pub fn keyboard_panel<'a, M: 'a>(v: &KeyboardView) -> Element<'a, M> {
-        let c = colors(&v.style);
+    pub fn keyboard_panel<'a, M: 'a>(v: &KeyboardView, font: Font) -> Element<'a, M> {
+        let c = colors(&v.style, font);
         let s = v.style.scale.clamp(0.5, 2.0);
         let numpad = v.layout == crate::keyboard::Layout::Numpad;
         // Numpad keys are fewer, so bigger.
@@ -675,7 +686,7 @@ pub mod draw {
                 } else {
                     (c.item, c.item_text, Color { a: 0.12, ..c.item_text })
                 };
-                let cap = container(text(key.label).size(if selected { label_size + 2.0 } else { label_size } * s).color(fg))
+                let cap = container(text(key.label).font(c.font).size(if selected { label_size + 2.0 } else { label_size } * s).color(fg))
                     .center_x(width)
                     .center_y(unit)
                     .style(move |_| container::Style {
@@ -687,7 +698,7 @@ pub mod draw {
             }
             rows = rows.push(line);
         }
-        let hint = |t: &'static str| text(t).size(14.0 * s).color(c.background_text);
+        let hint = |t: &'static str| text(t).font(c.font).size(14.0 * s).color(c.background_text);
         let (legend, width): (Element<'a, M>, f32) = if numpad {
             let legend = column![
                 row![hint("A  press"), hint("X  backspace")].spacing(14.0 * s),
@@ -718,12 +729,21 @@ pub mod draw {
         container(body).padding(16.0 * s).style(panel_style(c)).into()
     }
 
+    /// How an item's text is set.
+    #[derive(Clone, Copy)]
+    struct Face {
+        size: f32,
+        fg: Color,
+        font: Font,
+    }
+
     /// An item's label with its button badge and a ▸ for submenus.
-    fn item_text<'a, M: 'a>(label: &str, button: Option<&str>, submenu: bool, size: f32, fg: Color) -> Element<'a, M> {
+    fn item_text<'a, M: 'a>(label: &str, button: Option<&str>, submenu: bool, face: Face) -> Element<'a, M> {
+        let Face { size, fg, font } = face;
         let mut line = row![].spacing(size * 0.5).align_y(Alignment::Center);
         if let Some(b) = button.filter(|b| !b.is_empty()) {
             line = line.push(
-                container(text(b.to_string()).size(size - 2.0).color(Color::BLACK))
+                container(text(b.to_string()).font(font).size(size - 2.0).color(Color::BLACK))
                     .padding([1.0, size * 0.4])
                     .style(|_| container::Style {
                         background: Some(Color::from_rgb(0.85, 0.87, 0.9).into()),
@@ -732,15 +752,15 @@ pub mod draw {
                     }),
             );
         }
-        line = line.push(text(label.to_string()).size(size).color(fg));
+        line = line.push(text(label.to_string()).font(font).size(size).color(fg));
         if submenu {
-            line = line.push(text("▸").size(size).color(Color { a: 0.7, ..fg }));
+            line = line.push(text("▸").font(font).size(size).color(Color { a: 0.7, ..fg }));
         }
         line.into()
     }
 
-    pub fn menu_panel<'a, M: 'a>(m: &MenuView) -> Element<'a, M> {
-        let c = colors(&m.style);
+    pub fn menu_panel<'a, M: 'a>(m: &MenuView, font: Font) -> Element<'a, M> {
+        let c = colors(&m.style, font);
         let s = m.style.scale.clamp(0.5, 2.0);
         let body: Element<'a, M> = match m.kind {
             MenuKind::Radial { .. } => radial(m, c, s),
@@ -751,9 +771,9 @@ pub mod draw {
         let depth = if m.depth > 0 { format!("  ({} deep)", m.depth + 1) } else { String::new() };
         container(
             column![
-                text(format!("{}{depth}", m.title)).size(20.0 * s).color(c.background_text),
+                text(format!("{}{depth}", m.title)).font(c.font).size(20.0 * s).color(c.background_text),
                 body,
-                text(m.hint.clone()).size(13.0 * s).color(c.muted),
+                text(m.hint.clone()).font(c.font).size(13.0 * s).color(c.muted),
             ]
             .spacing(14.0 * s)
             .align_x(Alignment::Center),
@@ -767,7 +787,7 @@ pub mod draw {
         let item = &m.items[i];
         let selected = m.selected == Some(i);
         let fg = if selected { c.selected_text } else { c.item_text };
-        (item_text(&item.label, item.button.as_deref(), item.submenu, size, fg), selected)
+        (item_text(&item.label, item.button.as_deref(), item.submenu, Face { size, fg, font: c.font }), selected)
     }
 
     fn radial<'a, M: 'a>(m: &MenuView, c: Colors, s: f32) -> Element<'a, M> {
@@ -790,7 +810,7 @@ pub mod draw {
             _ => "RS",
         };
         let hub = 48.0 * s;
-        let center = container(text(stick).size(16.0 * s).color(c.item_text))
+        let center = container(text(stick).font(c.font).size(16.0 * s).color(c.item_text))
             .center_x(hub)
             .center_y(hub)
             .style(move |_: &iced::Theme| container::Style {
@@ -825,7 +845,7 @@ pub mod draw {
         let (w, h) = (190.0 * s, 52.0 * s);
         let slot = |i: usize| -> Element<'a, M> {
             match m.items.get(i).filter(|item| !item.label.is_empty()) {
-                Some(item) => container(item_text(&item.label, item.button.as_deref(), item.submenu, 16.0 * s, c.item_text))
+                Some(item) => container(item_text(&item.label, item.button.as_deref(), item.submenu, Face { size: 16.0 * s, fg: c.item_text, font: c.font }))
                     .center_x(w)
                     .center_y(h)
                     .style(cell_style(c, false))
@@ -855,7 +875,7 @@ pub mod draw {
     fn carousel<'a, M: 'a>(m: &MenuView, c: Colors, s: f32) -> Element<'a, M> {
         let n = m.items.len();
         let selected = m.selected.unwrap_or(0);
-        let arrow = |t: &'static str| text(t).size(22.0 * s).color(c.muted);
+        let arrow = |t: &'static str| text(t).font(c.font).size(22.0 * s).color(c.muted);
         let mut line = row![arrow("◀")].spacing(12.0 * s).align_y(Alignment::Center);
         // The selected item in the middle, with up to two neighbors on each side.
         let shown = n.min(5) as i32;
@@ -865,7 +885,7 @@ pub mod draw {
             let fg = if big { c.selected_text } else { c.item_text };
             let item = &m.items[i];
             line = line.push(
-                container(item_text(&item.label, None, item.submenu, if big { 19.0 } else { 14.0 } * s, fg))
+                container(item_text(&item.label, None, item.submenu, Face { size: if big { 19.0 } else { 14.0 } * s, fg, font: c.font }))
                     .center_x(if big { 170.0 } else { 120.0 } * s)
                     .center_y(if big { 80.0 } else { 60.0 } * s)
                     .style(cell_style(c, big)),

@@ -575,7 +575,7 @@ impl Daemon {
             .iter()
             .map(|(o, opacity)| crate::info::InfoView { opacity: *opacity, ..crate::info::resolve(o, &values) })
             .collect();
-        OverlayFrame { info, active: self.overlay_view() }
+        OverlayFrame { info, active: self.overlay_view(), font: self.config.active_font().map(str::to_string) }
     }
 
     /// The info overlays to draw now and how visible each is: steady ones fully, and those
