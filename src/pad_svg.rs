@@ -36,8 +36,10 @@ pub const LABEL_COLUMN: f32 = MARGIN - 6.0;
 /// Where the right label column starts.
 pub const RIGHT_COLUMN_X: f32 = MARGIN + 426.0;
 const LABEL_SPACING: f32 = 29.0;
-/// Longest label text, so it fits its column.
-const LABEL_CHARS: usize = 16;
+/// Font size of label text, in logical pixels.
+pub const LABEL_TEXT_SIZE: f32 = 11.0;
+/// Room for label text inside its pill: the column less the pill's padding and border.
+const LABEL_TEXT_WIDTH: f32 = LABEL_COLUMN - 14.0;
 
 const FACE_CENTER: (f32, f32) = (302.0, 118.0);
 struct FaceButton {
@@ -206,16 +208,42 @@ pub fn place_labels(labels: &[(Spot, String)]) -> Vec<PlacedLabel> {
         let mut row = 0.0;
         for (spot, (ax, ay)) in anchors {
             let Some(label) = text_for(*spot) else { continue };
-            let mut text: String = label.chars().take(LABEL_CHARS).collect();
-            if label.chars().count() > LABEL_CHARS {
-                text.pop();
-                text.push('…');
-            }
-            placed.push(PlacedLabel { text, y: 10.0 + row * LABEL_SPACING, right, anchor: (ax + MARGIN, *ay) });
+            placed.push(PlacedLabel { text: fit_label(label), y: 10.0 + row * LABEL_SPACING, right, anchor: (ax + MARGIN, *ay) });
             row += 1.0;
         }
     }
     placed
+}
+
+/// Shortens `label` with an ellipsis so it fits on one line of its column.
+fn fit_label(label: &str) -> String {
+    let budget = LABEL_TEXT_WIDTH / LABEL_TEXT_SIZE;
+    if label.chars().map(glyph_width).sum::<f32>() <= budget {
+        return label.to_string();
+    }
+    let mut used = glyph_width('…');
+    let mut text: String = label
+        .chars()
+        .take_while(|&c| {
+            used += glyph_width(c);
+            used <= budget
+        })
+        .collect();
+    text.truncate(text.trim_end().len());
+    text.push('…');
+    text
+}
+
+/// Rough advance width of `c` in ems (measured on Noto Sans), erring wide so a label never
+/// needs a second line.
+fn glyph_width(c: char) -> f32 {
+    match c {
+        'i' | 'j' | 'l' | '.' | ',' | ':' | ';' | '\'' | '!' | ' ' => 0.32,
+        'f' | 't' | 'r' | 'I' | '(' | ')' | '[' | ']' | '“' | '”' | '‘' | '’' | '"' | '-' => 0.45,
+        'm' | 'w' | 'M' | 'W' | '@' | '%' | '…' => 0.95,
+        c if c.is_ascii_lowercase() => 0.62,
+        _ => 0.8,
+    }
 }
 
 /// Button letters and trigger names, drawn by the GUI over the SVG.
@@ -304,11 +332,18 @@ mod tests {
         let placed = place_labels(&labels);
         let left: Vec<&str> = placed.iter().filter(|l| !l.right).map(|l| l.text.as_str()).collect();
         let right: Vec<&str> = placed.iter().filter(|l| l.right).map(|l| l.text.as_str()).collect();
-        assert_eq!(left, ["A very long map…", "Up"]);
+        assert_eq!(left, ["A very long m…", "Up"]);
         assert_eq!(right, ["Left click"]);
         // Rows are packed: the second label in a column sits one row below the first.
         let ys: Vec<f32> = placed.iter().filter(|l| !l.right).map(|l| l.y).collect();
         assert_eq!(ys[1] - ys[0], LABEL_SPACING);
+    }
+
+    #[test]
+    fn wide_letters_are_cut_sooner_than_narrow_ones() {
+        assert_eq!(fit_label("Menu “Augmentations”"), "Menu “Augme…");
+        assert_eq!(fit_label("Hold: fill all"), "Hold: fill all");
+        assert_eq!(fit_label("Keypad PLUS"), "Keypad PLUS");
     }
 
     #[test]

@@ -208,7 +208,8 @@ pub(super) fn controller_drawing<'a>(input: Option<&InputSnapshot>, labels_from:
         layers.push(pin(letter).x(o.x - 12.0).y(o.y - 10.0).into());
     }
     for l in pad_svg::place_labels(&labels) {
-        let pill = container(text(l.text).size(11).color(Color::from_rgb8(0xe6, 0xed, 0xf3)))
+        let label = text(l.text).size(pad_svg::LABEL_TEXT_SIZE).wrapping(text::Wrapping::None);
+        let pill = container(label.color(Color::from_rgb8(0xe6, 0xed, 0xf3)))
             .padding([2, 6])
             .style(|_: &iced::Theme| container::Style {
                 background: Some(Color::from_rgb8(0x1d, 0x20, 0x26).into()),
