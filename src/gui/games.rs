@@ -25,29 +25,6 @@ impl fmt::Display for DefaultChoice {
     }
 }
 
-/// An entry in a keyboard-profile list: a keyboard profile, or none (no keyboard remapping).
-#[derive(Debug, Clone, PartialEq)]
-pub(super) struct KeyboardChoice(pub(super) Option<ProfileRef>);
-
-impl KeyboardChoice {
-    /// "Off", then every keyboard profile.
-    pub(super) fn all(config: &Config) -> Vec<KeyboardChoice> {
-        let profiles = config.all_games().flat_map(|(key, g)| {
-            g.profiles.iter().filter(|p| p.kind == crate::config::ProfileKind::Keyboard).map(move |p| KeyboardChoice(Some(ProfileRef::new(key, &p.name))))
-        });
-        std::iter::once(KeyboardChoice(None)).chain(profiles).collect()
-    }
-}
-
-impl fmt::Display for KeyboardChoice {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.0 {
-            Some(at) => at.fmt(f),
-            None => f.write_str("(off)"),
-        }
-    }
-}
-
 /// The motion-sensor udev rule shipped in dist/, built in so the command works from anywhere.
 pub(super) const MOTION_RULE_FILE: &str = include_str!("../../dist/70-controller-app-motion.rules");
 
@@ -134,7 +111,6 @@ impl App {
             }
             Message::SetAutoSwitch(on) => self.config.auto_switch.enabled = on,
             Message::SetDefaultProfile(choice) => self.config.auto_switch.default_profile = choice.0,
-            Message::SetDefaultKeyboardProfile(choice) => self.config.auto_switch.default_keyboard_profile = choice.0,
             Message::AddRule(window) => {
                 let profile = self.profile().map(|p| p.name.clone()).unwrap_or_default();
                 let rule = match window {
@@ -484,7 +460,7 @@ impl App {
         defaults.extend(
             self.config
                 .all_games()
-                .flat_map(|(key, g)| g.profiles.iter().filter(|p| p.kind.is_gamepad()).map(move |p| DefaultChoice(Some(ProfileRef::new(key, &p.name))))),
+                .flat_map(|(key, g)| g.profiles.iter().map(move |p| DefaultChoice(Some(ProfileRef::new(key, &p.name))))),
         );
         let default = DefaultChoice(auto.default_profile.clone());
         section(
@@ -496,19 +472,6 @@ impl App {
                     space::horizontal(),
                     text("Outside games use"),
                     dropdown(defaults, Some(default), Message::SetDefaultProfile).width(280),
-                ]
-                .spacing(12)
-                .align_y(Alignment::Center)
-                .into(),
-                row![
-                    space::horizontal(),
-                    text("Outside games use keyboard profile"),
-                    dropdown(
-                        KeyboardChoice::all(&self.config),
-                        Some(KeyboardChoice(auto.default_keyboard_profile.clone())),
-                        Message::SetDefaultKeyboardProfile,
-                    )
-                    .width(280),
                 ]
                 .spacing(12)
                 .align_y(Alignment::Center)

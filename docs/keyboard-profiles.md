@@ -1,12 +1,12 @@
 # Keyboard profiles (remapping keyboard and mouse)
 
-Status: stages 1 and 2 implemented (2026-10-07): profile kinds, two active profiles, grabbing, key and mouse-button remaps, the panic chord and the WASD → ESDF template. Stages 3 and 4 are not.
+Status: all four stages implemented (2026-10-07), except menus, the on-screen keyboard and numpad on keyboard inputs (a controller drives them), layers that act across devices (a layer is on for the device that turned it on), and the per-key stick amount (a walk modifier): the pad template uses Shift as L3 instead. Stage 4 added gestures, combos, toggle, turbo, macros, next profile, layers and overlays for keyboard inputs. Stages 1–3: profile kinds, grabbing, key and mouse-button remaps, the panic chord, gamepad outputs, mouse movement as a stick or scaled pointer, wheel and movement-direction inputs, and the ESDF layout and keyboard-to-pad templates. Stage 4 is not, and neither is the per-key stick amount (a walk modifier): the pad template uses Shift as L3 instead.
 
 ## Goals
 
 1. **Play controller-only games with a keyboard and mouse.** Keys and mouse motion drive a virtual
    Xbox-style pad.
-2. **Rebind keys without touching game settings.** For example WASD → ESDF, applied system-wide or
+2. **Rebind keys without touching game settings.** For example ESDF layout, applied system-wide or
    per game through the existing auto-switch rules.
 
 ## Decisions at a glance
@@ -18,14 +18,14 @@ Status: stages 1 and 2 implemented (2026-10-07): profile kinds, two active profi
 | Inputs | Keyboard keys, mouse buttons, wheel and mouse motion. All attached keyboards and mice count as one combined keyboard and mouse. |
 | Outputs | Keys, mouse buttons, gamepad buttons and sticks, and every other action (macros, menus, layers, overlays, next profile). |
 | Parity | Anything a gamepad input can be mapped to, a keyboard or mouse input can be too: Toggle, Turbo, combos, gestures, zones, layers. |
-| Active profiles | Two at once: one gamepad profile and one keyboard profile. They are switched independently. |
+| Active profile | One at a time, of either kind. A keyboard profile leaves physical pads as pass-through; a gamepad profile leaves keyboards and mice alone. |
 | Grab | Keyboards and mice are grabbed only while a keyboard profile is active. A gamepad profile leaves them untouched. |
 | Unmapped keys | Per-profile setting: pass through (default) or block. |
 | Reserved keys | Never remappable, always passed through: both Super/Meta keys, Ctrl+Alt+Fn VT switches. |
 | Panic chord | Chord set in Settings, never blank (default Ctrl+Alt+Shift+Esc) that releases the grab and disables remapping. |
 | Switching | Auto-switch rules (either kind), and a "Next profile" action on any key. Next profile cycles profiles of the same type only. |
 | Physical gamepads | Unaffected by a keyboard profile; they keep running their gamepad profile. |
-| Templates | WASD → ESDF, and Keyboard → Xbox pad. |
+| Templates | ESDF layout, and Keyboard → Xbox pad. |
 
 ## Profile type
 
@@ -40,22 +40,17 @@ Status: stages 1 and 2 implemented (2026-10-07): profile kinds, two active profi
 
 ## Active profile per device class
 
-Today one profile is active at a time. This becomes two slots:
+One profile is active at a time, of either kind (an early design had a slot per kind; it
+confused which one a toast or rule meant, so it was dropped).
 
-- **Gamepad slot**: what runs for physical gamepads, as now.
-- **Keyboard slot**: what runs for the keyboard and mouse. Empty means no remapping and no grab.
-
-Rules and actions:
-
-- An auto-switch rule that points at a profile sets the slot for that profile's kind and leaves the
-  other slot alone. When the game loses focus, each slot falls back to its own default (Settings:
-  a default gamepad profile as now, plus a default keyboard profile that may be "none").
-- `controller_app profile <name>` sets the slot of the named profile's kind.
-- "Next profile" on a keyboard input cycles the keyboard profiles of the active game; on a gamepad
-  input it cycles gamepad profiles, as now.
-- The Overview shows both active profiles.
+- While a keyboard profile is active it also runs on physical pads, which pass through unchanged
+  (its pad mappings are the pass-through ones). Keyboards and mice are grabbed only then.
+- An auto-switch rule that points at a profile activates it. When the game loses focus, the
+  default profile (Settings) comes back.
+- `controller_app profile <name>` activates the named profile, whatever its kind.
+- "Next profile" cycles the profiles of the active game that share the active one's kind.
 - Layers, macros, menus and info overlays belong to the game as before. Layers have no kind: a layer
-  overrides whatever inputs it names, in either slot, and any input can turn one on. The layer editor
+  overrides whatever inputs it names, for either kind, and any input can turn one on. The layer editor
   is shown over a profile of either kind.
 
 ## Inputs
@@ -106,8 +101,8 @@ only when the pad is already part of the daemon (it is today), so no change ther
 
 The keyboard is the user's main way to recover from a bug, so this section is deliberately strict.
 
-- Devices are grabbed (`EVIOCGRAB`) only while the keyboard slot holds a profile. Switching to none,
-  or to a gamepad profile in the other slot, releases them. Hotplug adds and removes devices while
+- Devices are grabbed (`EVIOCGRAB`) only while the active profile is a keyboard one. Switching to a gamepad
+  profile releases them. Hotplug adds and removes devices while
   active.
 - Output goes through the existing virtual keyboard and mouse. The daemon never grabs its own
   devices (the `VIRTUAL_PREFIX` rule stays).
@@ -116,7 +111,7 @@ The keyboard is the user's main way to recover from a bug, so this section is de
   map them or use them in combos. A pass-through key is forwarded as-is, in order with the
   remapped ones, with no Toggle, Turbo, gesture or combo wait.
 - **Panic chord**: Ctrl+Alt+Shift+Esc by default, changeable in Settings but never blank. It releases every grabbed
-  device and puts the keyboard slot in a *disabled* state (the same as the remapping switch in the
+  device and puts remapping in a *disabled* state (the same as the remapping switch in the
   header), shows a toast, and releases all keys the daemon is holding. Enabling remapping again
   from the GUI or `controller_app enable` brings it back.
 - All held output is released when the profile changes or the daemon stops, as for pad profiles.
@@ -130,7 +125,7 @@ The keyboard is the user's main way to recover from a bug, so this section is de
 
 Each keyboard profile has the setting **Other keys**: *Pass through* (default) or *Block*.
 
-- Pass through: any key without a mapping is forwarded unchanged. A WASD → ESDF profile is just
+- Pass through: any key without a mapping is forwarded unchanged. A ESDF layout profile is just
   four rows. Mouse movement, wheel and unmapped buttons are forwarded the same way.
 - Block: unmapped keys are swallowed, for controller-only games where stray keys are unwanted.
   Reserved keys still pass through.
@@ -161,15 +156,16 @@ handled as pads.
   remapped keys highlighted and labelled with their action.
 - Validation follows the existing checks: unknown keys, missing macros, incomplete combos,
   mapping a reserved key, and two rows for the same key all block saving.
-- The Settings page gets the default keyboard profile (may be "none") and the panic chord.
+- The Settings page gets the panic chord.
 
 ## Templates
 
 Offered under "New from template…" with the Keyboard type:
 
-- **WASD → ESDF**: W→E, A→S, S→D, D→F. The original E, S, D and F keys are set to *Disabled*, so the
-  game doesn't see both the old and the new key on them. Everything else passes through. The
-  template's description says so, and the user can adapt it for their own layout.
+- **ESDF layout**: for playing a WASD game with the hand on ESDF. The three letter rows (top, home
+  and bottom) shift one key to the right: E sends W, S sends A, D sends S, F sends D, G sends F,
+  and so on. The key at the left end of each row (Q, A, Z) sends the row's last key (backslash,
+  apostrophe, slash), so no key is lost. Everything else passes through.
 - **Keyboard → Xbox pad**: W/A/S/D → left stick (Shift = half deflection for walking), mouse motion → right stick,
   Left/Right click → RT/LT, Space → A, E → X, R → Y, Q/F → LB/RB, Ctrl → B,
   Tab/Esc → Select/Start, 1–4 → D-pad, other keys blocked.
@@ -186,12 +182,12 @@ Offered under "New from template…" with the Keyboard type:
 
 ## Implementation stages
 
-1. **Model and editor shell.** `kind` on `Profile` with the serde default; type picker; two active
-   slots in the daemon state and IPC (`status`, `profile`); Overview shows both. Keyboard profiles
+1. **Model and editor shell.** `kind` on `Profile` with the serde default; type picker; one active
+   profile in the daemon state and IPC (`status`, `profile`). Keyboard profiles
    are empty and do nothing yet.
 2. **Capture and key/button remaps.** Keyboard and mouse discovery and grab/release (`input.rs`,
    `daemon.rs`), reserved keys, panic chord, Other keys setting, key → key and key → mouse-button
-   remaps through the engine. This stage alone covers WASD → ESDF; ship that template here.
+   remaps through the engine. This stage alone covers ESDF layout; ship that template here.
 3. **Pad outputs and mouse motion.** Keys → pad buttons and stick directions, mouse motion → stick
    and mouse → mouse scaling, wheel and mouse direction inputs. Ship the Keyboard → Xbox pad template.
 4. **Action parity.** Gestures, combos, Toggle, Turbo, zones where they apply, layers, macros,

@@ -45,7 +45,7 @@ use actions::*;
 use checks::*;
 use games::*;
 use items::*;
-use keymap::{KbInput, KbKind};
+use keymap::{KbInput, MotionEdit};
 use layers::IndicatorChoice;
 use packs::{BrowseSource, Dialog, PackField};
 use profile::*;
@@ -243,8 +243,6 @@ enum Message {
     SetIgnored(String, bool),
     SetAutoSwitch(bool),
     SetDefaultProfile(DefaultChoice),
-    SetDefaultKeyboardProfile(KeyboardChoice),
-    ActivateKeyboard(KeyboardChoice),
     AddRule(Option<WindowInfo>),
     RemoveRule(usize),
     SetRuleKind(usize, RuleKind),
@@ -343,10 +341,20 @@ enum Message {
     KbOtherKeys(crate::config::OtherKeys),
     KbAddMouse,
     KbRemove(KbInput),
-    KbKind(KbInput, KbKind),
-    KbKeysText(KbInput, String),
-    KbMouseTarget(KbInput, MouseButton),
+    KbGestureSet(String, GestureKind, Option<ButtonAction>),
+    KbGestureDrop(String),
+    KbGestureMouse(MouseButton),
+    KbAddCombo,
+    KbRemoveCombo(usize),
+    KbComboMouse(usize, MouseButton, bool),
+    KbComboAction(usize, ButtonAction),
+    KbSetAction(KbInput, ButtonAction),
+    KbAddWheel,
+    KbAddMotion,
+    KbMotion(MotionEdit),
     KbMouseSource(MouseButton, MouseButton),
+    KbWheelSource(WheelDirection, WheelDirection),
+    KbMotionSource(crate::config::MotionDirection, crate::config::MotionDirection),
     PickerKey(&'static str),
     PickerClear,
     PickerClose { apply: bool },
@@ -631,10 +639,8 @@ impl App {
                 let active = ProfileRef { game: status.active_game.clone(), profile: status.active_profile.clone() };
                 self.saved.enabled = status.enabled;
                 self.saved.active = active.clone();
-                self.saved.active_keyboard = status.active_keyboard.clone();
                 self.config.enabled = status.enabled;
                 self.config.active = follow_renames(&self.renames, active);
-                self.config.active_keyboard = status.active_keyboard.clone().map(|at| follow_renames(&self.renames, at));
                 self.status = Some(status);
             }
             Message::StatusLoaded(Err(_)) => self.status = None,
@@ -656,10 +662,6 @@ impl App {
                     return Task::batch([call_ok(Request::Activate(at)), Task::done(Message::Poll)]);
                 }
                 self.message = Some(("Save the new profile before activating it.".into(), true));
-            }
-            Message::ActivateKeyboard(KeyboardChoice(Some(at))) => return self.update(Message::ActivateProfile(at)),
-            Message::ActivateKeyboard(KeyboardChoice(None)) => {
-                return Task::batch([call_ok(Request::DeactivateKeyboard), Task::done(Message::Poll)]);
             }
             Message::Done(Ok(())) => return Task::done(Message::Poll),
             Message::Done(Err(e)) => self.message = Some((e, true)),
@@ -748,9 +750,8 @@ impl App {
         let profiles: Vec<ProfileRef> = self
             .saved
             .all_games()
-            .flat_map(|(key, g)| g.profiles.iter().filter(|p| p.kind.is_gamepad()).map(move |p| ProfileRef::new(key, &p.name)))
+            .flat_map(|(key, g)| g.profiles.iter().map(move |p| ProfileRef::new(key, &p.name)))
             .collect();
-        let keyboard = KeyboardChoice::all(&self.saved);
         let running = self.status.is_some();
 
         let mut header = column![
@@ -768,15 +769,6 @@ impl App {
                 text("Active profile"),
                 dropdown(profiles, Some(self.saved.active.clone()), Message::ActivateProfile).width(280),
             ]
-            .extend((keyboard.len() > 1).then(|| -> Element<'_, Message> {
-                row![
-                    text("Keyboard"),
-                    dropdown(keyboard, Some(KeyboardChoice(self.saved.active_keyboard.clone())), Message::ActivateKeyboard).width(200),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center)
-                .into()
-            }))
             .spacing(12)
             .align_y(Alignment::Center),
         ]

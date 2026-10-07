@@ -16,8 +16,16 @@ pub(super) enum KeyField {
     StickDir { stick: Stick, dir: usize },
     /// A keyboard profile: the key an existing row remaps.
     KbSource(KbInput),
-    /// A keyboard profile: what an input becomes.
-    KbTarget(KbInput),
+    /// A keyboard profile: what an input becomes, reached through these `Multi` list indices.
+    KbTarget(KbInput, Vec<usize>),
+    /// A keyboard profile: a gesture's action of a key or mouse button (by name).
+    KbGesture(String, GestureKind, Vec<usize>),
+    /// A keyboard profile: a key to give gestures, not in the list yet.
+    KbGestureNew,
+    /// A keyboard profile: the action of the combo at this index.
+    KbCombo(usize, Vec<usize>),
+    /// A keyboard profile: the keys of the combo at this index.
+    KbComboKeys(usize),
     /// A keyboard profile: a key to remap, not in the list yet.
     KbNew,
     /// Settings: the chord that turns remapping off.
@@ -25,6 +33,11 @@ pub(super) enum KeyField {
 }
 
 impl KeyField {
+    /// Whether the keys picked go into a keyboard profile (or the panic chord), not a gamepad one.
+    pub(super) fn is_keyboard_profile(&self) -> bool {
+        !matches!(self, KeyField::Action { .. } | KeyField::StickDir { .. })
+    }
+
     pub(super) fn root(target: Target) -> Self {
         KeyField::Action { target, path: Vec::new() }
     }
@@ -36,9 +49,18 @@ impl KeyField {
                 path.push(index);
                 KeyField::Action { target: *target, path }
             }
+            KeyField::KbTarget(input, path) => KeyField::KbTarget(input.clone(), with(path, index)),
+            KeyField::KbGesture(name, kind, path) => KeyField::KbGesture(name.clone(), *kind, with(path, index)),
+            KeyField::KbCombo(i, path) => KeyField::KbCombo(*i, with(path, index)),
             other => other.clone(),
         }
     }
+}
+
+fn with(path: &[usize], index: usize) -> Vec<usize> {
+    let mut path = path.to_vec();
+    path.push(index);
+    path
 }
 
 /// Open on-screen keyboard. `single` fields hold one key and close on the first click.
@@ -116,6 +138,7 @@ pub(super) fn summarize(action: &ButtonAction) -> String {
 pub(super) enum ActionKind {
     Disabled,
     Gamepad,
+    PadTrigger,
     Keys,
     Mouse,
     Wheel,
@@ -137,6 +160,7 @@ impl fmt::Display for ActionKind {
         f.write_str(match self {
             ActionKind::Disabled => "Disabled",
             ActionKind::Gamepad => "Gamepad button",
+            ActionKind::PadTrigger => "Gamepad trigger",
             ActionKind::Keys => "Keyboard",
             ActionKind::Mouse => "Mouse button",
             ActionKind::Wheel => "Scroll wheel",
@@ -156,9 +180,10 @@ impl fmt::Display for ActionKind {
 }
 
 /// Every kind, for a top-level action.
-pub(super) const ACTION_KINDS: [ActionKind; 16] = [
+pub(super) const ACTION_KINDS: [ActionKind; 17] = [
     ActionKind::Disabled,
     ActionKind::Gamepad,
+    ActionKind::PadTrigger,
     ActionKind::Keys,
     ActionKind::Mouse,
     ActionKind::Wheel,
@@ -214,6 +239,7 @@ pub(super) const MACRO_STEP_KINDS: &[ActionKind] =
 pub(super) const MULTI_ENTRY_KINDS: &[ActionKind] = &[
     ActionKind::Disabled,
     ActionKind::Gamepad,
+    ActionKind::PadTrigger,
     ActionKind::Keys,
     ActionKind::Mouse,
     ActionKind::Wheel,
@@ -224,6 +250,7 @@ pub(super) const MULTI_ENTRY_KINDS: &[ActionKind] = &[
 pub(super) const TOGGLE_INNER_KINDS: &[ActionKind] = &[
     ActionKind::Disabled,
     ActionKind::Gamepad,
+    ActionKind::PadTrigger,
     ActionKind::Keys,
     ActionKind::Mouse,
     ActionKind::Wheel,
@@ -283,6 +310,7 @@ pub(super) fn action_kind(action: &ButtonAction) -> ActionKind {
     match action {
         ButtonAction::Disabled => ActionKind::Disabled,
         ButtonAction::Gamepad(_) => ActionKind::Gamepad,
+        ButtonAction::PadTrigger(_) => ActionKind::PadTrigger,
         ButtonAction::Keys(_) => ActionKind::Keys,
         ButtonAction::Mouse(_) => ActionKind::Mouse,
         ButtonAction::Wheel(_) => ActionKind::Wheel,
@@ -304,7 +332,7 @@ pub(super) fn action_kind(action: &ButtonAction) -> ActionKind {
 pub(super) fn new_action(k: ActionKind, default_button: Button, current: &ButtonAction, names: &Names) -> ButtonAction {
     // When wrapping in Toggle/Turbo, keep a simple existing action as the thing wrapped.
     let wrappable = match current {
-        ButtonAction::Gamepad(_) | ButtonAction::Keys(_) | ButtonAction::Mouse(_) | ButtonAction::Wheel(_) => {
+        ButtonAction::Gamepad(_) | ButtonAction::PadTrigger(_) | ButtonAction::Keys(_) | ButtonAction::Mouse(_) | ButtonAction::Wheel(_) => {
             Some(current.clone())
         }
         _ => None,
@@ -312,6 +340,7 @@ pub(super) fn new_action(k: ActionKind, default_button: Button, current: &Button
     match k {
         ActionKind::Disabled => ButtonAction::Disabled,
         ActionKind::Gamepad => ButtonAction::Gamepad(default_button),
+        ActionKind::PadTrigger => ButtonAction::PadTrigger(Trigger::Right),
         ActionKind::Keys => ButtonAction::Keys(Vec::new()),
         ActionKind::Mouse => ButtonAction::Mouse(MouseButton::Left),
         ActionKind::Wheel => ButtonAction::Wheel(WheelDirection::Up),
@@ -349,6 +378,7 @@ pub(super) fn action_value<'a>(
         })
         .width(220)
         .into(),
+        ButtonAction::PadTrigger(t) => dropdown([Trigger::Left, Trigger::Right], Some(*t), move |t| on_change(ButtonAction::PadTrigger(t))).width(220).into(),
         ButtonAction::Mouse(m) => dropdown(MouseButton::ALL, Some(*m), move |m| {
             on_change(ButtonAction::Mouse(m))
         })
@@ -645,8 +675,8 @@ impl App {
             }
             return;
         }
-        if matches!(field, KeyField::KbSource(_) | KeyField::KbTarget(_) | KeyField::KbNew | KeyField::PanicChord) {
-            return self.apply_keymap_keys(field, keys);
+        if field.is_keyboard_profile() {
+            return self.apply_keymap_keys(&field, keys);
         }
         let Some(p) = self.profile_mut() else { return };
         match field {
@@ -661,7 +691,6 @@ impl App {
                     *slot = keys.into_iter().next().unwrap_or_default();
                 }
             }
-            KeyField::KbSource(_) | KeyField::KbTarget(_) | KeyField::KbNew | KeyField::PanicChord => {}
             KeyField::Action { target, path } => {
                 let root = match target {
                     Target::Button(b) => Some(p.buttons.entry(b).or_insert(ButtonAction::Disabled)),
@@ -679,6 +708,8 @@ impl App {
                     *action = ButtonAction::Keys(keys);
                 }
             }
+            // Handled above.
+            _ => {}
         }
     }
 

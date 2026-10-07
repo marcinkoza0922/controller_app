@@ -698,6 +698,18 @@ mod tests {
     }
 
     #[test]
+    fn a_keyboard_profiles_shared_macro_comes_along_and_a_missing_one_is_reported() {
+        let mut config = setup();
+        let mut keys = Profile::keyboard("Keys");
+        keys.keyboard.keys.insert("KEY_G".into(), macro_ref("Unused"));
+        keys.keyboard.gestures.insert("KEY_G".into(), crate::config::Gestures { long_press: Some(macro_ref("Absent")), ..Default::default() });
+        config.games[0].profiles.push(keys);
+        let out = export(&config.games[0], &config.shared, &draft(&config.games[0], false));
+        assert!(out.pulled_in.contains(&(ItemKind::Macro, "Unused".to_string())), "{:?}", out.pulled_in);
+        assert!(out.dangling.contains(&"macro \"Absent\"".to_string()), "{:?}", out.dangling);
+    }
+
+    #[test]
     fn keyboard_profiles_need_the_newer_format_and_keep_their_kind() {
         let mut config = setup();
         config.games[0].profiles.push(Profile::keyboard("Keys"));

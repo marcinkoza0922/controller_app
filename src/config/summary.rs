@@ -1,6 +1,6 @@
 //! Short descriptions of buttons and actions, for the settings window and the input log.
 
-use super::{Button, ButtonAction};
+use super::{Button, ButtonAction, Trigger};
 
 impl Button {
     /// A short name on Xbox terms, for one-line summaries.
@@ -39,6 +39,7 @@ impl ButtonAction {
         match self {
             ButtonAction::Disabled => "Disabled".into(),
             ButtonAction::Gamepad(b) => format!("Pad {}", b.short_name()),
+            ButtonAction::PadTrigger(t) => format!("Pad {}", if *t == Trigger::Left { "LT" } else { "RT" }),
             ButtonAction::Keys(keys) if keys.is_empty() => "(no key)".into(),
             ButtonAction::Keys(keys) => keys.iter().map(|k| key_name(k)).collect::<Vec<_>>().join(" + "),
             ButtonAction::Mouse(m) => format!("{m} click"),

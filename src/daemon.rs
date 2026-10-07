@@ -23,10 +23,10 @@ use std::{
 use anyhow::{Context, Result, bail};
 use evdev::Device;
 
-use self::kbm::{Candidate, Grabbed};
+use self::kbm::Remap;
 
 use crate::{
-    config::{Config, Profile, ProfileKind, ProfileRef, Scope},
+    config::{Config, Profile, ProfileRef, Scope},
     engine::{Engine, Opener},
     focus::{self, FocusEvent},
     input::{self, InputEvent, MotionFrame, MotionNormalizer, MotionSample, Normalizer},
@@ -37,7 +37,7 @@ use crate::{
     menu::{MenuOutcome, MenuSession},
     overlay::{OverlayAction, OverlayController, OverlayFrame, OverlayView},
     rumble,
-    remap::{RawEvent, Remapper},
+    remap::RawEvent,
 };
 
 mod logs;
@@ -191,11 +191,8 @@ struct Daemon {
     /// Gamepads we have seen, managed or not, for status reporting.
     gamepads: HashMap<NodeKey, SeenGamepad>,
     motion_nodes: HashMap<NodeKey, MotionNode>,
-    /// Keyboards and mice we could remap, grabbed or not.
-    remappable: HashMap<NodeKey, Candidate>,
-    /// The ones grabbed now, while a keyboard profile is active.
-    grabbed: HashMap<u64, Grabbed>,
-    remapper: Remapper,
+    /// Keyboard and mouse remapping.
+    remap: Remap,
     /// Controller motion sensors we lack permission to open (names), for the GUI to explain.
     motion_denied: HashMap<NodeKey, String>,
     /// Clients streaming live input (the GUI's controller view).
@@ -261,9 +258,7 @@ pub fn run() -> Result<()> {
         skipped: HashSet::new(),
         gamepads: HashMap::new(),
         motion_nodes: HashMap::new(),
-        remappable: HashMap::new(),
-        grabbed: HashMap::new(),
-        remapper: Remapper::default(),
+        remap: Remap::default(),
         motion_denied: HashMap::new(),
         watchers: Vec::new(),
         last_active: None,
@@ -289,7 +284,7 @@ pub fn run() -> Result<()> {
         overlay_process: None,
         tx,
     };
-    daemon.remapper.set_chord(&daemon.config.panic_chord);
+    daemon.remap.remapper.set_chord(&daemon.config.panic_chord);
     log!("controller_app daemon started, socket at {}", ipc::socket_path().display());
     {
         let tx = daemon.tx.clone();
@@ -368,6 +363,7 @@ impl Daemon {
         self.devices
             .values()
             .filter_map(|d| d.engine.next_deadline())
+            .chain(self.remap_deadline())
             .chain(overlay)
             .chain(self.info_refresh)
             .chain(self.info_fade)
@@ -398,6 +394,7 @@ impl Daemon {
         if changed {
             self.broadcast_overlay();
         }
+        self.remap_timers(now);
         let Some(base) = self.config.active() else { return };
         let mut switch = false;
         let mut toggle_overlay = None;
@@ -642,7 +639,7 @@ impl Daemon {
     /// shown for a while (at the game's start, or lingering after being let go) fading out at
     /// the end of it.
     fn timed_info(&mut self, now: Instant) -> Vec<(crate::config::InfoOverlay, f32)> {
-        let held: HashSet<String> = self.devices.values().flat_map(|d| d.engine.shown_info()).cloned().collect();
+        let held: HashSet<String> = self.devices.values().flat_map(|d| d.engine.shown_info()).chain(self.remap.remapper.shown_info()).cloned().collect();
         self.info_timers.update(held, &self.scope.info, now);
         self.info_fade = self.info_timers.next_redraw(now, FADE_FRAME);
         self.visible_info()
@@ -706,7 +703,8 @@ impl Daemon {
         let last = self.last_active.and_then(|id| self.devices.get(&id));
         let others = self.devices.iter().filter(|(id, _)| Some(**id) != self.last_active).map(|(_, d)| d);
         let mut layers: Vec<String> = Vec::new();
-        for name in last.into_iter().chain(others).flat_map(|d| d.engine.layers()) {
+        let keyboard = self.remap.remapper.layers();
+        for name in last.into_iter().chain(others).flat_map(|d| d.engine.layers()).chain(keyboard) {
             if !layers.contains(&name) && self.scope.layers.iter().any(|l| l.name == name) {
                 layers.push(name);
             }
@@ -738,6 +736,8 @@ impl Daemon {
             changed |= dev.engine.take_info_changed();
             changed |= dev.engine.take_layers_changed();
         }
+        changed |= self.remap.remapper.take_info_changed();
+        changed |= self.remap.remapper.take_layers_changed();
         if changed {
             self.broadcast_overlay();
         }
@@ -757,11 +757,15 @@ impl Daemon {
     }
 
     fn needs_tick(&self) -> bool {
+        if self.remap_needs_tick() {
+            return true;
+        }
         let Some(base) = self.config.active() else { return false };
         self.devices.values().any(|d| d.engine.needs_tick(layered(&d.layered, base)))
     }
 
     fn tick(&mut self, dt: f32) {
+        self.tick_remap(dt);
         let Some(base) = self.config.active() else { return };
         for dev in self.devices.values_mut() {
             let mut out = Vec::new();
@@ -941,6 +945,7 @@ impl Daemon {
             }
             dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
         }
+        self.remap_game_started();
         self.check_info_changes();
         self.broadcast_overlay();
     }
@@ -967,15 +972,11 @@ impl Daemon {
 
     /// Switches to a profile a rule (or the default) picked, with a toast if `toast`.
     fn auto_switch_to(&mut self, target: ProfileRef, reason: &str, toast: bool) {
-        let Some(kind) = self.config.profile(&target).map(|p| p.kind) else {
+        if self.config.profile(&target).is_none() {
             log!("auto-switch points to missing profile {target}");
             return;
-        };
-        let current = match kind {
-            ProfileKind::Gamepad => Some(self.config.active_ref()),
-            ProfileKind::Keyboard => self.config.active_keyboard.clone(),
-        };
-        if current.as_ref() == Some(&target) {
+        }
+        if self.config.active_ref() == target {
             return;
         }
         log!("{reason} → profile {target}");
@@ -993,22 +994,13 @@ impl Daemon {
         if in_game && let Some(default) = self.config.auto_switch.default_profile.clone() {
             self.auto_switch_to(default, reason, false);
         }
-        let keyboard_in_game = self.config.active_keyboard.as_ref().and_then(|at| at.game.as_ref()).is_some_and(|g| focus::has_rules(&self.config, g));
-        if keyboard_in_game {
-            match self.config.auto_switch.default_keyboard_profile.clone() {
-                Some(default) => self.auto_switch_to(default, reason, false),
-                None => {
-                    self.set_keyboard_profile(None);
-                }
-            }
-        }
     }
 
     /// Briefly says which controller profile is now active, and for which game, at the top
     /// of the screen.
     fn toast_profile(&mut self) {
         let active = self.config.active_ref();
-        let lines = [format!("Controller profile active: {}", active.profile)]
+        let lines = [format!("Profile active: {}", active.profile)]
             .into_iter()
             .chain(active.game.map(|game| format!("Game: {game}")))
             .collect();
@@ -1127,7 +1119,6 @@ impl Daemon {
                 let mut new = *new;
                 new.enabled = self.config.enabled;
                 new.carry_active(&self.config.active);
-                new.carry_active_keyboard(self.config.active_keyboard.as_ref());
                 self.replace_config(new)
             }
             Request::Reload => match Config::load() {
@@ -1153,10 +1144,6 @@ impl Daemon {
                     return Response::Error(format!("no profile {target}"));
                 }
                 self.switch_profile(target);
-                Response::Ok
-            }
-            Request::DeactivateKeyboard => {
-                self.set_keyboard_profile(None);
                 Response::Ok
             }
             Request::NextProfile => {
@@ -1225,7 +1212,7 @@ impl Daemon {
         // Toggled layers stay on; they apply again if the game still has them.
         self.release_all(true);
         self.config = new;
-        self.remapper.set_chord(&self.config.panic_chord);
+        self.remap.remapper.set_chord(&self.config.panic_chord);
         self.reset_remap();
         self.refresh_scope();
         let ignored = self.config.ignored_devices.clone();
@@ -1250,6 +1237,7 @@ impl Daemon {
         for dev in self.devices.values_mut() {
             dev.engine.set_macros(&self.scope.macros);
         }
+        self.refresh_remap_scope();
     }
 
     /// Switches profile, showing the new one in a toast.
@@ -1259,31 +1247,8 @@ impl Daemon {
         }
     }
 
-    /// Switches the keyboard profile (`None`: stop remapping the keyboard and mouse); false if
-    /// nothing changed.
-    fn set_keyboard_profile(&mut self, target: Option<ProfileRef>) -> bool {
-        if target == self.config.active_keyboard {
-            return false;
-        }
-        match &target {
-            Some(target) => log!("switching to keyboard profile {target}"),
-            None => log!("keyboard remapping off"),
-        }
-        self.config.active_keyboard = target;
-        self.reset_remap();
-        self.sync_remap();
-        self.broadcast_overlay();
-        if let Err(e) = self.config.save() {
-            log!("saving config: {e:#}");
-        }
-        true
-    }
-
-    /// Switches the profile of `target`'s kind; false if it was already active.
+    /// Switches the active profile; false if it was already active.
     fn set_profile(&mut self, target: ProfileRef) -> bool {
-        if self.config.profile(&target).is_some_and(|p| p.kind == ProfileKind::Keyboard) {
-            return self.set_keyboard_profile(Some(target));
-        }
         if target == self.config.active_ref() {
             return false;
         }
@@ -1304,6 +1269,10 @@ impl Daemon {
             self.refresh_scope();
         }
         self.resync_all();
+        // Only a keyboard profile grabs the keyboard and mouse.
+        self.reset_remap();
+        self.refresh_remap_scope();
+        self.sync_remap();
         // Other info overlays may belong to the new profile.
         self.broadcast_overlay();
         if let Err(e) = self.config.save() {
@@ -1368,7 +1337,6 @@ impl Daemon {
             enabled: self.config.enabled,
             active_profile: self.config.active().map(|p| p.name.clone()).unwrap_or_default(),
             active_game: self.config.active_ref().game,
-            active_keyboard: self.config.active_keyboard_profile().and(self.config.active_keyboard.clone()),
             active_layers: self.active_layers(),
             devices,
             focus_backend: self.focus_backend,
@@ -1395,7 +1363,7 @@ impl Daemon {
 
             if self.skipped.contains(&key)
                 || self.motion_nodes.contains_key(&key)
-                || self.remappable.contains_key(&key)
+                || self.remap.candidates.contains_key(&key)
                 || self.devices.values().any(|d| d.path == path)
             {
                 continue;
@@ -1430,7 +1398,7 @@ impl Daemon {
         }
         self.skipped.retain(|k| present.contains(k));
         self.motion_nodes.retain(|k, _| present.contains(k));
-        self.remappable.retain(|k, _| present.contains(k));
+        self.remap.candidates.retain(|k, _| present.contains(k));
         self.motion_denied.retain(|k, _| present.contains(k));
         self.check_overlay_process();
         self.attach_motion();

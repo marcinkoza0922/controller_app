@@ -402,9 +402,6 @@ impl App {
         if let Some(d) = config.auto_switch.default_profile.as_ref().filter(|d| config.profile(d).is_none()) {
             return Some(format!("The per-game default profile {d} no longer exists."));
         }
-        if let Some(d) = config.auto_switch.default_keyboard_profile.as_ref().filter(|d| config.profile(d).is_none_or(|p| p.kind.is_gamepad())) {
-            return Some(format!("The default keyboard profile {d} no longer exists."));
-        }
         panic_chord_problem(&config.panic_chord)
     }
 

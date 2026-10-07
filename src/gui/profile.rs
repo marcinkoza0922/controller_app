@@ -144,6 +144,7 @@ pub(super) enum Template {
     Platformer,
     Keyboard,
     Esdf,
+    KeyboardPad,
     Duplicate,
 }
 
@@ -157,12 +158,13 @@ impl Template {
             Template::Strategy => Profile::strategy(name),
             Template::Platformer => Profile::platformer(name),
             Template::Keyboard => Profile::keyboard(name),
-            Template::Esdf => Profile::wasd_to_esdf(name),
+            Template::Esdf => Profile::esdf_layout(name),
+            Template::KeyboardPad => Profile::keyboard_to_pad(name),
         }
     }
 
     /// Offered in the "New from template" list (Duplicate has its own button).
-    pub(super) const NEW: [Template; 7] = [
+    pub(super) const NEW: [Template; 8] = [
         Template::Gamepad,
         Template::Action,
         Template::Strategy,
@@ -170,6 +172,7 @@ impl Template {
         Template::Desktop,
         Template::Keyboard,
         Template::Esdf,
+        Template::KeyboardPad,
     ];
 
     pub(super) fn base_name(self) -> &'static str {
@@ -180,7 +183,8 @@ impl Template {
             Template::Strategy => "Strategy",
             Template::Platformer => "Platformer",
             Template::Keyboard => "Keyboard",
-            Template::Esdf => "ESDF",
+            Template::Esdf => "ESDF layout",
+            Template::KeyboardPad => "Keyboard to pad",
             Template::Duplicate => "Copy",
         }
     }
@@ -195,7 +199,8 @@ impl fmt::Display for Template {
             Template::Strategy => "Strategy (mouse pointer + hotkeys)",
             Template::Platformer => "Retro / platformer (arrows + Z/X/C)",
             Template::Keyboard => "Keyboard profile (remaps keys and mouse)",
-            Template::Esdf => "Keyboard: WASD → ESDF",
+            Template::Esdf => "Keyboard: ESDF layout (play WASD games from ESDF)",
+            Template::KeyboardPad => "Keyboard: mouse and keys as a gamepad",
             Template::Duplicate => "Copy of this profile",
         })
     }
@@ -1393,6 +1398,9 @@ impl App {
     /// The live drawing, "Find by pressing", and the Buttons, Sticks & triggers, Combos and
     /// Gyro tabs for `p`: a profile, or (with `layer`) a layer over one.
     pub(super) fn view_profile_editor<'a>(&'a self, p: &'a Profile, names: &Names, layer: Option<LayerMarks<'a>>) -> Element<'a, Message> {
+        if p.kind == crate::config::ProfileKind::Keyboard {
+            return self.view_keyboard_profile(p);
+        }
         // The active profile's drawing also shows the layers that are on right now.
         let live = (layer.is_none() && self.profile_ref().is_some_and(|at| at == self.saved.active)).then(|| self.with_active_layers(p));
         let mut col = column![self.view_live(Some(live.as_ref().unwrap_or(p)), true)].spacing(16);
@@ -1489,7 +1497,7 @@ impl App {
         let names: Vec<String> = self.game().profiles.iter().map(|p| p.name.clone()).collect();
         let current = self.profile().map(|p| p.name.clone());
         let can_delete = names.len() > 1;
-        let active = self.profile_ref().is_some_and(|at| at == self.saved.active || self.saved.active_keyboard.as_ref() == Some(&at));
+        let active = self.profile_ref().is_some_and(|at| at == self.saved.active);
         let activate: Element<'_, Message> = match self.profile_ref() {
             Some(at) if !active && self.status.is_some() => {
                 button(text("Make active").size(13)).style(style::secondary).on_press(Message::ActivateProfile(at)).into()

@@ -97,7 +97,7 @@ impl Daemon {
     /// Log overlays to draw now, and how visible each is: steady ones fully, lingering ones
     /// fading out.
     fn visible_logs(&mut self, now: Instant) -> Vec<(LogOverlay, f32)> {
-        let held: HashSet<String> = self.devices.values().flat_map(|d| d.engine.shown_logs()).cloned().collect();
+        let held: HashSet<String> = self.devices.values().flat_map(|d| d.engine.shown_logs()).chain(self.remap.remapper.shown_logs()).cloned().collect();
         let logs = &self.scope.logs;
         self.log_timers.update_with(held, |name| logs.iter().find(|o| o.name == name).and_then(|o| o.linger), now);
         logs.iter()

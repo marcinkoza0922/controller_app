@@ -7,7 +7,9 @@
 use iced::widget::{column, row};
 
 use super::*;
-use crate::config::{Indicator, Layer};
+use std::collections::BTreeMap;
+
+use crate::config::{Indicator, KeyboardMap, Layer};
 
 /// An entry in a layer's "Indicator" picker.
 #[derive(Debug, Clone, PartialEq)]
@@ -20,6 +22,29 @@ impl fmt::Display for IndicatorChoice {
             Indicator::Info(name) => write!(f, "Info overlay “{name}”"),
             Indicator::Off => f.write_str("Nothing"),
         }
+    }
+}
+
+/// What changed between `before` and `after` in a layer editor's keyboard mappings, as the
+/// layer's overrides: a changed or new mapping is an override, a removed one goes back to base.
+pub(super) fn write_back_keyboard(layer: &mut KeyboardMap, before: &KeyboardMap, after: &KeyboardMap) {
+    fn diff<K: Ord + Clone, V: PartialEq + Clone>(layer: &mut BTreeMap<K, V>, before: &BTreeMap<K, V>, after: &BTreeMap<K, V>) {
+        for (k, v) in after {
+            if before.get(k) != Some(v) {
+                layer.insert(k.clone(), v.clone());
+            }
+        }
+        for k in before.keys().filter(|k| !after.contains_key(*k)) {
+            layer.remove(k);
+        }
+    }
+    diff(&mut layer.keys, &before.keys, &after.keys);
+    diff(&mut layer.mouse, &before.mouse, &after.mouse);
+    diff(&mut layer.wheel, &before.wheel, &after.wheel);
+    diff(&mut layer.motion_buttons, &before.motion_buttons, &after.motion_buttons);
+    diff(&mut layer.gestures, &before.gestures, &after.gestures);
+    if before.combos != after.combos {
+        layer.combos = after.combos.clone();
     }
 }
 
@@ -42,6 +67,7 @@ impl App {
             self.compared().map(|base| {
                 let mut view = base.with_layers([layer]);
                 view.combos = layer.combos.clone();
+                view.keyboard.combos = layer.keyboard.combos.clone();
                 view
             })
         } else {
@@ -81,6 +107,7 @@ impl App {
         if before.combos != after.combos {
             layer.combos = after.combos.clone();
         }
+        write_back_keyboard(&mut layer.keyboard, &before.keyboard, &after.keyboard);
     }
 
     /// Makes a new layer in the shown game, named "Layer", "Layer 2", …, and returns its name.

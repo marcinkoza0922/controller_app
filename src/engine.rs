@@ -1,5 +1,10 @@
 //! Per-device mapping state: turns normalized input into output events for the active profile.
 
+mod ids;
+
+pub use ids::{RawInput, input_name, parse_input};
+use ids::Id;
+
 use std::{
     collections::{HashMap, HashSet},
     str::FromStr,
@@ -34,12 +39,13 @@ const TILT_SMOOTHING: f32 = 0.05;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum Source {
-    Button(Button),
+    /// A gamepad button, or a key or mouse input of a keyboard profile.
+    Button(Id),
     Trigger(Trigger),
     /// An active combo, identified by its sorted member buttons.
-    Combo(Vec<Button>),
+    Combo(Vec<Id>),
     /// A held double/triple-tap or long-press action.
-    Gesture(Button),
+    Gesture(Id),
     /// An analog zone (index into the stick's or trigger's zone list) that is active.
     Zone(Analog, usize),
     /// A menu item chosen on screen (menu name, item index).
@@ -62,8 +68,8 @@ impl Source {
     fn fired_from(&self) -> Option<crate::inputlog::FiredFrom> {
         use crate::inputlog::FiredFrom;
         Some(match self {
-            Source::Button(b) | Source::Gesture(b) => FiredFrom::Button(*b),
-            Source::Combo(members) => FiredFrom::Combo(members.clone()),
+            Source::Button(id) | Source::Gesture(id) => FiredFrom::Button(id.pad()?),
+            Source::Combo(members) => FiredFrom::Combo(members.iter().map(|id| id.pad()).collect::<Option<_>>()?),
             Source::Trigger(t) | Source::Zone(Analog::Trigger(t), _) => FiredFrom::Trigger(*t),
             Source::Zone(Analog::Stick(s), _) => FiredFrom::Stick(*s),
             Source::MenuItem(..) => return None,
@@ -72,8 +78,8 @@ impl Source {
 
     fn opener(&self) -> Opener {
         match self {
-            Source::Button(b) | Source::Gesture(b) => Opener { buttons: vec![*b], ..Opener::default() },
-            Source::Combo(members) => Opener { buttons: members.clone(), ..Opener::default() },
+            Source::Button(id) | Source::Gesture(id) => Opener { buttons: id.pad().into_iter().collect(), ..Opener::default() },
+            Source::Combo(members) => Opener { buttons: members.iter().filter_map(|id| id.pad()).collect(), ..Opener::default() },
             Source::Trigger(t) => Opener { trigger: Some(*t), ..Opener::default() },
             _ => Opener::default(),
         }
@@ -111,8 +117,8 @@ pub struct Engine {
     axes: HashMap<Axis, f32>,
     /// Action each held input pressed, so release always matches press even across profile edits.
     held: HashMap<Source, ButtonAction>,
-    members: HashMap<Button, ComboMember>,
-    gestures: HashMap<Button, GestureState>,
+    members: HashMap<Id, ComboMember>,
+    gestures: HashMap<Id, GestureState>,
     /// Keys held by sticks in direction-keys mode: (direction 0 up, 1 down, 2 left, 3 right;
     /// key). A direction keeps its key until let go, even if a layer changed the stick.
     stick_keys: HashMap<Stick, Vec<(usize, KeyCode)>>,
@@ -432,38 +438,7 @@ impl Engine {
         out: &mut Vec<OutEvent>,
     ) -> bool {
         match ev {
-            InputEvent::Button(b, true) if profile.in_combo(b) => {
-                let deadline = match profile.button(b) {
-                    ButtonAction::Disabled => None,
-                    _ => Some(now + Duration::from_millis(profile.combo_window_ms)),
-                };
-                self.members.insert(b, ComboMember::Pending { deadline });
-                self.try_combo(profile, out)
-            }
-            InputEvent::Button(b, false) if self.members.contains_key(&b) => {
-                match self.members.remove(&b) {
-                    // Released inside the window: a quick tap of the button on its own.
-                    Some(ComboMember::Pending { .. }) => {
-                        let switch = self.solo(profile, b, true, now, out);
-                        self.solo(profile, b, false, now, out) | switch
-                    }
-                    Some(ComboMember::Fired) => self.solo(profile, b, false, now, out),
-                    Some(ComboMember::Consumed) => {
-                        let combos: Vec<Source> = self
-                            .held
-                            .keys()
-                            .filter(|s| matches!(s, Source::Combo(m) if m.contains(&b)))
-                            .cloned()
-                            .collect();
-                        for src in combos {
-                            self.digital(&src, &ButtonAction::Disabled, false, out);
-                        }
-                        false
-                    }
-                    None => false,
-                }
-            }
-            InputEvent::Button(b, pressed) => self.solo(profile, b, pressed, now, out),
+            InputEvent::Button(b, pressed) => self.handle_id(profile, (Id::Pad(b), pressed), now, out),
             InputEvent::Axis(axis, value) => {
                 self.axes.insert(axis, value);
                 match axis {
@@ -476,31 +451,62 @@ impl Engine {
         }
     }
 
+    /// A press or release of an input with its own action, gestures and combos.
+    fn handle_id(&mut self, profile: &Profile, (id, pressed): (Id, bool), now: Instant, out: &mut Vec<OutEvent>) -> bool {
+        if pressed && profile.in_combo_of(id) {
+            let deadline = match &*profile.own_action(id) {
+                ButtonAction::Disabled => None,
+                _ => Some(now + Duration::from_millis(profile.combo_window_ms)),
+            };
+            self.members.insert(id, ComboMember::Pending { deadline });
+            return self.try_combo(profile, out);
+        }
+        if pressed || !self.members.contains_key(&id) {
+            return self.solo(profile, id, pressed, now, out);
+        }
+        match self.members.remove(&id) {
+            // Released inside the window: a quick tap of the button on its own.
+            Some(ComboMember::Pending { .. }) => {
+                let switch = self.solo(profile, id, true, now, out);
+                self.solo(profile, id, false, now, out) | switch
+            }
+            Some(ComboMember::Fired) => self.solo(profile, id, false, now, out),
+            Some(ComboMember::Consumed) => {
+                let combos: Vec<Source> = self
+                    .held
+                    .keys()
+                    .filter(|s| matches!(s, Source::Combo(m) if m.contains(&id)))
+                    .cloned()
+                    .collect();
+                for src in combos {
+                    self.digital(&src, &ButtonAction::Disabled, false, out);
+                }
+                false
+            }
+            None => false,
+        }
+    }
+
     /// Fires the largest combo whose members are all pending.
     fn try_combo(&mut self, profile: &Profile, out: &mut Vec<OutEvent>) -> bool {
         let ready = profile
-            .combos
-            .iter()
-            .filter(|c| c.buttons.len() >= 2)
-            .filter(|c| {
-                c.buttons
-                    .iter()
-                    .all(|b| matches!(self.members.get(b), Some(ComboMember::Pending { .. })))
-            })
-            .max_by_key(|c| c.buttons.len());
-        let Some(combo) = ready else { return false };
-        for b in &combo.buttons {
-            self.members.insert(*b, ComboMember::Consumed);
+            .combos_of()
+            .into_iter()
+            .filter(|(members, _)| members.iter().all(|id| matches!(self.members.get(id), Some(ComboMember::Pending { .. }))))
+            .max_by_key(|(members, _)| members.len());
+        let Some((members, action)) = ready else { return false };
+        for id in &members {
+            self.members.insert(*id, ComboMember::Consumed);
         }
-        let mut id = combo.buttons.clone();
+        let mut id = members;
         id.sort();
         id.dedup();
-        self.digital(&Source::Combo(id), &combo.action, true, out)
+        self.digital(&Source::Combo(id), action, true, out)
     }
 
     /// Fires combo members whose window has run out. Returns true on a profile switch request.
     pub fn timers(&mut self, profile: &Profile, now: Instant, out: &mut Vec<OutEvent>) -> bool {
-        let due: Vec<Button> = self
+        let due: Vec<Id> = self
             .members
             .iter()
             .filter(|(_, m)| matches!(m, ComboMember::Pending { deadline: Some(d) } if *d <= now))
@@ -512,7 +518,7 @@ impl Engine {
             switch |= self.solo(profile, b, true, now, out);
         }
 
-        let due: Vec<(Button, GestureState)> = self
+        let due: Vec<(Id, GestureState)> = self
             .gestures
             .iter()
             .filter(|(_, g)| match g {
@@ -525,7 +531,7 @@ impl Engine {
             .map(|(b, g)| (*b, *g))
             .collect();
         for (b, state) in due {
-            let Some(gestures) = profile.gestures(b) else {
+            let Some(gestures) = profile.gestures_of(b) else {
                 self.gestures.remove(&b);
                 continue;
             };
@@ -541,7 +547,7 @@ impl Engine {
                 // e.g. a menu on it stays up while held).
                 GestureState::Down { .. } => {
                     self.gestures.insert(b, GestureState::Pressed);
-                    switch |= self.digital(&Source::Button(b), profile.button(b), true, out);
+                    switch |= self.digital(&Source::Button(b), &profile.own_action(b), true, out);
                 }
                 // No further tap came: the sequence so far is final.
                 GestureState::Up { taps, .. } => {
@@ -571,8 +577,8 @@ impl Engine {
     /// A button acting on its own (not as part of a combo). Runs gesture detection if the
     /// button has gestures, otherwise presses/releases its action directly.
     #[expect(clippy::too_many_arguments, reason = "predates the size lints")]
-    fn solo(&mut self, profile: &Profile, b: Button, pressed: bool, now: Instant, out: &mut Vec<OutEvent>) -> bool {
-        let Some(gestures) = profile.gestures(b) else {
+    fn solo(&mut self, profile: &Profile, b: Id, pressed: bool, now: Instant, out: &mut Vec<OutEvent>) -> bool {
+        let Some(gestures) = profile.gestures_of(b) else {
             // Gestures may have been removed mid-sequence; a release still has to land.
             if !pressed {
                 match self.gestures.remove(&b) {
@@ -585,7 +591,7 @@ impl Engine {
                     _ => {}
                 }
             }
-            return self.digital(&Source::Button(b), profile.button(b), pressed, out);
+            return self.digital(&Source::Button(b), &profile.own_action(b), pressed, out);
         };
         let max_taps = gestures.max_taps();
         if pressed {
@@ -596,7 +602,8 @@ impl Engine {
             if taps > 1 && taps == max_taps {
                 // Final tap of the longest sequence: fire now and hold until release.
                 self.gestures.insert(b, GestureState::Holding);
-                let action = gestures.for_taps(taps).unwrap_or(profile.button(b));
+                let own = profile.own_action(b);
+                let action = gestures.for_taps(taps).unwrap_or(&own);
                 return self.digital(&Source::Gesture(b), action, true, out);
             }
             let long_deadline = (taps == 1 && gestures.long_press.is_some())
@@ -624,19 +631,36 @@ impl Engine {
     }
 
     /// Emits the result of a finished tap sequence as a quick press and release.
-    fn tap_sequence(&mut self, profile: &Profile, b: Button, taps: u8, out: &mut Vec<OutEvent>) -> bool {
-        let gestures = profile.gestures(b);
+    fn tap_sequence(&mut self, profile: &Profile, b: Id, taps: u8, out: &mut Vec<OutEvent>) -> bool {
+        let gestures = profile.gestures_of(b);
         let mut switch = false;
         match gestures.and_then(|g| g.for_taps(taps)) {
             Some(action) => switch |= self.tap(&Source::Gesture(b), action, out),
             // e.g. a double tap when only a triple tap is set: that many normal taps.
             None => {
                 for _ in 0..taps {
-                    switch |= self.tap(&Source::Button(b), profile.button(b), out);
+                    switch |= self.tap(&Source::Button(b), &profile.own_action(b), out);
                 }
             }
         }
         switch
+    }
+
+    /// Presses or releases `action` for a keyboard or mouse input; a release undoes what the
+    /// press did. Returns true if the action asks for the next profile.
+    pub fn run_raw(&mut self, input: RawInput, action: &ButtonAction, pressed: bool, out: &mut Vec<OutEvent>) -> bool {
+        self.digital(&Source::Button(Id::Raw(input)), action, pressed, out)
+    }
+
+    /// A key or mouse button went down or up, with its gestures and combos: its action is what
+    /// the profile says, after the combo window or tap sequence it is part of settles.
+    pub fn handle_raw(&mut self, profile: &Profile, (input, pressed): (RawInput, bool), now: Instant, out: &mut Vec<OutEvent>) -> bool {
+        self.handle_id(profile, (Id::Raw(input), pressed), now, out)
+    }
+
+    /// Presses and at once releases `action` for a keyboard or mouse input (a wheel notch).
+    pub fn tap_raw(&mut self, input: RawInput, action: &ButtonAction, out: &mut Vec<OutEvent>) -> bool {
+        self.tap(&Source::Button(Id::Raw(input)), action, out)
     }
 
     fn tap(&mut self, src: &Source, action: &ButtonAction, out: &mut Vec<OutEvent>) -> bool {
@@ -692,6 +716,7 @@ impl Engine {
                 }
                 None => out.push(OutEvent::PadButton(*b, pressed)),
             },
+            ButtonAction::PadTrigger(t) => out.push(OutEvent::PadAxis(trigger_axis(*t), if pressed { 1.0 } else { 0.0 })),
             ButtonAction::Mouse(m) => out.push(OutEvent::MouseButton(*m, pressed)),
             // One notch right away; `tick_wheel` continues while held.
             ButtonAction::Wheel(d) => {
@@ -838,16 +863,17 @@ impl Engine {
     /// items, as if pressed (one that's on already stays on). For when the game starts.
     pub fn start_toggles(&mut self, profile: &Profile, menus: &[Menu], out: &mut Vec<OutEvent>) -> bool {
         let mut inputs: Vec<(Source, &ButtonAction)> = Vec::new();
-        inputs.extend(profile.buttons.iter().map(|(b, a)| (Source::Button(*b), a)));
+        inputs.extend(profile.buttons.iter().map(|(b, a)| (Source::Button(Id::Pad(*b)), a)));
         for (b, g) in &profile.gestures {
-            inputs.extend(GestureKind::ALL.into_iter().filter_map(|k| g.get(k)).map(|a| (Source::Gesture(*b), a)));
+            inputs.extend(GestureKind::ALL.into_iter().filter_map(|k| g.get(k)).map(|a| (Source::Gesture(Id::Pad(*b)), a)));
         }
         for c in &profile.combos {
-            let mut id = c.buttons.clone();
+            let mut id: Vec<Id> = c.buttons.iter().map(|b| Id::Pad(*b)).collect();
             id.sort();
             id.dedup();
             inputs.push((Source::Combo(id), &c.action));
         }
+        inputs.extend(keyboard_sources(&profile.keyboard));
         for t in [Trigger::Left, Trigger::Right] {
             if let TriggerAction::Button { action, .. } = profile.trigger(t) {
                 inputs.push((Source::Trigger(t), action));
@@ -1307,6 +1333,29 @@ impl Engine {
 }
 
 /// Difference between two angles in degrees, wrapped to -180..180.
+/// The key and mouse inputs of a keyboard profile with their actions, as the sources they run as.
+fn keyboard_sources(map: &crate::config::KeyboardMap) -> Vec<(Source, &ButtonAction)> {
+    let raw = |input: RawInput| Source::Button(Id::Raw(input));
+    let mut all: Vec<(Source, &ButtonAction)> = Vec::new();
+    all.extend(map.keys.iter().filter_map(|(k, a)| Some((raw(parse_input(k)?), a))));
+    all.extend(map.mouse.iter().map(|(b, a)| (raw(RawInput::Button(*b)), a)));
+    all.extend(map.wheel.iter().map(|(d, a)| (raw(RawInput::Wheel(*d)), a)));
+    all.extend(map.motion_buttons.iter().map(|(d, a)| (raw(RawInput::Motion(*d)), a)));
+    for (name, g) in &map.gestures {
+        let Some(input) = parse_input(name) else { continue };
+        all.extend(GestureKind::ALL.into_iter().filter_map(|k| g.get(k)).map(|a| (Source::Gesture(Id::Raw(input)), a)));
+    }
+    for c in &map.combos {
+        let mut id: Option<Vec<Id>> = c.inputs.iter().map(|n| parse_input(n).map(Id::Raw)).collect();
+        if let Some(id) = id.as_mut() {
+            id.sort();
+            id.dedup();
+        }
+        all.extend(id.map(|id| (Source::Combo(id), &c.action)));
+    }
+    all
+}
+
 /// Counts one more (or one fewer) hold on a named overlay, forgetting it at none.
 fn count_hold(holds: &mut HashMap<String, u32>, name: &str, pressed: bool) {
     if pressed {

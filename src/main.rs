@@ -80,9 +80,6 @@ fn status() -> Result<()> {
         Some(game) => println!("profile: {} ({game})", s.active_profile),
         None => println!("profile: {}", s.active_profile),
     }
-    if let Some(at) = &s.active_keyboard {
-        println!("keyboard profile: {at}");
-    }
     let tracking = match s.focus_backend {
         ipc::FocusBackend::Kwin => "focused window (KWin)",
         ipc::FocusBackend::ProcessScan => "running processes",
