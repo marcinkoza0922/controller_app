@@ -724,7 +724,7 @@ impl App {
 
         if !running {
             header = header.push(
-                text("Start it with `systemctl --user start controller_app` or `controller_app daemon`. Edits are saved to the config file.")
+                text("The daemon isn't running. Start it with `systemctl --user start controller_app` or `controller_app daemon`. You can still edit: changes are saved to the config file and apply once the daemon starts.")
                     .size(13)
                     .color(MUTED_COLOR),
             );

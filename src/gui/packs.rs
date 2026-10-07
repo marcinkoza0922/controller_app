@@ -445,7 +445,7 @@ impl App {
             );
         }
         if !plan.shared_clashes.is_empty() {
-            let mut list = column![text("These are renamed, since shared items have their names:").size(13)].spacing(4);
+            let mut list = column![text("These are renamed because shared items already use their names:").size(13)].spacing(4);
             for (kind, old, new) in &plan.shared_clashes {
                 list = list.push(text(format!("• {} “{old}” → “{new}”", kind.noun())).size(13));
             }
@@ -453,7 +453,7 @@ impl App {
         }
         let clashes: Vec<_> = pack::live_clashes(plan, choices).collect();
         if !clashes.is_empty() {
-            let mut list = column![text("Another game already switches on the same window. By default this one takes over:").size(13)].spacing(4);
+            let mut list = column![text("Another game already has a rule for the same window. By default this game's rule takes over:").size(13)].spacing(4);
             for (c, clash) in clashes {
                 let rule = &p.rules[clash.rule];
                 let keep = choices.keep_mine.get(c).copied().unwrap_or(false);
@@ -503,7 +503,7 @@ impl App {
             );
         }
         if g.rules.is_empty() {
-            col = col.push(text("It has no auto-switch rules, so it won't switch on by itself for others.").size(13).color(MUTED_COLOR));
+            col = col.push(text("It has no auto-switch rules, so it won't be selected automatically for anyone who imports it.").size(13).color(MUTED_COLOR));
         }
         if let Some(b) = info.based_on.as_ref().filter(|_| !library) {
             col = col.push(

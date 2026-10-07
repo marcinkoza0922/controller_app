@@ -423,8 +423,8 @@ impl App {
             list = list.push(
                 column![
                     text(format!(
-                        "Gyro unavailable for {names}: no permission to read its motion sensors. \
-                         Installing a udev rule (needs your password once) fixes this:"
+                        "Can't use the gyro on {names}: this app isn't allowed to read its motion sensors. \
+                         Installing a udev rule fixes this (it asks for your password once):"
                     ))
                     .size(12)
                     .color(ERROR_COLOR),
@@ -446,12 +446,12 @@ impl App {
     pub(super) fn view_auto_switch(&self) -> Element<'_, Message> {
         let auto = &self.config.auto_switch;
         let how = match self.status.as_ref().map(|s| s.focus_backend) {
-            Some(FocusBackend::Kwin) => "Follows the focused window (KWin).",
+            Some(FocusBackend::Kwin) => "Profiles switch as the focused window changes (KWin).",
             Some(FocusBackend::ProcessScan) => {
-                "Focus tracking isn't available on this desktop, so rules apply while a matching \
-                 game process is running."
+                "Window tracking isn't available on this desktop, so rules apply while a matching \
+                 process is running."
             }
-            None => "Needs the daemon to be running.",
+            None => "Automatic switching needs the daemon to be running.",
         };
         let mut defaults = vec![DefaultChoice(None)];
         defaults.extend(
@@ -517,7 +517,7 @@ impl App {
             self.status.iter().flat_map(|s| &s.recent_windows).filter(|w| w.exe != env!("CARGO_PKG_NAME")).collect();
         if !recent.is_empty() {
             let mut list = column![
-                text("Recently focused (adds a rule for the profile being edited on the Profiles tab)").size(13).color(MUTED_COLOR)
+                text("Recently focused windows: \"+ Rule\" adds a rule for the profile you're editing on the Profiles tab").size(13).color(MUTED_COLOR)
             ]
             .spacing(6);
             for w in recent {

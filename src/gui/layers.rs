@@ -220,8 +220,7 @@ impl App {
                 space::horizontal(),
                 button(text("Copy from another game…").size(13)).style(button::text).on_press(Message::OpenBrowse(ItemKind::Layer)),
                 help(
-                    "A layer changes some of the controller's mappings while it's on, then changes them \
-                     back: e.g. hold LB, and the face buttons type F1–F4. Turn one on with \"Layer…\" on \
+                    "A layer changes some of the controller's mappings while it's on, then restores them: e.g. hold LB, and the face buttons type F1–F4. Turn one on with \"Layer…\" on \
                      any button, trigger, stick direction, zone, gesture or combo: on while held, or wrapped \
                      in Toggle, until pressed again (that also works from a menu item). It applies over \
                      whichever of the game's profiles is active; what it doesn't set stays as in the profile. \
@@ -260,7 +259,7 @@ impl App {
                 row![
                     dropdown(indicators, Some(IndicatorChoice(layer.indicator.clone())), Message::SetIndicator).width(260),
                     help(
-                        "Shows that the layer is on: its name, one of the game's info overlays (e.g. a cheat \
+                        "How the layer shows that it's on: its name, one of the game's info overlays (e.g. a cheat \
                          sheet of what the layer's buttons do), or nothing, for quick ones such as \"hold Y to \
                          lean\"."
                             .into(),

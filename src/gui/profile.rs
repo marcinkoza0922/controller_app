@@ -307,9 +307,9 @@ pub(super) fn view_profile<'a>(p: &'a Profile, ui: &Ui, tab: ProfileTab) -> Elem
             let mut sections = vec![section(
                 if ui.layer.is_some() { "This layer's combos" } else { "Combos" },
                 Some(format!(
-                    "Buttons pressed within the window act as one input. Combo buttons wait up to {} ms \
-                     before acting alone; a combo button set to Disabled works as a modifier with no \
-                     time limit.",
+                    "Buttons pressed together, within {} ms of each other, act as one input. A button that is part \
+                     of a combo waits that long before acting alone, unless it's set to Disabled: then it \
+                     works only as a modifier, with no time limit.",
                     p.combo_window_ms
                 )),
                 combo_rows(p, ui),
@@ -327,7 +327,7 @@ pub(super) fn view_profile<'a>(p: &'a Profile, ui: &Ui, tab: ProfileTab) -> Elem
             };
             vec![section(
                 "Gyro",
-                Some("Uses the controller's motion sensors. Calibrate it from the controller list on the Overview tab if the aim drifts.".into()),
+                Some("Aim by tilting the controller. If the aim drifts, calibrate the gyro from the controller list on the Overview page.".into()),
                 layer_part(ui, LayerPart::Gyro, "Gyro".into(), summary, || gyro_rows(&p.gyro, ui.any_gyro)),
             )]
         }
@@ -427,8 +427,8 @@ impl fmt::Display for ActivationKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             ActivationKind::Always => "Always on",
-            ActivationKind::WhileHeld => "Only while holding",
-            ActivationKind::UnlessHeld => "Off while holding (clutch)",
+            ActivationKind::WhileHeld => "Only while held",
+            ActivationKind::UnlessHeld => "Off while held (clutch)",
             ActivationKind::Toggle => "Toggle with",
         })
     }
@@ -459,8 +459,8 @@ pub(super) fn gyro_rows(cfg: &GyroConfig, any_gyro: bool) -> Vec<Element<'_, Mes
     if !any_gyro {
         rows.push(
             text(
-                "None of your managed controllers report a gyro (PlayStation and Switch controllers do). \
-                 These settings apply once one is connected.",
+                "None of your managed controllers have a gyro (PlayStation and Switch controllers do). \
+                 These settings take effect once one is connected.",
             )
             .size(13)
             .color(MUTED_COLOR)
@@ -980,7 +980,7 @@ pub(super) fn zone_editor<'a>(analog: Analog, zones: &'a [Zone], names: &Names) 
         Analog::Trigger(_) => "pulled",
     };
     let zones_help = help(format!(
-        "Zones: extra outputs held while it is {what} within a range (0 = just past rest, 1 = all the \
+        "Extra outputs held while it is {what} within a range (0 = just past rest, 1 = all the \
          way), on top of its main action."
     ));
     let mut col = column![].spacing(8);

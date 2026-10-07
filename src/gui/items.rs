@@ -35,7 +35,7 @@ pub(super) fn view_new_info_card<'a>() -> Element<'a, Message> {
             text("Text and button glyphs on screen, e.g. a game's controls.").size(13).color(MUTED_COLOR),
             space::horizontal(),
             help(
-                "An info overlay shows a grid of text on screen without taking the controller: a \
+                "An info overlay puts a grid of text on screen without taking over the controller: a \
                  game's controls with glyphs that match the controller in use, the time, CPU load and \
                  more. Show it always while its game is active, or with the \"Show info \
                  overlay…\" action."
@@ -955,13 +955,13 @@ impl App {
                 }))
                 .push(
                     text(if o.always {
-                        "Always on screen, so actions can't show it. For an overlay shown only sometimes, untick \
-                         this and map \"Toggle → Show info overlay…\" to a button (a Toggle can start on, to show \
-                         it at launch until dismissed)."
+                        "Stays on screen whenever the game is active, so actions can't show it. To show it only \
+                         sometimes, untick this and map \"Toggle → Show info overlay…\" to a button (the Toggle \
+                         can start on, to show the overlay at launch until dismissed)."
                     } else {
-                        "\"Starts\" is the first time the game is focused after launching; it fades out at the end. \
-                         Or map \"Show info overlay…\" to a button: shown while held, or until pressed again if \
-                         wrapped in Toggle (which can be set to start on, to keep it up until dismissed)."
+                        "Shown when the game is first focused after launching, then fades out. You can also map \
+                         \"Show info overlay…\" to a button: it shows while the button is held, or until pressed \
+                         again if wrapped in Toggle (which can start on, to keep it up until dismissed)."
                     })
                     .size(12)
                     .color(MUTED_COLOR),

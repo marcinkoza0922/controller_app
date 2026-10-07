@@ -154,13 +154,13 @@ impl fmt::Display for ActionKind {
             ActionKind::NextProfile => "Next profile",
             ActionKind::Overlay => "On-screen keyboard",
             ActionKind::Numpad => "On-screen numpad",
-            ActionKind::Toggle => "Toggle (press on / off)…",
+            ActionKind::Toggle => "Toggle (each press switches on / off)…",
             ActionKind::Macro => "Macro…",
             ActionKind::Menu => "Open menu…",
             ActionKind::Info => "Show info overlay…",
             ActionKind::Layer => "Layer…",
             ActionKind::Turbo => "Turbo (repeat while held)…",
-            ActionKind::Multiple => "Multiple…",
+            ActionKind::Multiple => "Multiple outputs…",
         })
     }
 }
@@ -429,7 +429,7 @@ pub(super) fn action_value<'a>(
             .into()
         }
         ButtonAction::Macro { .. } if names.macros.is_empty() => {
-            text("No macros yet: create one in the Macros tab.").size(12).color(MUTED_COLOR).into()
+            text("No macros yet. Create one on the Macros tab.").size(12).color(MUTED_COLOR).into()
         }
         ButtonAction::Macro { name, repeat } => {
             let repeat = *repeat;
@@ -458,7 +458,7 @@ pub(super) fn action_value<'a>(
             text("Hold B on the controller to close it.").size(12).color(MUTED_COLOR).into()
         }
         ButtonAction::ShowInfo(_) if names.infos.is_empty() => {
-            text("No info overlays to show: create one on the Info overlays tab (not set to always show).")
+            text("No info overlays to show. Create one on the Info overlays tab (one that isn't set to always show).")
                 .size(12)
                 .color(MUTED_COLOR)
                 .into()
@@ -468,14 +468,14 @@ pub(super) fn action_value<'a>(
                 .spacing(8)
                 .align_y(Alignment::Center);
             if names.always_infos.contains(name) {
-                line = line.push(text("always shown").size(12).color(ERROR_COLOR));
+                line = line.push(text("always on screen, so it can't be triggered").size(12).color(ERROR_COLOR));
             } else if !names.infos.contains(name) {
-                line = line.push(text("not available").size(12).color(ERROR_COLOR));
+                line = line.push(text("missing info overlay").size(12).color(ERROR_COLOR));
             }
             line.into()
         }
         ButtonAction::OpenMenu(_) if names.menus.is_empty() => {
-            text("No menus to open: create one on the Menus tab.").size(12).color(MUTED_COLOR).into()
+            text("No menus to open. Create one on the Menus tab.").size(12).color(MUTED_COLOR).into()
         }
         ButtonAction::Layer(name) => {
             let mut options = names.layers.clone();
