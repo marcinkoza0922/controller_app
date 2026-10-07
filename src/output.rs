@@ -293,3 +293,25 @@ fn abs_event(code: Abs, value: i32) -> InputEvent {
 fn rel_event(code: Rel, value: i32) -> InputEvent {
     InputEvent::new(EventType::RELATIVE.0, code.0, value)
 }
+
+/// Moves the mouse `px` pixels to the right, smoothly over a second, after a short wait that
+/// lets the user switch to a game. For checking how far that turns the game's camera. Runs on
+/// its own thread with its own virtual mouse.
+pub fn test_turn(px: i32) {
+    use std::{thread, time::Duration};
+    const WAIT: Duration = Duration::from_secs(3);
+    const STEPS: i32 = 100;
+    thread::spawn(move || {
+        let Ok(mut kbm) = VirtualKbm::new() else { return };
+        thread::sleep(WAIT);
+        let mut sent = 0;
+        for step in 1..=STEPS {
+            let target = (i64::from(px) * i64::from(step) / i64::from(STEPS)) as i32;
+            if kbm.mouse_move(target - sent, 0).is_err() {
+                return;
+            }
+            sent = target;
+            thread::sleep(Duration::from_millis(10));
+        }
+    });
+}

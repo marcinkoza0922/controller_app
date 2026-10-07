@@ -18,6 +18,7 @@ use crate::{
     output::OutEvent,
 };
 
+mod flick;
 mod stick;
 
 /// A stick-direction button releases this far below its press threshold.
@@ -142,6 +143,8 @@ pub struct Engine {
     stick_ramp: HashMap<Stick, f32>,
     /// The ring sector each stick in ring mode is pointing into.
     ring_sector: HashMap<Stick, usize>,
+    /// Flick progress of each stick in flick mode.
+    flick: HashMap<Stick, flick::FlickState>,
     /// Seconds each held action containing a wheel direction has been held.
     wheel_held: HashMap<Source, f32>,
     wheel_acc: (f32, f32),
@@ -1176,6 +1179,7 @@ impl Engine {
         self.stick_smooth.clear();
         self.stick_ramp.clear();
         self.ring_sector.clear();
+        self.flick.clear();
         self.wheel_held.clear();
         self.wheel_acc = (0.0, 0.0);
         // Pad axes were centered above; forget what fed them. Tilt tracking carries on.

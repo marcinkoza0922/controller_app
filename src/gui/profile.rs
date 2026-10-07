@@ -3,7 +3,7 @@
 use iced::widget::{Column, column, row};
 
 use super::*;
-use crate::config::MouseResponse;
+use crate::config::{FlickVertical, MouseResponse};
 
 /// Sections of the profile editor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,6 +101,7 @@ pub(super) fn stick_summary(cfg: &StickConfig) -> String {
         StickAction::Mouse { speed, .. } => format!("mouse, {speed:.0} px/s"),
         StickAction::Scroll { speed } => format!("scroll, {speed:.0} notches/s"),
         StickAction::Ring { sectors, .. } => format!("button ring, {sectors} sectors"),
+        StickAction::Flick { full_turn_px, .. } => format!("flick stick, {full_turn_px:.0} px/turn"),
         StickAction::Keys { up, down, left, right } => {
             [up, left, down, right].map(|k| keyboard::label(k)).join("/")
         }
@@ -828,6 +829,7 @@ pub(super) enum StickKind {
     Mouse,
     Scroll,
     Ring,
+    Flick,
     Keys,
 }
 
@@ -839,6 +841,7 @@ impl fmt::Display for StickKind {
             StickKind::Mouse => "Mouse pointer",
             StickKind::Scroll => "Scroll wheel",
             StickKind::Ring => "Button ring",
+            StickKind::Flick => "Flick stick",
             StickKind::Keys => "Direction keys",
         })
     }
@@ -857,6 +860,7 @@ pub(super) fn stick_editor<'a>(
         StickAction::Mouse { .. } => StickKind::Mouse,
         StickAction::Scroll { .. } => StickKind::Scroll,
         StickAction::Ring { .. } => StickKind::Ring,
+        StickAction::Flick { .. } => StickKind::Flick,
         StickAction::Keys { .. } => StickKind::Keys,
     };
     let with = move |action: StickAction| {
@@ -870,6 +874,7 @@ pub(super) fn stick_editor<'a>(
         StickKind::Mouse,
         StickKind::Scroll,
         StickKind::Ring,
+        StickKind::Flick,
         StickKind::Keys,
     ];
     let picker = dropdown(kinds, Some(kind), move |k| {
@@ -879,6 +884,7 @@ pub(super) fn stick_editor<'a>(
             StickKind::Mouse => StickAction::mouse(1200.0),
             StickKind::Scroll => StickAction::Scroll { speed: 15.0 },
             StickKind::Ring => StickAction::ring(8),
+            StickKind::Flick => StickAction::flick(),
             StickKind::Keys => wasd(),
         })
     })
@@ -910,6 +916,9 @@ pub(super) fn stick_editor<'a>(
             rows = mouse_rows(rows, s, cfg, expanded.contains(&Target::StickResponse(s)), with);
         }
         StickAction::Ring { .. } => rows = ring_rows(rows, s, cfg, names, with),
+        StickAction::Flick { .. } => {
+            rows = flick_rows(rows, cfg, expanded.contains(&Target::StickResponse(s)), s, with);
+        }
         StickAction::Scroll { speed } => {
             rows = rows.push(value_slider("    Speed", 1.0..=60.0, *speed, 1.0, "notches/s", move |v| {
                 with(StickAction::Scroll { speed: v })
@@ -1024,6 +1033,73 @@ fn ring_rows<'a>(
                 .style(style::inset)
                 .into(),
         ));
+    }
+    rows
+}
+
+/// A flick stick's settings: the turn size and trigger point, and the rest behind "Advanced".
+fn flick_rows<'a>(
+    mut rows: Column<'a, Message>,
+    cfg: &StickConfig,
+    open: bool,
+    s: Stick,
+    with: impl Fn(StickAction) -> Message + Copy + 'a,
+) -> Column<'a, Message> {
+    let StickAction::Flick { full_turn_px, flick_threshold, flick_time_ms, rotate_smoothing_ms, forward_deadzone, vertical, vertical_speed } =
+        cfg.action
+    else {
+        return rows;
+    };
+    let set = move |f: &dyn Fn(&mut StickAction)| {
+        let mut a = StickAction::Flick { full_turn_px, flick_threshold, flick_time_ms, rotate_smoothing_ms, forward_deadzone, vertical, vertical_speed };
+        f(&mut a);
+        with(a)
+    };
+    macro_rules! field {
+        ($name:ident, $value:expr) => {
+            set(&|a| {
+                if let StickAction::Flick { $name, .. } = a {
+                    *$name = $value;
+                }
+            })
+        };
+    }
+    rows = rows
+        .push(value_slider("    Turn size", 1000.0..=30000.0, full_turn_px, 100.0, "px per 360°", move |v| field!(full_turn_px, v)))
+        .push(labeled(
+            "    ",
+            row![
+                button(text("Test turn").size(13)).style(style::secondary).on_press(Message::TestTurn(full_turn_px as i32)),
+                text(
+                    "Moves the mouse one full turn to the right after 3 seconds, so you can watch your game. \
+                     If it turned N°, set the size to this × 360 / N."
+                )
+                .size(12)
+                .color(MUTED_COLOR),
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center)
+            .into(),
+        ))
+        .push(value_slider("    Flick at", 0.5..=1.0, flick_threshold, 0.05, "of the way out", move |v| field!(flick_threshold, v)));
+    rows = rows.push(labeled("    ", row_toggle("Advanced flick", Target::StickResponse(s), open, false)));
+    if open {
+        rows = rows
+            .push(value_slider("        Flick time", 0.0..=300.0, flick_time_ms as f32, 10.0, "ms", move |v| field!(flick_time_ms, v as u32)))
+            .push(value_slider("        Turning smoothing", 0.0..=200.0, rotate_smoothing_ms as f32, 5.0, "ms", move |v| {
+                field!(rotate_smoothing_ms, v as u32)
+            }))
+            .push(value_slider("        Forward dead angle", 0.0..=30.0, forward_deadzone, 1.0, "°", move |v| field!(forward_deadzone, v)))
+            .push(labeled(
+                "        ",
+                checkbox(vertical == FlickVertical::Look)
+                    .label("Also look up and down with the stick")
+                    .on_toggle(move |on| field!(vertical, if on { FlickVertical::Look } else { FlickVertical::Off }))
+                    .into(),
+            ));
+        if vertical == FlickVertical::Look {
+            rows = rows.push(value_slider("        Vertical speed", 100.0..=4000.0, vertical_speed, 50.0, "px/s", move |v| field!(vertical_speed, v)));
+        }
     }
     rows
 }

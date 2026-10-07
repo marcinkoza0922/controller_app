@@ -107,8 +107,13 @@ impl Engine {
     pub(super) fn sticks_need_tick(&self, profile: &Profile) -> bool {
         [Stick::Left, Stick::Right].into_iter().any(|s| {
             let cfg = profile.stick(s);
-            matches!(cfg.action, StickAction::Mouse { .. } | StickAction::Scroll { .. })
-                && (self.stick_pos(s, cfg.deadzone) != (0.0, 0.0) || self.stick_smooth.contains_key(&s))
+            match cfg.action {
+                StickAction::Mouse { .. } | StickAction::Scroll { .. } => {
+                    self.stick_pos(s, cfg.deadzone) != (0.0, 0.0) || self.stick_smooth.contains_key(&s)
+                }
+                StickAction::Flick { .. } => self.flick_needs_tick(s, cfg.deadzone),
+                _ => false,
+            }
         })
     }
 
@@ -151,6 +156,12 @@ impl Engine {
     pub(super) fn tick_sticks(&mut self, profile: &Profile, dt: f32, out: &mut Vec<OutEvent>) {
         for s in [Stick::Left, Stick::Right] {
             let cfg = profile.stick(s);
+            if matches!(cfg.action, StickAction::Flick { .. }) {
+                self.tick_flick(s, cfg, dt, out);
+                continue;
+            }
+            // A stick no longer in flick mode drops any turn in progress.
+            self.flick.remove(&s);
             let response = match &cfg.action {
                 StickAction::Mouse { response, .. } => *response,
                 _ => MouseResponse::default(),
@@ -457,5 +468,39 @@ mod tests {
             }
         }
         assert_eq!(p.left_stick.action.ring_actions()[1], ButtonAction::Keys(vec!["KEY_E".into()]));
+    }
+
+    #[test]
+    fn flick_stick_emits_mouse_movement_through_the_engine() {
+        let mut p = Profile::passthrough("p");
+        p.right_stick = StickConfig::new(
+            {
+                let StickAction::Flick { flick_threshold, flick_time_ms, rotate_smoothing_ms, forward_deadzone, vertical, vertical_speed, .. } = StickAction::flick()
+                else {
+                    unreachable!()
+                };
+                StickAction::Flick { full_turn_px: 3600.0, flick_threshold, flick_time_ms, rotate_smoothing_ms, forward_deadzone, vertical, vertical_speed }
+            },
+            0.0,
+            1.0,
+        );
+        let mut e = Engine::default();
+        push(&mut e, &p, 1.0, 0.0);
+        assert!(e.needs_tick(&p));
+        let (x, y) = travel(&mut e, &p, 0.3);
+        assert!((x - 900).abs() <= 1 && y == 0, "{x}, {y}");
+        // Switching away (a layer) forgets the turn in progress and stops ticking.
+        p.right_stick.action = StickAction::Disabled;
+        push(&mut e, &p, 0.0, 0.0);
+        travel(&mut e, &p, 0.01);
+        assert!(!e.needs_tick(&p));
+    }
+
+    #[test]
+    fn flick_config_roundtrips_and_fills_defaults() {
+        let f: StickConfig = toml::from_str("deadzone = 0.1\n[action.flick]\nfull_turn_px = 5000.0\n").unwrap();
+        assert!(matches!(f.action, StickAction::Flick { full_turn_px, flick_time_ms: 100, .. } if full_turn_px == 5000.0));
+        let full = StickConfig::new(StickAction::flick(), 0.1, 2.0);
+        assert_eq!(toml::from_str::<StickConfig>(&toml::to_string(&full).unwrap()).unwrap(), full);
     }
 }

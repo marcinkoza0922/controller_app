@@ -1,6 +1,6 @@
 # Stick behaviors: mouse response, rings and flick stick
 
-Status: phases 0–2 (stick module, mouse response, ring) implemented; flick stick proposed (2026-10-07).
+Status: implemented (2026-10-07), except the ring's radial preview and a guided calibration (see the open questions).
 
 ## Goal
 
@@ -166,17 +166,17 @@ flick not yet sent.
 
 ### Calibrating `full_turn_px`
 
-A **Calibrate turn** button on the Flick settings: the user turns the camera one full circle
-in the game with the mouse emulation (the editor asks them to flick the stick and watches the
-pixel total, or reads it from a number they type) and the app suggests a value. This is the
-last step in phase 3, and the field is plain-editable without it.
+A **Test turn** button on the Flick settings asks the daemon to wait 3 seconds, then move the
+mouse `full_turn_px` pixels to the right over a second, on a virtual mouse of its own. The user
+switches to the game and watches. If the game turned N degrees, the size to use is the current
+one × 360 / N, and the editor says so beside the button. The value is also plain-editable.
 
 ## Validation
 
 `src/gui/checks.rs` flags, on the stick row and the profile tab (and blocks Save & apply
 like other errors):
 
-- Both sticks set to Flick in the same profile or layer.
+- Both sticks set to Flick in the same profile or layer (also marked on the Sticks tab).
 - A ring sector action that names a missing macro, menu, layer or info overlay.
 - A ring sector action with an unknown key.
 - `sectors` not in {4, 8, 12}, `full_turn_px` not positive, a `flick_threshold` not above the
@@ -219,3 +219,10 @@ Engine tests, driven by synthetic axis events as the existing stick tests are:
 - **Per-axis curves for mouse mode**: not planned; `y_scale` covers the common need.
 - **Calibration without a game**: measuring the game's turn size reliably from the app alone
   isn't possible, so the helper stays manual or semi-manual.
+
+## What was built differently
+
+- The ring's radial preview with a live highlight is not built; the editor lists the sectors.
+- Calibration is the **Test turn** button above, not a guided measurement.
+- Vertical look follows the stick's up/down deflection, so with it on, holding the stick up or
+  down also keeps looking up or down. It is off by default and under *Advanced flick*.

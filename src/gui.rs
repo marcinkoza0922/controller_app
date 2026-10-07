@@ -252,6 +252,7 @@ enum Message {
     SetRuleProfile(usize, String),
     SetRuleEnabled(usize, bool),
     TestRumble(String),
+    TestTurn(i32),
     ToggleOverlay,
     ToggleNumpad,
     ToggleNumpadAppearance,

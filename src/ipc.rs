@@ -33,6 +33,9 @@ pub enum Request {
     TestRumble(String),
     /// Average the gyro of the controller at this path for a moment, as its drift bias.
     CalibrateGyro(String),
+    /// After 3 seconds, move the mouse this many pixels to the right over a second, to see how
+    /// far it turns a game's camera.
+    TestTurn(i32),
     /// Open or close the on-screen keyboard.
     ToggleOverlay,
     /// Open or close the on-screen numpad.

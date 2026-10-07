@@ -927,6 +927,31 @@ pub enum StickAction {
         #[serde(default)]
         actions: Vec<ButtonAction>,
     },
+    /// Flick stick: pushing the stick out turns the camera to that direction at once, then
+    /// rotating the stick turns it the same angle. Horizontal mouse movement only, unless
+    /// `vertical` adds looking up and down.
+    Flick {
+        /// Mouse pixels that make a 360 degree turn in the game.
+        #[serde(default = "default_full_turn_px")]
+        full_turn_px: f32,
+        /// Deflection (after the deadzone) at which a flick starts.
+        #[serde(default = "default_flick_threshold")]
+        flick_threshold: f32,
+        /// The initial turn is spread over this long.
+        #[serde(default = "default_flick_time_ms")]
+        flick_time_ms: u32,
+        /// Time constant of a low-pass filter on the turning that follows a flick; 0 is off.
+        #[serde(default)]
+        rotate_smoothing_ms: u32,
+        /// Degrees either side of straight up in which a flick turns nothing.
+        #[serde(default)]
+        forward_deadzone: f32,
+        #[serde(default)]
+        vertical: FlickVertical,
+        /// Pixels/second at full deflection, when `vertical` is `look`.
+        #[serde(default = "default_vertical_speed")]
+        vertical_speed: f32,
+    },
     /// Directional keys, e.g. WASD or arrows.
     Keys {
         up: String,
@@ -985,6 +1010,32 @@ fn is_zero_ms(v: &u32) -> bool {
     *v == 0
 }
 
+/// What a flick stick does with the stick's up/down deflection.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FlickVertical {
+    #[default]
+    Off,
+    /// Moves the mouse vertically in proportion to it, using the stick's curve.
+    Look,
+}
+
+fn default_full_turn_px() -> f32 {
+    8000.0
+}
+
+fn default_flick_threshold() -> f32 {
+    0.9
+}
+
+fn default_flick_time_ms() -> u32 {
+    100
+}
+
+fn default_vertical_speed() -> f32 {
+    1200.0
+}
+
 fn default_sectors() -> u8 {
     8
 }
@@ -1006,6 +1057,19 @@ impl StickAction {
             inner_radius: default_ring_inner_radius(),
             hysteresis: default_ring_hysteresis(),
             actions: vec![ButtonAction::Disabled; usize::from(sectors)],
+        }
+    }
+
+    /// A flick stick with the default settings.
+    pub fn flick() -> Self {
+        StickAction::Flick {
+            full_turn_px: default_full_turn_px(),
+            flick_threshold: default_flick_threshold(),
+            flick_time_ms: default_flick_time_ms(),
+            rotate_smoothing_ms: 0,
+            forward_deadzone: 0.0,
+            vertical: FlickVertical::Off,
+            vertical_speed: default_vertical_speed(),
         }
     }
 

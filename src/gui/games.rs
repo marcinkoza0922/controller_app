@@ -62,6 +62,10 @@ impl App {
     pub(super) fn update_games(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::TestRumble(path) => return call_ok(Request::TestRumble(path)),
+            Message::TestTurn(px) => {
+                self.message = Some(("Switch to your game: the mouse turns right in 3 seconds.".into(), false));
+                return call_ok(Request::TestTurn(px));
+            }
             Message::ToggleOverlay => return call_ok(Request::ToggleOverlay),
             Message::ToggleNumpad => return call_ok(Request::ToggleNumpad),
             Message::ToggleNumpadAppearance => self.numpad_appearance = !self.numpad_appearance,
