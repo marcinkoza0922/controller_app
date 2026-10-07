@@ -142,6 +142,8 @@ pub(super) enum Template {
     Action,
     Strategy,
     Platformer,
+    Keyboard,
+    Esdf,
     Duplicate,
 }
 
@@ -154,16 +156,20 @@ impl Template {
             Template::Action => Profile::pc_action(name),
             Template::Strategy => Profile::strategy(name),
             Template::Platformer => Profile::platformer(name),
+            Template::Keyboard => Profile::keyboard(name),
+            Template::Esdf => Profile::wasd_to_esdf(name),
         }
     }
 
     /// Offered in the "New from template" list (Duplicate has its own button).
-    pub(super) const NEW: [Template; 5] = [
+    pub(super) const NEW: [Template; 7] = [
         Template::Gamepad,
         Template::Action,
         Template::Strategy,
         Template::Platformer,
         Template::Desktop,
+        Template::Keyboard,
+        Template::Esdf,
     ];
 
     pub(super) fn base_name(self) -> &'static str {
@@ -173,6 +179,8 @@ impl Template {
             Template::Action => "PC Action",
             Template::Strategy => "Strategy",
             Template::Platformer => "Platformer",
+            Template::Keyboard => "Keyboard",
+            Template::Esdf => "ESDF",
             Template::Duplicate => "Copy",
         }
     }
@@ -186,6 +194,8 @@ impl fmt::Display for Template {
             Template::Action => "PC action (WASD + mouse look)",
             Template::Strategy => "Strategy (mouse pointer + hotkeys)",
             Template::Platformer => "Retro / platformer (arrows + Z/X/C)",
+            Template::Keyboard => "Keyboard profile (remaps keys and mouse)",
+            Template::Esdf => "Keyboard: WASD → ESDF",
             Template::Duplicate => "Copy of this profile",
         })
     }
@@ -1348,7 +1358,7 @@ impl App {
                     *p.trigger_mut(t) = action;
                 }
             }
-            other => return self.update_actions(other),
+            other => return self.update_keymap(other),
         }
         Task::none()
     }
@@ -1374,6 +1384,9 @@ impl App {
     pub(super) fn view_profile_tab<'a>(&'a self, names: &Names) -> Element<'a, Message> {
         let col = column![self.view_profile_bar()].spacing(16);
         let Some(p) = self.profile() else { return col.into() };
+        if p.kind == crate::config::ProfileKind::Keyboard {
+            return col.push(self.view_keyboard_profile(p)).into();
+        }
         col.push(self.view_profile_editor(p, names, None)).into()
     }
 
@@ -1476,7 +1489,7 @@ impl App {
         let names: Vec<String> = self.game().profiles.iter().map(|p| p.name.clone()).collect();
         let current = self.profile().map(|p| p.name.clone());
         let can_delete = names.len() > 1;
-        let active = self.profile_ref().is_some_and(|at| at == self.saved.active);
+        let active = self.profile_ref().is_some_and(|at| at == self.saved.active || self.saved.active_keyboard.as_ref() == Some(&at));
         let activate: Element<'_, Message> = match self.profile_ref() {
             Some(at) if !active && self.status.is_some() => {
                 button(text("Make active").size(13)).style(style::secondary).on_press(Message::ActivateProfile(at)).into()

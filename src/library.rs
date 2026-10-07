@@ -91,7 +91,7 @@ mod tests {
         let mut names = BTreeSet::new();
         for (file, text) in files::FILES {
             let pack = pack::parse(text).unwrap_or_else(|e| panic!("{file}: {e:#}"));
-            assert_eq!(pack.format, pack::FORMAT, "{file}: write library packs at the current format");
+            assert!([pack::FORMAT_WITHOUT_KEYBOARD, pack::FORMAT].contains(&pack.format), "{file}: write library packs at the current format");
             assert!(ids.insert(pack.pack.id.clone()), "{file}: pack ID used twice");
             assert!(names.insert(pack.pack.name.to_lowercase()), "{file}: game name used twice");
             assert_eq!(problems(&pack), Vec::<String>::new(), "{file}");

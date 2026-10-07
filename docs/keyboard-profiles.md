@@ -1,6 +1,6 @@
 # Keyboard profiles (remapping keyboard and mouse)
 
-Status: specified (2026-10-07). Nothing is implemented yet.
+Status: stages 1 and 2 implemented (2026-10-07): profile kinds, two active profiles, grabbing, key and mouse-button remaps, the panic chord and the WASD → ESDF template. Stages 3 and 4 are not.
 
 ## Goals
 

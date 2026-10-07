@@ -25,6 +25,8 @@ pub enum Request {
     SetProfile(String),
     /// Switch to exactly this profile.
     Activate(ProfileRef),
+    /// Stop remapping the keyboard and mouse.
+    DeactivateKeyboard,
     NextProfile,
     /// Keep the connection open; the daemon streams one `Option<InputSnapshot>` JSON line per
     /// update (at most ~60/s). `null` means no controller is active.
@@ -61,6 +63,9 @@ pub struct Status {
     /// The active profile's game; `None` is General.
     #[serde(default)]
     pub active_game: Option<String>,
+    /// The keyboard profile in use; `None` when the keyboard and mouse aren't remapped.
+    #[serde(default)]
+    pub active_keyboard: Option<ProfileRef>,
     /// Layers active right now (oldest first), on top of the active profile.
     #[serde(default)]
     pub active_layers: Vec<String>,

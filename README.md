@@ -62,6 +62,18 @@ More templates are available under "New from template…" in the GUI:
 - **Strategy**: mouse pointer on the left stick, arrow-key camera on the right, A/B/X = left/right/middle click, RT = left click for drag-select, L3/R3 = zoom (wheel up/down), LB/RB = held Ctrl/Shift, D-pad = control groups 1–4.
 - **Retro / platformer**: arrows on the D-pad and left stick, A/B/X/Y = Z/X/C/V, for keyboard-only indie games and emulators.
 
+## Keyboard profiles
+
+A profile is either a **gamepad** profile (the default) or a **keyboard** profile, chosen when it is created ("+ From template…"). A keyboard profile remaps the keyboard and mouse instead of a controller, for example to move WASD to ESDF in every game without changing each game's settings. Two profiles are active at once, one per kind: switching to a keyboard profile (header, auto-switch rule, `controller_app profile <name>`) leaves the gamepad profile alone, and the other way round. Guide / Next profile only cycles gamepad profiles. Settings has a default keyboard profile for outside games, which may be off.
+
+- **Remapping**: a key or mouse button can become a key or key combo, a mouse button, or nothing. Mappings are by physical key position (QWERTY names). Both Super keys can't be remapped.
+- **Other keys**: keys and buttons without a mapping pass through unchanged, or are blocked (the profile's choice). Mouse movement and the wheel always work, and so do Super and the Ctrl+Alt+F1–F12 console switches.
+- **Grabbing**: all attached keyboards and mice are grabbed only while a keyboard profile is active, so the game sees only the remapped input. With none active, nothing is touched. A key held down when the grab would start delays it until it is let go.
+- **Panic chord**: hold Ctrl+Alt+Shift+Esc (changeable on the Settings page, never empty) to turn all remapping off if something goes wrong; turn it back on in the settings window. If the daemon stops, the keyboard is released.
+- **Not yet**: gamepad outputs, mouse movement as an input, gestures, combos, toggles and layers on keyboard inputs. See `docs/keyboard-profiles.md`.
+
+The template **Keyboard: WASD → ESDF** moves W/A/S/D to E/S/D/F and turns the old E and F off.
+
 ## Layers
 
 A layer changes some of the controller's mappings while it's on, then changes them back, e.g. hold LB and the face buttons type F1–F4 and the right stick scrolls. Layers belong to a game (its **Layers** tab) and apply over whichever of its profiles is active; anything a layer doesn't set stays as in the profile. A layer can override buttons and stick directions, gestures, sticks, triggers (with their zones) and gyro, add combos, and switch the profile's combos off.

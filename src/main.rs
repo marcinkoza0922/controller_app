@@ -16,6 +16,7 @@ mod monitor;
 mod output;
 mod overlay;
 mod pack;
+mod remap;
 mod pad_svg;
 mod rumble;
 mod style;
@@ -78,6 +79,9 @@ fn status() -> Result<()> {
     match &s.active_game {
         Some(game) => println!("profile: {} ({game})", s.active_profile),
         None => println!("profile: {}", s.active_profile),
+    }
+    if let Some(at) = &s.active_keyboard {
+        println!("keyboard profile: {at}");
     }
     let tracking = match s.focus_backend {
         ipc::FocusBackend::Kwin => "focused window (KWin)",

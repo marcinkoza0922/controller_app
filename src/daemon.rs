@@ -23,8 +23,10 @@ use std::{
 use anyhow::{Context, Result, bail};
 use evdev::Device;
 
+use self::kbm::{Candidate, Grabbed};
+
 use crate::{
-    config::{Config, Profile, ProfileRef, Scope},
+    config::{Config, Profile, ProfileKind, ProfileRef, Scope},
     engine::{Engine, Opener},
     focus::{self, FocusEvent},
     input::{self, InputEvent, MotionFrame, MotionNormalizer, MotionSample, Normalizer},
@@ -35,9 +37,11 @@ use crate::{
     menu::{MenuOutcome, MenuSession},
     overlay::{OverlayAction, OverlayController, OverlayFrame, OverlayView},
     rumble,
+    remap::{RawEvent, Remapper},
 };
 
 mod logs;
+mod kbm;
 
 const TICK: Duration = Duration::from_millis(4);
 /// How often a fading info overlay is redrawn.
@@ -64,6 +68,8 @@ enum Msg {
     Motion { id: u64, sample: MotionSample },
     MotionGone { id: u64 },
     WatchOverlay(Sender<OverlayFrame>),
+    Remap { id: u64, events: Vec<RawEvent> },
+    RemapGone { id: u64 },
 }
 
 struct Managed {
@@ -185,6 +191,11 @@ struct Daemon {
     /// Gamepads we have seen, managed or not, for status reporting.
     gamepads: HashMap<NodeKey, SeenGamepad>,
     motion_nodes: HashMap<NodeKey, MotionNode>,
+    /// Keyboards and mice we could remap, grabbed or not.
+    remappable: HashMap<NodeKey, Candidate>,
+    /// The ones grabbed now, while a keyboard profile is active.
+    grabbed: HashMap<u64, Grabbed>,
+    remapper: Remapper,
     /// Controller motion sensors we lack permission to open (names), for the GUI to explain.
     motion_denied: HashMap<NodeKey, String>,
     /// Clients streaming live input (the GUI's controller view).
@@ -250,6 +261,9 @@ pub fn run() -> Result<()> {
         skipped: HashSet::new(),
         gamepads: HashMap::new(),
         motion_nodes: HashMap::new(),
+        remappable: HashMap::new(),
+        grabbed: HashMap::new(),
+        remapper: Remapper::default(),
         motion_denied: HashMap::new(),
         watchers: Vec::new(),
         last_active: None,
@@ -275,6 +289,7 @@ pub fn run() -> Result<()> {
         overlay_process: None,
         tx,
     };
+    daemon.remapper.set_chord(&daemon.config.panic_chord);
     log!("controller_app daemon started, socket at {}", ipc::socket_path().display());
     {
         let tx = daemon.tx.clone();
@@ -765,6 +780,8 @@ impl Daemon {
     fn handle(&mut self, msg: Msg) {
         match msg {
             Msg::Input { id, events } => self.input(id, events),
+            Msg::Remap { id, events } => self.remap_input(id, events),
+            Msg::RemapGone { id } => self.remap_gone(id),
             Msg::Gone { id } => {
                 if let Some(mut dev) = self.devices.remove(&id) {
                     monitor::clear();
@@ -950,11 +967,15 @@ impl Daemon {
 
     /// Switches to a profile a rule (or the default) picked, with a toast if `toast`.
     fn auto_switch_to(&mut self, target: ProfileRef, reason: &str, toast: bool) {
-        if target == self.config.active_ref() {
-            return;
-        }
-        if self.config.profile(&target).is_none() {
+        let Some(kind) = self.config.profile(&target).map(|p| p.kind) else {
             log!("auto-switch points to missing profile {target}");
+            return;
+        };
+        let current = match kind {
+            ProfileKind::Gamepad => Some(self.config.active_ref()),
+            ProfileKind::Keyboard => self.config.active_keyboard.clone(),
+        };
+        if current.as_ref() == Some(&target) {
             return;
         }
         log!("{reason} → profile {target}");
@@ -971,6 +992,15 @@ impl Daemon {
         let in_game = self.config.active_ref().game.is_some_and(|g| focus::has_rules(&self.config, &g));
         if in_game && let Some(default) = self.config.auto_switch.default_profile.clone() {
             self.auto_switch_to(default, reason, false);
+        }
+        let keyboard_in_game = self.config.active_keyboard.as_ref().and_then(|at| at.game.as_ref()).is_some_and(|g| focus::has_rules(&self.config, g));
+        if keyboard_in_game {
+            match self.config.auto_switch.default_keyboard_profile.clone() {
+                Some(default) => self.auto_switch_to(default, reason, false),
+                None => {
+                    self.set_keyboard_profile(None);
+                }
+            }
         }
     }
 
@@ -1097,6 +1127,7 @@ impl Daemon {
                 let mut new = *new;
                 new.enabled = self.config.enabled;
                 new.carry_active(&self.config.active);
+                new.carry_active_keyboard(self.config.active_keyboard.as_ref());
                 self.replace_config(new)
             }
             Request::Reload => match Config::load() {
@@ -1122,6 +1153,10 @@ impl Daemon {
                     return Response::Error(format!("no profile {target}"));
                 }
                 self.switch_profile(target);
+                Response::Ok
+            }
+            Request::DeactivateKeyboard => {
+                self.set_keyboard_profile(None);
                 Response::Ok
             }
             Request::NextProfile => {
@@ -1180,8 +1215,8 @@ impl Daemon {
     }
 
     fn replace_config(&mut self, new: Config) -> Response {
-        if new.general.profiles.is_empty() {
-            return Response::Error("General must have at least one profile".into());
+        if !new.general.profiles.iter().any(|p| p.kind.is_gamepad()) {
+            return Response::Error("General must have at least one gamepad profile".into());
         }
         // An open menu refers to menus by position, which the new config may change.
         if matches!(self.active, Some(Active::Menu { .. })) {
@@ -1190,6 +1225,8 @@ impl Daemon {
         // Toggled layers stay on; they apply again if the game still has them.
         self.release_all(true);
         self.config = new;
+        self.remapper.set_chord(&self.config.panic_chord);
+        self.reset_remap();
         self.refresh_scope();
         let ignored = self.config.ignored_devices.clone();
         let enabled = self.config.enabled;
@@ -1222,8 +1259,31 @@ impl Daemon {
         }
     }
 
-    /// Switches profile; false if it was already active.
+    /// Switches the keyboard profile (`None`: stop remapping the keyboard and mouse); false if
+    /// nothing changed.
+    fn set_keyboard_profile(&mut self, target: Option<ProfileRef>) -> bool {
+        if target == self.config.active_keyboard {
+            return false;
+        }
+        match &target {
+            Some(target) => log!("switching to keyboard profile {target}"),
+            None => log!("keyboard remapping off"),
+        }
+        self.config.active_keyboard = target;
+        self.reset_remap();
+        self.sync_remap();
+        self.broadcast_overlay();
+        if let Err(e) = self.config.save() {
+            log!("saving config: {e:#}");
+        }
+        true
+    }
+
+    /// Switches the profile of `target`'s kind; false if it was already active.
     fn set_profile(&mut self, target: ProfileRef) -> bool {
+        if self.config.profile(&target).is_some_and(|p| p.kind == ProfileKind::Keyboard) {
+            return self.set_keyboard_profile(Some(target));
+        }
         if target == self.config.active_ref() {
             return false;
         }
@@ -1308,6 +1368,7 @@ impl Daemon {
             enabled: self.config.enabled,
             active_profile: self.config.active().map(|p| p.name.clone()).unwrap_or_default(),
             active_game: self.config.active_ref().game,
+            active_keyboard: self.config.active_keyboard_profile().and(self.config.active_keyboard.clone()),
             active_layers: self.active_layers(),
             devices,
             focus_backend: self.focus_backend,
@@ -1334,6 +1395,7 @@ impl Daemon {
 
             if self.skipped.contains(&key)
                 || self.motion_nodes.contains_key(&key)
+                || self.remappable.contains_key(&key)
                 || self.devices.values().any(|d| d.path == path)
             {
                 continue;
@@ -1344,24 +1406,19 @@ impl Daemon {
                 continue;
             }
             // Permission errors are not cached: udev may grant access a moment later.
-            let Ok(dev) = Device::open(&path) else {
-                if !self.motion_denied.contains_key(&key)
-                    && let Some(name) = input::inaccessible_motion_sensor(&path)
-                {
-                    log!("gyro: no permission to read {name}; install dist/70-controller-app-motion.rules");
-                    self.motion_denied.insert(key, name);
-                }
-                continue;
-            };
-            self.motion_denied.remove(&key);
+            let Some(dev) = self.open_node(&key, &path) else { continue };
             let name = dev.name().unwrap_or("Unknown").to_string();
             if !is_uinput(&path) && input::is_motion_sensor(&dev) {
                 let uniq = dev.unique_name().map(str::to_string);
                 self.motion_nodes.insert(key, MotionNode { path: path.clone(), name, parent: hid_parent(&path), uniq });
                 continue;
             }
-            if name.starts_with(VIRTUAL_PREFIX) || is_uinput(&path) || !input::is_gamepad(&dev) {
+            if name.starts_with(VIRTUAL_PREFIX) || is_uinput(&path) {
                 self.skipped.insert(key);
+                continue;
+            }
+            if !input::is_gamepad(&dev) {
+                self.note_other_device(key, path, name, &dev);
                 continue;
             }
             let analog_triggers = input::has_analog_triggers(&dev);
@@ -1373,11 +1430,29 @@ impl Daemon {
         }
         self.skipped.retain(|k| present.contains(k));
         self.motion_nodes.retain(|k, _| present.contains(k));
+        self.remappable.retain(|k, _| present.contains(k));
         self.motion_denied.retain(|k, _| present.contains(k));
         self.check_overlay_process();
         self.attach_motion();
         self.scan_processes();
+        self.sync_remap();
         self.gamepads.retain(|k, _| present.contains(k));
+    }
+
+    /// Opens an input node. Permission errors are not cached: udev may grant access a moment
+    /// later; a motion sensor we can't read is remembered so the GUI can explain.
+    fn open_node(&mut self, key: &NodeKey, path: &Path) -> Option<Device> {
+        let Ok(dev) = Device::open(path) else {
+            if !self.motion_denied.contains_key(key)
+                && let Some(name) = input::inaccessible_motion_sensor(path)
+            {
+                log!("gyro: no permission to read {name}; install dist/70-controller-app-motion.rules");
+                self.motion_denied.insert(key.clone(), name);
+            }
+            return None;
+        };
+        self.motion_denied.remove(key);
+        Some(dev)
     }
 
     fn manage(&mut self, path: PathBuf, name: String, mut dev: Device) {

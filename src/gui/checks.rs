@@ -291,6 +291,11 @@ pub(super) fn game_problem(config: &Config, g: &Game) -> Option<String> {
         }) {
             return Some(format!("Profile {:?}: {problem}.", p.name));
         }
+        if p.kind == crate::config::ProfileKind::Keyboard
+            && let Some(problem) = keymap::keyboard_problem(&p.keyboard)
+        {
+            return Some(format!("Profile {:?}: {problem}.", p.name));
+        }
         if let Some(c) = p.combos.iter().find(|c| c.buttons.len() < 2) {
             return Some(format!("Profile {:?}: a combo needs at least two buttons (has {}).", p.name, c.buttons.len()));
         }
@@ -397,9 +402,20 @@ impl App {
         if let Some(d) = config.auto_switch.default_profile.as_ref().filter(|d| config.profile(d).is_none()) {
             return Some(format!("The per-game default profile {d} no longer exists."));
         }
-        None
+        if let Some(d) = config.auto_switch.default_keyboard_profile.as_ref().filter(|d| config.profile(d).is_none_or(|p| p.kind.is_gamepad())) {
+            return Some(format!("The default keyboard profile {d} no longer exists."));
+        }
+        panic_chord_problem(&config.panic_chord)
     }
 
+}
+
+/// Why the panic chord can't be used: it must name at least one known key.
+pub(super) fn panic_chord_problem(chord: &[String]) -> Option<String> {
+    if chord.is_empty() {
+        return Some("The panic chord can't be empty.".into());
+    }
+    chord.iter().find(|k| KeyCode::from_str(k).is_err()).map(|bad| format!("The panic chord has an unknown key: {:?}.", short_key(bad)))
 }
 
 #[cfg(test)]

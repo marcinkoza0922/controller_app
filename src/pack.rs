@@ -8,12 +8,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{
     ButtonAction, Config, Game, GyroMode, Indicator, InfoOverlay, ItemKind, Layer, LogOverlay, Macro, Menu, MacroStep, Origin,
-    OverlayStyle, PackInfo, PackRef, Profile, Rule, Shared, free_name,
+    OverlayStyle, PackInfo, PackRef, Profile, ProfileKind, Rule, Shared, free_name,
 };
 
 /// The pack format this app writes, and the newest it reads. 2 added layers; 3, toggles
-/// that start on; 4, the keyboard and numpad styles; 5, the overlay font; 6, grid menus.
-pub const FORMAT: u32 = 6;
+/// that start on; 4, the keyboard and numpad styles; 5, the overlay font; 6, grid menus;
+/// 7, keyboard profiles.
+pub const FORMAT: u32 = 7;
+/// What a pack without keyboard profiles is written as, so apps that predate them still read it.
+pub const FORMAT_WITHOUT_KEYBOARD: u32 = 6;
 pub const EXTENSION: &str = "padpack";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -352,8 +355,9 @@ pub fn export(game: &Game, shared: &Shared, info: &PackInfo) -> Export {
     }
     let features = features(&pack_game);
     let requires: BTreeSet<Feature> = features.iter().map(|f| f.feature).collect();
+    let has_keyboard = pack_game.profiles.iter().any(|p| p.kind == ProfileKind::Keyboard);
     let pack = Pack {
-        format: FORMAT,
+        format: if has_keyboard { FORMAT } else { FORMAT_WITHOUT_KEYBOARD },
         pack: Header {
             id: info.id.clone(),
             name: game.name.clone(),
@@ -694,13 +698,24 @@ mod tests {
     }
 
     #[test]
+    fn keyboard_profiles_need_the_newer_format_and_keep_their_kind() {
+        let mut config = setup();
+        config.games[0].profiles.push(Profile::keyboard("Keys"));
+        let out = export(&config.games[0], &config.shared, &draft(&config.games[0], false));
+        let text = out.pack.to_toml().unwrap();
+        assert!(text.contains(&format!("format = {FORMAT}")), "{text}");
+        let back = parse(&text).unwrap().to_game();
+        assert_eq!(back.profile("Keys").unwrap().kind, ProfileKind::Keyboard);
+    }
+
+    #[test]
     fn packs_roundtrip_and_newer_formats_are_refused() {
         let config = setup();
         let out = export(&config.games[0], &config.shared, &draft(&config.games[0], false));
         let text = out.pack.to_toml().unwrap();
         assert_eq!(parse(&text).unwrap(), out.pack);
 
-        let newer = text.replacen(&format!("format = {FORMAT}"), &format!("format = {}", FORMAT + 1), 1);
+        let newer = text.replacen(&format!("format = {FORMAT_WITHOUT_KEYBOARD}"), &format!("format = {}", FORMAT + 1), 1);
         assert!(parse(&newer).unwrap_err().to_string().contains("newer version of the app"));
         let extra = format!("surprise = 1\n{text}");
         assert!(parse(&extra).is_err(), "strict within a format");
@@ -820,7 +835,7 @@ mod tests {
         assert!(out.pulled_in.contains(&(ItemKind::Info, "Cheat sheet".into())), "an indicator's info overlay comes along");
         assert_eq!(out.features, [FeatureUse { feature: Feature::Gyro, place: "layer “Deeper”".into() }]);
         let text = out.pack.to_toml().unwrap();
-        assert!(text.contains(&format!("format = {FORMAT}")));
+        assert!(text.contains(&format!("format = {FORMAT_WITHOUT_KEYBOARD}")));
         let back = parse(&text).unwrap();
         assert_eq!(back.layers.len(), 2);
         assert_eq!(back.to_game().layers[0], layer);

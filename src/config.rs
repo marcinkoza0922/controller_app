@@ -7,9 +7,11 @@ use std::{
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+mod keyboard;
 mod log;
 mod summary;
 
+pub use keyboard::*;
 pub use log::*;
 
 /// Normalized gamepad button, following the Linux gamepad spec (Documentation/input/gamepad.rst).
@@ -174,7 +176,7 @@ impl fmt::Display for Trigger {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum MouseButton {
     Left,
     Right,
@@ -1283,9 +1285,30 @@ impl From<TriggerConfigRepr> for TriggerConfig {
     }
 }
 
+/// Which devices a profile remaps: the gamepads, or the keyboard and mouse.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProfileKind {
+    #[default]
+    Gamepad,
+    Keyboard,
+}
+
+impl ProfileKind {
+    pub fn is_gamepad(&self) -> bool {
+        *self == ProfileKind::Gamepad
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Profile {
     pub name: String,
+    /// Fixed when the profile is created.
+    #[serde(default, skip_serializing_if = "ProfileKind::is_gamepad")]
+    pub kind: ProfileKind,
+    /// What a [`ProfileKind::Keyboard`] profile remaps.
+    #[serde(default, skip_serializing_if = "KeyboardMap::is_default")]
+    pub keyboard: KeyboardMap,
     pub buttons: BTreeMap<Button, ButtonAction>,
     pub left_stick: StickConfig,
     pub right_stick: StickConfig,
@@ -1429,6 +1452,8 @@ impl Profile {
             .collect();
         Profile {
             name: name.into(),
+            kind: ProfileKind::Gamepad,
+            keyboard: KeyboardMap::default(),
             buttons,
             left_stick: StickConfig::new(StickAction::Gamepad { stick: Stick::Left, invert_y: false }, 0.05, 1.0),
             right_stick: StickConfig::new(StickAction::Gamepad { stick: Stick::Right, invert_y: false }, 0.05, 1.0),
@@ -1574,6 +1599,8 @@ impl Profile {
         ]);
         Profile {
             name: name.into(),
+            kind: ProfileKind::Gamepad,
+            keyboard: KeyboardMap::default(),
             buttons,
             left_stick: StickConfig::new(StickAction::Mouse { speed: 1200.0 }, 0.12, 2.0),
             right_stick: StickConfig::new(StickAction::Scroll { speed: 15.0 }, 0.15, 2.0),
@@ -1689,6 +1716,9 @@ pub struct AutoSwitch {
     /// current profile alone.
     #[serde(default = "AutoSwitch::gamepad", with = "keep_or_profile")]
     pub default_profile: Option<ProfileRef>,
+    /// The keyboard profile to return to likewise; `None` turns keyboard remapping off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_keyboard_profile: Option<ProfileRef>,
 }
 
 impl AutoSwitch {
@@ -1699,7 +1729,7 @@ impl AutoSwitch {
 
 impl Default for AutoSwitch {
     fn default() -> Self {
-        AutoSwitch { enabled: true, default_profile: AutoSwitch::gamepad() }
+        AutoSwitch { enabled: true, default_profile: AutoSwitch::gamepad(), default_keyboard_profile: None }
     }
 }
 
@@ -2049,8 +2079,16 @@ impl ScopeRef<'_> {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Config {
     pub enabled: bool,
+    /// The gamepad profile in use. Always a [`ProfileKind::Gamepad`] one.
     #[serde(default)]
     pub active: ProfileRef,
+    /// The keyboard profile in use, if any: a [`ProfileKind::Keyboard`] one. With none, the
+    /// keyboard and mouse aren't remapped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_keyboard: Option<ProfileRef>,
+    /// Keys that, held together, turn all remapping off. Never empty.
+    #[serde(default = "default_panic_chord")]
+    pub panic_chord: Vec<String>,
     /// Device names the daemon should leave alone.
     #[serde(default)]
     pub ignored_devices: Vec<String>,
@@ -2083,6 +2121,8 @@ impl Default for Config {
         Config {
             enabled: true,
             active: ProfileRef::new(None, "Gamepad"),
+            active_keyboard: None,
+            panic_chord: default_panic_chord(),
             ignored_devices: Vec::new(),
             auto_switch: AutoSwitch::default(),
             gyro_calibration: BTreeMap::new(),
@@ -2195,8 +2235,10 @@ impl Config {
         let mut config = Config {
             enabled: old.enabled,
             active: ProfileRef::default(),
+            active_keyboard: None,
+            panic_chord: default_panic_chord(),
             ignored_devices: old.ignored_devices,
-            auto_switch: AutoSwitch { enabled: old.auto_switch.enabled, default_profile: None },
+            auto_switch: AutoSwitch { enabled: old.auto_switch.enabled, default_profile: None, default_keyboard_profile: None },
             gyro_calibration: old.gyro_calibration,
             keyboard_style: old.keyboard_style,
             numpad_style: old.numpad_style,
@@ -2338,8 +2380,25 @@ impl Config {
     /// Where to go when the active profile disappears (e.g. its game was deleted): the
     /// auto-switch default if it still exists, else General's first profile.
     pub fn fallback_profile(&self) -> ProfileRef {
-        let default = self.auto_switch.default_profile.clone().filter(|d| self.profile(d).is_some());
-        default.unwrap_or_else(|| ProfileRef::new(None, self.general.profiles.first().map_or("", |p| &p.name)))
+        let default = self.auto_switch.default_profile.clone().filter(|d| self.profile(d).is_some_and(|p| p.kind.is_gamepad()));
+        let first = self.general.profiles.iter().find(|p| p.kind.is_gamepad());
+        default.unwrap_or_else(|| ProfileRef::new(None, first.map_or("", |p| &p.name)))
+    }
+
+    /// The keyboard profile in use, if it still exists.
+    pub fn active_keyboard_profile(&self) -> Option<&Profile> {
+        self.active_keyboard.as_ref().and_then(|at| self.profile(at)).filter(|p| p.kind == ProfileKind::Keyboard)
+    }
+
+    /// Like [`Config::carry_active`], for the keyboard profile: with none left it falls back to the
+    /// auto-switch default, else to no remapping.
+    pub fn carry_active_keyboard(&mut self, previous: Option<&ProfileRef>) {
+        let usable = |config: &Config, at: &ProfileRef| config.profile(at).is_some_and(|p| p.kind == ProfileKind::Keyboard);
+        self.active_keyboard = previous
+            .filter(|at| usable(self, at))
+            .or(self.active_keyboard.as_ref().filter(|at| usable(self, at)))
+            .or(self.auto_switch.default_keyboard_profile.as_ref().filter(|at| usable(self, at)))
+            .cloned();
     }
 
     /// Settles which profile is active in this config, which replaces one where `previous`
@@ -2358,7 +2417,7 @@ impl Config {
     /// The next profile of the active game, wrapping around.
     pub fn next_profile(&self) -> Option<ProfileRef> {
         let at = self.active_ref();
-        let profiles = &self.active_game().profiles;
+        let profiles: Vec<&Profile> = self.active_game().profiles.iter().filter(|p| p.kind.is_gamepad()).collect();
         let idx = profiles.iter().position(|p| p.name == at.profile)?;
         let next = &profiles[(idx + 1) % profiles.len()];
         Some(ProfileRef { profile: next.name.clone(), ..at })
@@ -2756,6 +2815,32 @@ mod tests {
         let config = Config { general: Game::new("General", templates()), ..Config::default() };
         let back: Config = toml::from_str(&toml::to_string_pretty(&config).unwrap()).unwrap();
         assert_eq!(config, back);
+    }
+
+    #[test]
+    fn keyboard_profiles_are_a_second_slot_and_never_the_gamepad_one() {
+        let mut config = Config::default();
+        config.general.profiles.push(Profile::keyboard("Keys"));
+        let text = toml::to_string(&config).unwrap();
+        assert!(text.contains("kind = \"keyboard\""), "{text}");
+        assert!(!text.contains("kind = \"gamepad\""), "gamepad is the default and stays unwritten");
+        assert_eq!(toml::from_str::<Config>(&text).unwrap(), config);
+
+        // Guide on a pad skips keyboard profiles.
+        config.general.profiles.insert(1, Profile::keyboard("Keys 2"));
+        assert_eq!(config.next_profile(), Some(ProfileRef::new(None, "Desktop")));
+
+        // The keyboard slot is empty until set, falls back to the default, then to off.
+        config.carry_active_keyboard(None);
+        assert_eq!(config.active_keyboard, None);
+        config.auto_switch.default_keyboard_profile = Some(ProfileRef::new(None, "Keys"));
+        config.carry_active_keyboard(None);
+        assert_eq!(config.active_keyboard, Some(ProfileRef::new(None, "Keys")));
+        config.carry_active_keyboard(Some(&ProfileRef::new(None, "Keys 2")));
+        assert_eq!(config.active_keyboard, Some(ProfileRef::new(None, "Keys 2")));
+        // A gamepad profile never fills the keyboard slot.
+        config.carry_active_keyboard(Some(&ProfileRef::new(None, "Desktop")));
+        assert_eq!(config.active_keyboard, Some(ProfileRef::new(None, "Keys 2")));
     }
 
     #[test]

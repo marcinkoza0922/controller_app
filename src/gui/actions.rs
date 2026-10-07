@@ -14,6 +14,14 @@ pub(super) enum KeyField {
     Action { target: Target, path: Vec<usize> },
     /// One direction (0 up, 1 down, 2 left, 3 right) of a stick in direction-keys mode.
     StickDir { stick: Stick, dir: usize },
+    /// A keyboard profile: the key an existing row remaps.
+    KbSource(KbInput),
+    /// A keyboard profile: what an input becomes.
+    KbTarget(KbInput),
+    /// A keyboard profile: a key to remap, not in the list yet.
+    KbNew,
+    /// Settings: the chord that turns remapping off.
+    PanicChord,
 }
 
 impl KeyField {
@@ -637,6 +645,9 @@ impl App {
             }
             return;
         }
+        if matches!(field, KeyField::KbSource(_) | KeyField::KbTarget(_) | KeyField::KbNew | KeyField::PanicChord) {
+            return self.apply_keymap_keys(field, keys);
+        }
         let Some(p) = self.profile_mut() else { return };
         match field {
             KeyField::StickDir { stick, dir } => {
@@ -650,6 +661,7 @@ impl App {
                     *slot = keys.into_iter().next().unwrap_or_default();
                 }
             }
+            KeyField::KbSource(_) | KeyField::KbTarget(_) | KeyField::KbNew | KeyField::PanicChord => {}
             KeyField::Action { target, path } => {
                 let root = match target {
                     Target::Button(b) => Some(p.buttons.entry(b).or_insert(ButtonAction::Disabled)),
