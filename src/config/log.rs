@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{OverlayStyle, Paint, ScreenPosition};
+use super::{Button, OverlayStyle, Paint, ScreenPosition, Stick, Trigger};
 
 /// An on-screen log, shown like an info overlay: always while its game is active, or while
 /// a `ShowLog` action holds it up.
@@ -54,15 +54,12 @@ pub enum LogEnd {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct InputLogSettings {
-    /// The controller to follow, numbered from 0 in the order they connected; all of them
-    /// when unset.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub device: Option<u8>,
+    /// Which inputs, from which controller, and how they group into lines.
+    #[serde(flatten)]
+    pub tracking: InputTracking,
     /// Lines (sequences) shown.
     pub lines: u8,
     pub newest: LogEnd,
-    /// A pause longer than this (milliseconds) starts a new line.
-    pub gap_ms: u64,
     /// Seconds after a line's last input that it fades away; never when 0. (Not an
     /// `Option`: TOML can't write `None`, and the default would come back on loading.)
     pub fade_after: f32,
@@ -77,10 +74,9 @@ pub struct InputLogSettings {
 impl Default for InputLogSettings {
     fn default() -> Self {
         InputLogSettings {
-            device: None,
+            tracking: InputTracking::default(),
             lines: 8,
             newest: LogEnd::Top,
-            gap_ms: DEFAULT_GAP_MS,
             fade_after: 5.0,
             merge_repeats: true,
             show_labels: true,
@@ -89,8 +85,117 @@ impl Default for InputLogSettings {
     }
 }
 
+/// What an input display follows: shared by log overlays and `{current_input}` cells.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct InputTracking {
+    /// The controller to follow, numbered from 0 in the order they connected; all of them
+    /// when unset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device: Option<u8>,
+    /// A pause longer than this (milliseconds) starts a new sequence.
+    pub gap_ms: u64,
+    /// Inputs shown per sequence at most; the oldest are pushed out first.
+    pub max_inputs: u8,
+    /// Inputs left out, as if never pressed.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ignored: Vec<TrackedInput>,
+}
+
+impl Default for InputTracking {
+    fn default() -> Self {
+        InputTracking { device: None, gap_ms: DEFAULT_GAP_MS, max_inputs: DEFAULT_MAX_INPUTS, ignored: Vec::new() }
+    }
+}
+
+impl InputTracking {
+    pub fn tracks(&self, input: TrackedInput) -> bool {
+        !self.ignored.contains(&input)
+    }
+
+    /// Starts or stops following `input`.
+    pub fn set_tracked(&mut self, input: TrackedInput, on: bool) {
+        self.ignored.retain(|i| *i != input);
+        if !on {
+            self.ignored.push(input);
+        }
+    }
+}
+
+/// `{current_input}` settings of an info overlay: what its cells follow, and how long a
+/// sequence stays after it ends.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CurrentInput {
+    #[serde(flatten)]
+    pub tracking: InputTracking,
+    pub stay_ms: u64,
+}
+
+impl Default for CurrentInput {
+    fn default() -> Self {
+        CurrentInput { tracking: InputTracking::default(), stay_ms: DEFAULT_STAY_MS }
+    }
+}
+
+impl CurrentInput {
+    pub fn is_default(&self) -> bool {
+        *self == CurrentInput::default()
+    }
+}
+
+/// One input an input display can leave out. The d-pad and each stick count as one, all
+/// their directions together.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrackedInput {
+    Button(Button),
+    Dpad,
+    Stick(Stick),
+    Trigger(Trigger),
+}
+
+impl TrackedInput {
+    pub fn name(self) -> &'static str {
+        match self {
+            TrackedInput::Button(b) => b.short_name(),
+            TrackedInput::Dpad => "D-pad",
+            TrackedInput::Stick(Stick::Left) => "Left stick",
+            TrackedInput::Stick(Stick::Right) => "Right stick",
+            TrackedInput::Trigger(Trigger::Left) => "LT",
+            TrackedInput::Trigger(Trigger::Right) => "RT",
+        }
+    }
+}
+
+/// The inputs in groups, as the settings window offers them.
+pub const INPUT_GROUPS: [(&str, &[TrackedInput]); 7] = [
+    (
+        "Face buttons",
+        &[
+            TrackedInput::Button(Button::South),
+            TrackedInput::Button(Button::East),
+            TrackedInput::Button(Button::West),
+            TrackedInput::Button(Button::North),
+        ],
+    ),
+    ("Bumpers", &[TrackedInput::Button(Button::LeftBumper), TrackedInput::Button(Button::RightBumper)]),
+    ("Triggers", &[TrackedInput::Trigger(Trigger::Left), TrackedInput::Trigger(Trigger::Right)]),
+    ("D-pad", &[TrackedInput::Dpad]),
+    ("Sticks", &[TrackedInput::Stick(Stick::Left), TrackedInput::Stick(Stick::Right)]),
+    ("Stick clicks", &[TrackedInput::Button(Button::LeftStick), TrackedInput::Button(Button::RightStick)]),
+    (
+        "Start, Select, Guide",
+        &[TrackedInput::Button(Button::Start), TrackedInput::Button(Button::Select), TrackedInput::Button(Button::Guide)],
+    ),
+];
+
 /// A pause longer than this ends a sequence of inputs, unless set otherwise.
 pub const DEFAULT_GAP_MS: u64 = 250;
+/// Inputs a sequence shows at most, unless set otherwise.
+pub const DEFAULT_MAX_INPUTS: u8 = 12;
+/// How long `{current_input}` stays after its sequence ends, unless set otherwise.
+pub const DEFAULT_STAY_MS: u64 = 1000;
 
 impl OverlayStyle {
     /// Log overlays: middle left, out of the info overlays' corner, small and see-through.

@@ -369,7 +369,7 @@ impl App {
                 let cells = |a: &str, b: &str| vec![a.to_string(), b.to_string()];
                 let overlay = InfoOverlay {
                     name,
-                    always: true, on_start: None, linger: None,
+                    always: true, on_start: None, linger: None, current_input: Default::default(),
                     style: OverlayStyle::info(),
                     rows: vec![cells("{south}", "Jump"), cells("{west}", "Reload")],
                 };
@@ -418,6 +418,11 @@ impl App {
             Message::SetInfoAlways(i, always) => {
                 if let Some(o) = self.infos_mut().get_mut(i) {
                     o.always = always;
+                }
+            }
+            Message::SetInfoInput(i, input) => {
+                if let Some(o) = self.infos_mut().get_mut(i) {
+                    o.current_input = input;
                 }
             }
             Message::SetInfoStyle(i, style) => {
@@ -1051,7 +1056,47 @@ impl App {
         }
         grid = grid.push(button(text("+ Add row").size(13)).style(style::secondary).on_press(Message::AddInfoRow(i)));
         rows.push(grid.into());
+        rows.extend(self.view_info_input(i, o));
         column(rows).spacing(10).into()
+    }
+
+    /// Settings for the `{current_input}` cells, once the overlay has any.
+    fn view_info_input<'a>(&self, i: usize, o: &'a InfoOverlay) -> Vec<Element<'a, Message>> {
+        if crate::info::input_tokens(o).is_empty() {
+            return Vec::new();
+        }
+        let base = o.current_input.clone();
+        let on_tracking: OnTracking<'a> = Rc::new(move |t| Message::SetInfoInput(i, CurrentInput { tracking: t, ..base.clone() }));
+        let mut rows = vec![
+            row![
+                text("Input").size(16),
+                help(
+                    "What the {current_input} cells show: the latest burst of presses, until it's been over \
+                     for a moment. A token can still set its own controller and timings, e.g. \
+                     {current_input_device_1:400:2000}."
+                        .into(),
+                ),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .into(),
+        ];
+        rows.extend(self.tracking_editor((ItemKind::Info, i), &o.current_input.tracking, "sequence", &on_tracking));
+        let base = o.current_input.clone();
+        rows.push(labeled(
+            "Stays for",
+            row![
+                slider(0.0..=5000.0, base.stay_ms as f32, move |v| Message::SetInfoInput(i, CurrentInput { stay_ms: v as u64, ..base.clone() }))
+                    .step(100.0_f32)
+                    .width(300),
+                text(format!("{} ms", o.current_input.stay_ms)).size(13),
+                help("How long a sequence stays after it's over, then it's cleared.".into()),
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center)
+            .into(),
+        ));
+        rows
     }
 
     /// A menu as its own collapsible card: a summary line, or the full editor when open.

@@ -9,7 +9,6 @@ use std::{
 use super::{Daemon, FADE_FRAME, Managed, layered};
 use crate::{
     config::{InfoOverlay, LogOverlay, LogSource, Profile, Stick, Trigger},
-    info::Token,
     input::InputEvent,
     inputlog::{self, Entry, FiredFrom, Inputs, LogView, Thresholds},
     overlay::OverlayAction,
@@ -119,9 +118,9 @@ impl Daemon {
             .iter()
             .map(|(o, opacity)| {
                 let LogSource::Input(s) = &o.source;
-                let entries = self.entries(s.device);
+                let entries = self.entries(s.tracking.device);
                 if let Some(life) = inputlog::line_life(s) {
-                    let due = inputlog::next_change(&entries, Duration::from_millis(s.gap_ms), life, now, FADE_FRAME);
+                    let due = inputlog::next_change(&entries, &s.tracking, life, now, FADE_FRAME);
                     redraw = redraw.into_iter().chain(due).min();
                 }
                 LogView { opacity: *opacity, ..inputlog::log_view(&entries, s, &o.style, family, now) }
@@ -137,12 +136,9 @@ impl Daemon {
         shown
             .iter()
             .flat_map(|o| crate::info::input_tokens(o))
-            .filter_map(|t| match t {
-                Token::CurrentInput { device, gap_ms, stay_ms } => {
-                    let gap = Duration::from_millis(gap_ms);
-                    inputlog::next_change(&inputs.entries(device), gap, gap + Duration::from_millis(stay_ms), now, FADE_FRAME)
-                }
-                _ => None,
+            .filter_map(|c| {
+                let after = Duration::from_millis(c.tracking.gap_ms + c.stay_ms);
+                inputlog::next_change(&inputs.entries(c.tracking.device), &c.tracking, after, now, FADE_FRAME)
             })
             .min()
     }

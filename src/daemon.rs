@@ -665,6 +665,7 @@ impl Daemon {
                         always: true,
                         on_start: None,
                         linger: None,
+                        current_input: Default::default(),
                         style: layer.indicator_style.clone(),
                         rows: vec![vec![name.clone()]],
                     },

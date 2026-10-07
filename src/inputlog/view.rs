@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{Entry, Input};
 use crate::{
-    config::{InputLogSettings, LogEnd, OverlayStyle, Stick},
+    config::{CurrentInput, InputLogSettings, InputTracking, LogEnd, OverlayStyle, Stick, TrackedInput},
     info::{PadFamily, Segment, button_glyph, glyph, trigger_glyph},
 };
 
@@ -73,8 +73,22 @@ fn ended(seq: &[Entry]) -> Option<Instant> {
     seq.iter().map(|e| e.released).collect::<Option<Vec<_>>>()?.into_iter().max()
 }
 
-/// Folds presses of the same input (with the same label) in a row into one cell.
-fn cells(seq: &[Entry], merge: bool, family: PadFamily) -> Vec<LogCell> {
+/// The entries of the inputs `t` follows (a combo when any of its buttons is), as if the
+/// rest were never pressed.
+fn tracked(entries: &[Entry], t: &InputTracking) -> Vec<Entry> {
+    let follows = |input: &Input| match input {
+        Input::Button(b) => t.tracks(TrackedInput::Button(*b)),
+        Input::Direction(None, _) => t.tracks(TrackedInput::Dpad),
+        Input::Direction(Some(s), _) => t.tracks(TrackedInput::Stick(*s)),
+        Input::Trigger(tr) => t.tracks(TrackedInput::Trigger(*tr)),
+        Input::Combo(members) => members.iter().any(|b| t.tracks(TrackedInput::Button(*b))),
+    };
+    entries.iter().filter(|e| follows(&e.input)).cloned().collect()
+}
+
+/// Folds presses of the same input (with the same label) in a row into one cell, keeping
+/// the newest `max` cells.
+fn cells(seq: &[Entry], merge: bool, max: u8, family: PadFamily) -> Vec<LogCell> {
     let mut out: Vec<(LogCell, &Entry, Vec<Duration>)> = Vec::new();
     for e in seq {
         let hold = e.released.map(|r| r.saturating_duration_since(e.pressed));
@@ -91,7 +105,9 @@ fn cells(seq: &[Entry], merge: bool, family: PadFamily) -> Vec<LogCell> {
         let cell = LogCell { glyph: input_glyph(&e.input, family), label: e.label.clone(), hold_ms: None, count: 1, held: e.released.is_none() };
         out.push((cell, e, hold.into_iter().collect()));
     }
+    let skip = out.len().saturating_sub(usize::from(max.max(1)));
     out.into_iter()
+        .skip(skip)
         .map(|(mut cell, _, holds)| {
             if !cell.held && !holds.is_empty() {
                 let total: Duration = holds.iter().sum();
@@ -126,15 +142,17 @@ pub fn input_glyph(input: &Input, family: PadFamily) -> Vec<Segment> {
     }
 }
 
-/// `{current_input}`: the latest sequence, in one line, until `stay` after it ends (`gap`
-/// after its last input is let go). Empty once it's gone.
-pub fn current_input(entries: &[Entry], gap: Duration, stay: Duration, family: PadFamily, now: Instant) -> Vec<Segment> {
-    let Some(seq) = sequences(entries, gap).pop() else { return Vec::new() };
-    if ended(seq).is_some_and(|end| now >= end + gap + stay) {
+/// `{current_input}`: the latest sequence, in one line, until `stay_ms` after it ends (the
+/// gap after its last input is let go). Empty once it's gone.
+pub fn current_input(entries: &[Entry], c: &CurrentInput, family: PadFamily, now: Instant) -> Vec<Segment> {
+    let entries = tracked(entries, &c.tracking);
+    let gap = Duration::from_millis(c.tracking.gap_ms);
+    let Some(seq) = sequences(&entries, gap).pop() else { return Vec::new() };
+    if ended(seq).is_some_and(|end| now >= end + gap + Duration::from_millis(c.stay_ms)) {
         return Vec::new();
     }
     let mut out = Vec::new();
-    for cell in cells(seq, true, family) {
+    for cell in cells(seq, true, c.tracking.max_inputs, family) {
         out.extend(cell.glyph);
         if cell.count > 1 {
             out.push(Segment::Text(format!("×{}", cell.count)));
@@ -146,7 +164,8 @@ pub fn current_input(entries: &[Entry], gap: Duration, stay: Duration, family: P
 /// A log overlay's lines, newest at the end its settings name. Lines fade out `fade_after`
 /// seconds after they end.
 pub fn log_view(entries: &[Entry], s: &InputLogSettings, style: &OverlayStyle, family: PadFamily, now: Instant) -> LogView {
-    let all = sequences(entries, Duration::from_millis(s.gap_ms));
+    let entries = tracked(entries, &s.tracking);
+    let all = sequences(&entries, Duration::from_millis(s.tracking.gap_ms));
     let skip = all.len().saturating_sub(usize::from(s.lines.max(1)));
     let mut lines: Vec<LogLine> = all[skip..]
         .iter()
@@ -155,7 +174,7 @@ pub fn log_view(entries: &[Entry], s: &InputLogSettings, style: &OverlayStyle, f
                 (Some(after), Some(end)) => crate::info::fade(now, end + after)?,
                 _ => 1.0,
             };
-            Some(LogLine { opacity, cells: cells(seq, s.merge_repeats, family) })
+            Some(LogLine { opacity, cells: cells(seq, s.merge_repeats, s.tracking.max_inputs, family) })
         })
         .collect();
     if s.newest == LogEnd::Top {
@@ -171,8 +190,8 @@ fn fade_after(s: &InputLogSettings) -> Option<Duration> {
 /// When something shown from these entries next changes on its own: the time each
 /// sequence's display is due to end (`after` past its end), as fades start or every
 /// `frame` during one.
-pub fn next_change(entries: &[Entry], gap: Duration, after: Duration, now: Instant, frame: Duration) -> Option<Instant> {
-    sequences(entries, gap)
+pub fn next_change(entries: &[Entry], t: &InputTracking, after: Duration, now: Instant, frame: Duration) -> Option<Instant> {
+    sequences(&tracked(entries, t), Duration::from_millis(t.gap_ms))
         .into_iter()
         .filter_map(ended)
         .map(|end| end + after)
@@ -210,10 +229,10 @@ impl Inputs {
         }
     }
 
-    /// What `{current_input}` shows.
-    pub fn current(&self, device: Option<u8>, gap_ms: u64, stay_ms: u64, family: PadFamily) -> Vec<Segment> {
+    /// What a `{current_input}` cell with these settings shows.
+    pub fn current(&self, c: &CurrentInput, family: PadFamily) -> Vec<Segment> {
         let now = self.now.unwrap_or_else(Instant::now);
-        current_input(&self.entries(device), Duration::from_millis(gap_ms), Duration::from_millis(stay_ms), family, now)
+        current_input(&self.entries(c.tracking.device), c, family, now)
     }
 
     /// Made-up input for the settings previews: a combo, a mashed button, then a fireball

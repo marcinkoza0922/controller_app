@@ -1,6 +1,6 @@
 //! The Log overlays tab: on-screen logs of the buttons pressed lately and what each did.
 
-use iced::widget::{checkbox, column, row, slider};
+use iced::widget::{checkbox, column, row};
 
 use super::*;
 use crate::config::{InputLogSettings, LogEnd, LogSource};
@@ -13,22 +13,6 @@ impl fmt::Display for LogEnd {
         })
     }
 }
-
-/// Which controller a log follows: every one, or one by its number.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct DeviceChoice(Option<u8>);
-
-impl fmt::Display for DeviceChoice {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.0 {
-            None => f.write_str("Every controller"),
-            Some(n) => write!(f, "Controller {n}"),
-        }
-    }
-}
-
-const DEVICE_CHOICES: [DeviceChoice; 5] =
-    [DeviceChoice(None), DeviceChoice(Some(0)), DeviceChoice(Some(1)), DeviceChoice(Some(2)), DeviceChoice(Some(3))];
 
 /// A copy of `o` with `f` applied, as the message that saves it.
 type Edit<'a> = Rc<dyn Fn(&dyn Fn(&mut LogOverlay)) -> Message + 'a>;
@@ -96,7 +80,7 @@ impl App {
         let title = if problem.is_some() { title.color(ERROR_COLOR) } else { title };
         let LogSource::Input(s) = &o.source;
         let shown = if o.always { "always shown" } else { "shown by an action" };
-        let summary = format!("Input · {} lines · {} · {shown}", s.lines, DeviceChoice(s.device).to_string().to_lowercase());
+        let summary = format!("Input · {} lines · {} · {shown}", s.lines, DeviceChoice(s.tracking.device).to_string().to_lowercase());
         let mut header = row![
             button(title).style(button::text).padding(0).on_press(Message::ToggleLog(i)),
             text(summary).size(13).color(MUTED_COLOR),
@@ -135,6 +119,9 @@ impl App {
                 }),
             ));
         }
+        let e = edit.clone();
+        let on_tracking: OnTracking<'a> = Rc::new(move |t| e(&|o| settings(o).tracking = t.clone()));
+        rows.extend(self.tracking_editor((ItemKind::Log, i), &s.tracking, "line", &on_tracking));
         rows.extend(input_settings(s, &edit));
 
         let appearance_open = self.open_log_appearance.contains(&i);
@@ -209,6 +196,11 @@ impl App {
                     self.follow_item_rename(ItemKind::Log, &old, &name);
                 }
             }
+            Message::ToggleInputGroup(kind, i, g) => {
+                if !self.open_input_groups.remove(&(kind, i, g)) {
+                    self.open_input_groups.insert((kind, i, g));
+                }
+            }
             Message::SetLog(i, overlay) => {
                 // The name only changes through RenameLog, which follows references.
                 if let Some(o) = self.logs_mut().get_mut(i) {
@@ -221,31 +213,12 @@ impl App {
     }
 }
 
-/// The input log's own settings: controller, lines, grouping, fading and what's shown.
+/// The log's own settings: lines, order, fading and what's shown.
 fn input_settings<'a>(s: &InputLogSettings, edit: &Edit<'a>) -> Vec<Element<'a, Message>> {
-    let e = edit.clone();
-    let device = row![
-        dropdown(DEVICE_CHOICES, Some(DeviceChoice(s.device)), move |d: DeviceChoice| e(&|o| settings(o).device = d.0)).width(200),
-        help(
-            "Controllers are numbered from 0 in the order they connected; each keeps its number until it \
-             disconnects. Every controller merges them all, by time."
-                .into(),
-        ),
-    ]
-    .spacing(8)
-    .align_y(Alignment::Center);
     let e = edit.clone();
     let lines = value_slider("Lines", 1.0..=20.0, f32::from(s.lines), 1.0, "", move |v| e(&|o| settings(o).lines = v as u8));
     let e = edit.clone();
     let newest = dropdown([LogEnd::Top, LogEnd::Bottom], Some(s.newest), move |end| e(&|o| settings(o).newest = end)).width(200);
-    let e = edit.clone();
-    let gap = row![
-        slider(100.0..=1000.0, s.gap_ms as f32, move |v| e(&|o| settings(o).gap_ms = v as u64)).step(50.0_f32).width(300),
-        text(format!("{} ms", s.gap_ms)).size(13),
-        help("A pause longer than this between presses starts a new line.".into()),
-    ]
-    .spacing(10)
-    .align_y(Alignment::Center);
     let e = edit.clone();
     let fade = (s.fade_after > 0.0).then_some(s.fade_after);
     let fade = seconds_option("Each line fades away after", fade, 5.0, move |v| e(&|o| settings(o).fade_after = v.unwrap_or(0.0)));
@@ -260,10 +233,8 @@ fn input_settings<'a>(s: &InputLogSettings, edit: &Edit<'a>) -> Vec<Element<'a, 
     ]
     .spacing(6);
     vec![
-        labeled("Controller", device.into()),
         lines,
         labeled("Order", newest.into()),
-        labeled("New line after", gap.into()),
         labeled("Fading", fade),
         labeled("Show", show.into()),
     ]
@@ -297,5 +268,20 @@ mod tests {
         let _ = app.update(Message::DeleteLog(0));
         assert!(app.validate().unwrap().contains("missing log overlay"));
         assert!(app.open_logs.is_empty());
+    }
+
+    #[test]
+    fn input_settings_show_once_an_info_overlay_has_current_input() {
+        let mut app = app();
+        let _ = app.update(Message::SelectGameTab(GameTab::Info));
+        let _ = app.update(Message::NewInfo);
+        let _ = app.update(Message::SetInfoCell(0, 0, 0, "{current_input}".into()));
+        let _ = app.update(Message::ToggleInputGroup(ItemKind::Info, 0, 0));
+        let _ = app.view();
+        let mut input = app.config.general.info[0].current_input.clone();
+        input.tracking.set_tracked(crate::config::TrackedInput::Dpad, false);
+        input.tracking.max_inputs = 4;
+        let _ = app.update(Message::SetInfoInput(0, input.clone()));
+        assert_eq!(app.config.general.info[0].current_input, input);
     }
 }

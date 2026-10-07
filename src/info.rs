@@ -10,7 +10,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::{Button, InfoOverlay, OverlayStyle, Stick, Trigger};
+use crate::config::{Button, CurrentInput, InfoOverlay, OverlayStyle, Stick, Trigger};
 
 /// Whose button names and symbols to show.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -84,9 +84,10 @@ pub enum Token {
     Stick(Stick),
     Dpad,
     Stat(Stat),
-    /// The inputs just pressed: `{current_input}` (every controller) or
-    /// `{current_input_device_N}`, then optionally `:gap_ms:stay_ms`.
-    CurrentInput { device: Option<u8>, gap_ms: u64, stay_ms: u64 },
+    /// The inputs just pressed, as the overlay's input settings say, except for what the
+    /// token itself sets: `{current_input_device_N}` for one controller, then optionally
+    /// `:gap_ms:stay_ms`.
+    CurrentInput { device: Option<u8>, gap_ms: Option<u64>, stay_ms: Option<u64> },
 }
 
 /// Every token, with a description, for the editor's "Insert…" list.
@@ -123,7 +124,7 @@ pub const TOKENS: &[(&str, &str)] = &[
     ("ram", "Memory in use"),
     ("gpu", "GPU usage (AMD)"),
     ("controller", "Controller name"),
-    ("current_input", "Buttons just pressed (current_input_device_0 for one controller; :gap_ms:stay_ms to time it)"),
+    ("current_input", "Buttons just pressed (set what it follows under Input, below the cells)"),
 ];
 
 /// A token from what's between the braces: a name, and for `current_input` optional
@@ -137,12 +138,15 @@ fn token(inner: &str) -> Option<Token> {
             "" => None,
             n => Some(n.strip_prefix("_device_")?.parse().ok()?),
         };
-        let num = |i: usize, default: u64| args.get(i).map_or(Some(default), |a| a.parse().ok());
+        // An argument that isn't a number leaves the whole token as text.
+        let num = |i: usize| match args.get(i) {
+            None => Some(None),
+            Some(a) => a.parse::<u64>().ok().map(Some),
+        };
         if args.len() > 2 {
             return None;
         }
-        let gap_ms = num(0, crate::config::DEFAULT_GAP_MS)?;
-        let stay_ms = num(1, DEFAULT_STAY_MS)?;
+        let (gap_ms, stay_ms) = (num(0)?, num(1)?);
         return Some(Token::CurrentInput { device, gap_ms, stay_ms });
     }
     if !args.is_empty() {
@@ -355,18 +359,27 @@ pub fn parse(cell: &str) -> Vec<Result<String, Token>> {
     parts
 }
 
-/// How long `{current_input}` stays after its sequence ends, unless set otherwise.
-pub const DEFAULT_STAY_MS: u64 = 1000;
-
-/// The `{current_input}` tokens in an overlay.
-pub fn input_tokens(overlay: &InfoOverlay) -> Vec<Token> {
+/// What each `{current_input}` cell of an overlay follows: the overlay's input settings,
+/// with whatever its token sets itself.
+pub fn input_tokens(overlay: &InfoOverlay) -> Vec<CurrentInput> {
     overlay
         .rows
         .iter()
         .flatten()
         .flat_map(|cell| parse(cell))
-        .filter_map(|p| p.err().filter(|t| matches!(t, Token::CurrentInput { .. })))
+        .filter_map(|p| match p {
+            Err(Token::CurrentInput { device, gap_ms, stay_ms }) => Some(token_settings(&overlay.current_input, device, gap_ms, stay_ms)),
+            _ => None,
+        })
         .collect()
+}
+
+fn token_settings(base: &CurrentInput, device: Option<u8>, gap_ms: Option<u64>, stay_ms: Option<u64>) -> CurrentInput {
+    let mut s = base.clone();
+    s.tracking.device = device.or(s.tracking.device);
+    s.tracking.gap_ms = gap_ms.unwrap_or(s.tracking.gap_ms);
+    s.stay_ms = stay_ms.unwrap_or(s.stay_ms);
+    s
 }
 
 /// Whether an overlay shows anything that changes over time (so it needs refreshing).
@@ -499,7 +512,8 @@ pub fn resolve(overlay: &InfoOverlay, live: &Live) -> InfoView {
                     for part in parse(cell) {
                         let segment = match part {
                             Err(Token::CurrentInput { device, gap_ms, stay_ms }) => {
-                                segments.extend(live.inputs.current(device, gap_ms, stay_ms, live.family));
+                                let settings = token_settings(&overlay.current_input, device, gap_ms, stay_ms);
+                                segments.extend(live.inputs.current(&settings, live.family));
                                 continue;
                             }
                             Ok(text) => Segment::Text(text),
@@ -615,12 +629,22 @@ mod tests {
     fn current_input_tokens_take_a_controller_and_timings() {
         let tok = |cell: &str| parse(cell).into_iter().find_map(Result::err);
         let input = |device, gap_ms, stay_ms| Some(Token::CurrentInput { device, gap_ms, stay_ms });
-        assert_eq!(tok("{current_input}"), input(None, 250, 1000));
-        assert_eq!(tok("{current_input:400}"), input(None, 400, 1000));
-        assert_eq!(tok("{current_input_device_1:400:2000}"), input(Some(1), 400, 2000));
+        assert_eq!(tok("{current_input}"), input(None, None, None));
+        assert_eq!(tok("{current_input:400}"), input(None, Some(400), None));
+        assert_eq!(tok("{current_input_device_1:400:2000}"), input(Some(1), Some(400), Some(2000)));
         for literal in ["{current_input:x}", "{current_input_device_x}", "{current_input:1:2:3}", "{time:5}"] {
             assert_eq!(parse(literal), vec![Ok(literal.to_string())], "{literal}");
         }
+    }
+
+    #[test]
+    fn a_token_overrides_the_overlays_input_settings() {
+        let mut o = overlay(&[&["{current_input}", "{current_input_device_2:400}"]]);
+        o.current_input.tracking.device = Some(1);
+        o.current_input.stay_ms = 3000;
+        let cells = input_tokens(&o);
+        assert_eq!((cells[0].tracking.device, cells[0].tracking.gap_ms, cells[0].stay_ms), (Some(1), 250, 3000));
+        assert_eq!((cells[1].tracking.device, cells[1].tracking.gap_ms, cells[1].stay_ms), (Some(2), 400, 3000));
     }
 
     #[test]
@@ -640,7 +664,7 @@ mod tests {
     fn overlay(rows: &[&[&str]]) -> InfoOverlay {
         InfoOverlay {
             name: "Keys".into(),
-            always: true, on_start: None, linger: None,
+            always: true, on_start: None, linger: None, current_input: Default::default(),
             style: OverlayStyle::info(),
             rows: rows.iter().map(|r| r.iter().map(std::string::ToString::to_string).collect()).collect(),
         }

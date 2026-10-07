@@ -814,7 +814,7 @@ mod tests {
         let mut deeper = Layer::new("Deeper");
         deeper.gyro = Some(crate::config::GyroConfig { mode: crate::config::GyroMode::Mouse { sensitivity: 10.0 }, ..Default::default() });
         config.games[0].layers = vec![layer.clone(), deeper];
-        config.shared.info.push(InfoOverlay { name: "Cheat sheet".into(), always: false, on_start: None, linger: None, style: Default::default(), rows: vec![] });
+        config.shared.info.push(InfoOverlay { name: "Cheat sheet".into(), always: false, on_start: None, linger: None, current_input: Default::default(), style: Default::default(), rows: vec![] });
 
         let out = export(&config.games[0], &config.shared, &draft(&config.games[0], false));
         assert!(out.pulled_in.contains(&(ItemKind::Info, "Cheat sheet".into())), "an indicator's info overlay comes along");

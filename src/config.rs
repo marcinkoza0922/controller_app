@@ -679,6 +679,9 @@ pub struct InfoOverlay {
     /// Rows of cells; cells line up in columns.
     #[serde(default)]
     pub rows: Vec<Vec<String>>,
+    /// What its `{current_input}` cells follow.
+    #[serde(default, skip_serializing_if = "CurrentInput::is_default")]
+    pub current_input: CurrentInput,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -2414,7 +2417,8 @@ mod tests {
         let mut config = Config::default();
         let mut log = LogOverlay::new("Inputs");
         let LogSource::Input(s) = &mut log.source;
-        (s.device, s.newest, s.fade_after) = (Some(1), LogEnd::Bottom, 0.0);
+        (s.tracking.device, s.newest, s.fade_after) = (Some(1), LogEnd::Bottom, 0.0);
+        s.tracking.set_tracked(TrackedInput::Stick(Stick::Right), false);
         config.general.logs.push(log);
         config.general.profiles[0].set_button(Button::Select, ButtonAction::toggle(ButtonAction::ShowLog("Inputs".into())));
         let back: Config = toml::from_str(&toml::to_string_pretty(&config).unwrap()).unwrap();

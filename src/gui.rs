@@ -15,7 +15,7 @@ use iced::{
 use crate::{
     config::{
         Analog, Button, ButtonAction, CarouselControls, Cluster, Combo, Config, Game, GestureKind, GRID_MAX, GyroActivation,
-        GyroConfig, GyroHorizontal, GyroInput, GyroMode, InfoOverlay, ItemKind, LogOverlay, Macro, MacroStep, Menu, MenuItem,
+        CurrentInput, GyroConfig, GyroHorizontal, GyroInput, GyroMode, InfoOverlay, ItemKind, LogOverlay, Macro, MacroStep, Menu, MenuItem,
         MenuKind, MenuKindTag, MouseButton, OverlayStyle, Paint, Profile, ProfileRef, Rule, RuleKind, ScopeRef,
         ScreenPosition, Stick, StickAction, StickConfig, Toggled, Trigger, TriggerAction, WheelDirection, Zone, free_name,
     },
@@ -37,6 +37,7 @@ mod logs;
 mod overlays;
 mod packs;
 mod profile;
+mod tracking;
 mod widgets;
 
 use actions::*;
@@ -46,6 +47,7 @@ use items::*;
 use layers::IndicatorChoice;
 use packs::{BrowseSource, Dialog, PackField};
 use profile::*;
+use tracking::*;
 use widgets::*;
 
 pub fn run() -> iced::Result {
@@ -104,6 +106,8 @@ struct App {
     /// Log overlays (by index) whose card, or Appearance section, is open.
     open_logs: HashSet<usize>,
     open_log_appearance: HashSet<usize>,
+    /// Input groups listing their own inputs, by overlay kind, overlay and group.
+    open_input_groups: HashSet<(ItemKind, usize, usize)>,
     /// The built-in game library.
     library: Vec<library::Entry>,
     /// Installed and running games, once looked up for the library picker.
@@ -296,6 +300,10 @@ enum Message {
     RenameLog(usize, String),
     /// Log overlay `.0` replaced by this edited copy (its name is left as it is).
     SetLog(usize, LogOverlay),
+    /// What info overlay `.0`'s `{current_input}` cells follow.
+    SetInfoInput(usize, crate::config::CurrentInput),
+    /// Lists (or hides) the inputs of group `.2` in overlay `.1` of kind `.0`.
+    ToggleInputGroup(ItemKind, usize, usize),
     NewMacro,
     DeleteMacro(usize),
     RenameMacro(usize, String),
@@ -418,6 +426,7 @@ impl App {
             open_info_appearance: HashSet::new(),
             open_logs: HashSet::new(),
             open_log_appearance: HashSet::new(),
+            open_input_groups: HashSet::new(),
             library: library::entries(),
             installed: None,
             renames: Vec::new(),
@@ -535,6 +544,7 @@ impl App {
         self.open_info_appearance.clear();
         self.open_logs.clear();
         self.open_log_appearance.clear();
+        self.open_input_groups.clear();
         self.open_appearance.retain(Option::is_none);
         self.expanded.clear();
         self.found = None;
@@ -850,7 +860,7 @@ mod tests {
     fn every_page_tab_and_dialog_builds() {
         let mut app = with_game();
         app.config.shared.menus.push(Menu { name: "Wheel".into(), kind: MenuKind::List, items: vec![], cancel: None, style: OverlayStyle::default() });
-        app.config.games[0].info.push(InfoOverlay { name: "Controls".into(), always: true, on_start: None, linger: None, style: OverlayStyle::info(), rows: vec![vec!["{south}".into()]] });
+        app.config.games[0].info.push(InfoOverlay { name: "Controls".into(), always: true, on_start: None, linger: None, current_input: Default::default(), style: OverlayStyle::info(), rows: vec![vec!["{south}".into()]] });
         app.config.games[0].macros.push(Macro { name: "Dodge".into(), steps: vec![MacroStep::Wait(5)] });
         app.config.games[0].layers.push(crate::config::Layer::new("Hotkeys"));
         app.status = Some(Status { devices: vec![device("Pad", true, false)], active_layers: vec!["Hotkeys".into()], ..Default::default() });

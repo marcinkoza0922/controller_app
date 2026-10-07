@@ -5,7 +5,7 @@ use super::{
     *,
 };
 use crate::{
-    config::{InputLogSettings, LogEnd, OverlayStyle},
+    config::{CurrentInput, InputLogSettings, InputTracking, LogEnd, OverlayStyle, TrackedInput},
     info::PadFamily,
 };
 
@@ -191,11 +191,11 @@ fn current_input_shows_the_latest_sequence_until_it_has_stayed() {
     button(&mut log, Button::DpadDown, false, ms(t0, 50));
     button(&mut log, Button::South, true, ms(t0, 60));
     button(&mut log, Button::South, false, ms(t0, 100));
-    let stay = Duration::from_secs(1);
-    let shown = current_input(log.entries(), GAP, stay, PadFamily::Xbox, ms(t0, 500));
+    let c = CurrentInput::default();
+    let shown = current_input(log.entries(), &c, PadFamily::Xbox, ms(t0, 500));
     assert_eq!(shown.len(), 2);
-    assert!(current_input(log.entries(), GAP, stay, PadFamily::Xbox, ms(t0, 1350)).is_empty());
-    let due = next_change(log.entries(), GAP, GAP + stay, ms(t0, 500), Duration::from_millis(16));
+    assert!(current_input(log.entries(), &c, PadFamily::Xbox, ms(t0, 1350)).is_empty());
+    let due = next_change(log.entries(), &c.tracking, GAP + Duration::from_millis(c.stay_ms), ms(t0, 500), Duration::from_millis(16));
     assert_eq!(due, Some(ms(t0, 1350) - crate::info::FADE_OUT));
 }
 
@@ -208,4 +208,40 @@ fn history_is_capped() {
         button(&mut log, Button::South, false, ms(t0, i * 10 + 5));
     }
     assert!(log.entries().len() <= CAPACITY);
+}
+
+#[test]
+fn ignored_inputs_are_left_out_and_dont_hold_a_sequence_together() {
+    let t0 = Instant::now();
+    let mut log = InputLog::default();
+    button(&mut log, Button::South, true, t0);
+    button(&mut log, Button::South, false, ms(t0, 50));
+    // Camera moves on the right stick, bridging the pause between the two presses.
+    axis(&mut log, Axis::RightX, 1.0, ms(t0, 200));
+    axis(&mut log, Axis::RightX, 0.0, ms(t0, 400));
+    button(&mut log, Button::East, true, ms(t0, 600));
+    button(&mut log, Button::East, false, ms(t0, 650));
+    let mut s = InputLogSettings::default();
+    assert_eq!(log_view(log.entries(), &s, &OverlayStyle::log(), PadFamily::Xbox, ms(t0, 700)).lines.len(), 1);
+    s.tracking.set_tracked(TrackedInput::Stick(Stick::Right), false);
+    let view = log_view(log.entries(), &s, &OverlayStyle::log(), PadFamily::Xbox, ms(t0, 700));
+    assert_eq!(view.lines.len(), 2);
+    assert!(view.lines.iter().all(|l| l.cells.len() == 1));
+}
+
+#[test]
+fn a_long_sequence_keeps_its_newest_inputs() {
+    let t0 = Instant::now();
+    let mut log = InputLog::default();
+    for (i, b) in [Button::South, Button::East, Button::West, Button::North].into_iter().enumerate() {
+        button(&mut log, b, true, ms(t0, i as u64 * 50));
+        button(&mut log, b, false, ms(t0, i as u64 * 50 + 20));
+    }
+    let tracking = InputTracking { max_inputs: 2, ..InputTracking::default() };
+    let c = CurrentInput { tracking: tracking.clone(), ..CurrentInput::default() };
+    let shown = current_input(log.entries(), &c, PadFamily::Xbox, ms(t0, 300));
+    let xbox = |b| crate::info::button_glyph(b, PadFamily::Xbox);
+    assert_eq!(shown, [xbox(Button::West), xbox(Button::North)]);
+    let s = InputLogSettings { tracking, ..InputLogSettings::default() };
+    assert_eq!(log_view(log.entries(), &s, &OverlayStyle::log(), PadFamily::Xbox, ms(t0, 300)).lines[0].cells.len(), 2);
 }

@@ -882,9 +882,9 @@ mod tests {
     fn items_are_copied_from_other_games() {
         let mut app = with_game();
         let mut quake = Game::new("Quake", vec![Profile::passthrough("P")]);
-        quake.info.push(InfoOverlay { name: "Controls".into(), always: true, on_start: None, linger: None, style: OverlayStyle::info(), rows: vec![] });
+        quake.info.push(InfoOverlay { name: "Controls".into(), always: true, on_start: None, linger: None, current_input: Default::default(), style: OverlayStyle::info(), rows: vec![] });
         app.config.games.push(quake);
-        app.config.games[0].info.push(InfoOverlay { name: "Controls".into(), always: false, on_start: None, linger: None, style: OverlayStyle::info(), rows: vec![] });
+        app.config.games[0].info.push(InfoOverlay { name: "Controls".into(), always: false, on_start: None, linger: None, current_input: Default::default(), style: OverlayStyle::info(), rows: vec![] });
         let _ = app.update(Message::OpenBrowse(ItemKind::Info));
         let _ = app.update(Message::BrowseFrom(BrowseSource::Game(Some("Quake".into()))));
         let _ = app.update(Message::CopyItem(0));
