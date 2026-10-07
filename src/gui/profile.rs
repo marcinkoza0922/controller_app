@@ -650,15 +650,18 @@ pub(super) fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<
     let mut rows: Vec<Element<'a, Message>> = Vec::new();
 
     if !open {
-        let mut summary = summarize(p.button(b));
-        for (k, a) in &set_gestures {
-            summary.push_str(&format!("  ·  {k}: {}", summarize(a)));
-        }
         let disabled = matches!(p.button(b), ButtonAction::Disabled) && set_gestures.is_empty();
-        let summary = text(summary).color_maybe(disabled.then_some(MUTED_COLOR));
+        let summary = text(summarize(p.button(b))).color_maybe(disabled.then_some(MUTED_COLOR));
         let mut line = row![row_toggle(&b.to_string(), target, false, problem.is_some()), summary]
             .spacing(10)
             .align_y(Alignment::Center);
+        // Each gesture is its own segment, set off by a muted bar and its name in muted text.
+        for (k, a) in &set_gestures {
+            line = line
+                .push(text("│").color(MUTED_COLOR))
+                .push(text(format!("{k}:")).color(MUTED_COLOR))
+                .push(text(summarize(a)));
+        }
         if let Some(problem) = problem {
             line = line.push(space::horizontal()).push(text(format!("⚠ {problem}")).size(12).color(ERROR_COLOR));
         }
@@ -690,6 +693,7 @@ pub(super) fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<
     ));
 
     for (kind, action) in set_gestures {
+        rows.push(rule::horizontal(1).into());
         rows.push(labeled(
             format!("    {kind}"),
             row![
@@ -705,6 +709,7 @@ pub(super) fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<
     }
     // Adding a gesture sits under the rows it extends, one click per kind.
     if !missing.is_empty() {
+        rows.push(rule::horizontal(1).into());
         let adds = missing.into_iter().map(|k| {
             button(text(format!("+ {k}")).size(13))
                 .style(style::secondary)
