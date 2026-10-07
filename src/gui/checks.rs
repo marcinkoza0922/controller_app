@@ -168,7 +168,8 @@ pub(super) fn section_has_problem(p: &Profile, tab: ProfileTab, names: &Names) -
                 StickAction::Keys { up, down, left, right } => [up, down, left, right].iter().any(|k| KeyCode::from_str(k).is_err()),
                 _ => false,
             });
-            dirs || zones || triggers || keys
+            let rings = [Stick::Left, Stick::Right].into_iter().any(|s| p.stick(s).action.ring_actions().iter().any(bad));
+            dirs || zones || triggers || keys || rings
         }
         ProfileTab::Combos => p.combos.iter().any(|c| c.buttons.len() < 2 || bad(&c.action)),
         ProfileTab::Gyro => false,

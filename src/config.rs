@@ -909,6 +909,24 @@ pub enum StickAction {
     },
     /// `speed` is wheel notches/second at full deflection.
     Scroll { speed: f32 },
+    /// The stick's angle picks one of `sectors` equal slices, and that slice's action is held
+    /// while the stick points into it.
+    Ring {
+        #[serde(default = "default_sectors")]
+        sectors: u8,
+        /// Degrees clockwise from up to the middle of the first sector.
+        #[serde(default)]
+        start_angle: f32,
+        /// Deflection (after the deadzone) from which a sector is active.
+        #[serde(default = "default_ring_inner_radius")]
+        inner_radius: f32,
+        /// How far, as a share of a sector's width, the stick must pass a boundary to change sector.
+        #[serde(default = "default_ring_hysteresis")]
+        hysteresis: f32,
+        /// One action per sector, clockwise from the first; missing ones do nothing.
+        #[serde(default)]
+        actions: Vec<ButtonAction>,
+    },
     /// Directional keys, e.g. WASD or arrows.
     Keys {
         up: String,
@@ -967,7 +985,45 @@ fn is_zero_ms(v: &u32) -> bool {
     *v == 0
 }
 
+fn default_sectors() -> u8 {
+    8
+}
+
+fn default_ring_inner_radius() -> f32 {
+    0.5
+}
+
+fn default_ring_hysteresis() -> f32 {
+    0.1
+}
+
 impl StickAction {
+    /// A ring of `sectors` slices that do nothing yet.
+    pub fn ring(sectors: u8) -> Self {
+        StickAction::Ring {
+            sectors,
+            start_angle: 0.0,
+            inner_radius: default_ring_inner_radius(),
+            hysteresis: default_ring_hysteresis(),
+            actions: vec![ButtonAction::Disabled; usize::from(sectors)],
+        }
+    }
+
+    /// The ring's sector actions; none for other modes.
+    pub fn ring_actions(&self) -> &[ButtonAction] {
+        match self {
+            StickAction::Ring { actions, .. } => actions,
+            _ => &[],
+        }
+    }
+
+    pub fn ring_actions_mut(&mut self) -> &mut [ButtonAction] {
+        match self {
+            StickAction::Ring { actions, .. } => actions,
+            _ => &mut [],
+        }
+    }
+
     /// Mouse pointer at `speed` pixels/second, with the default response.
     pub fn mouse(speed: f32) -> Self {
         StickAction::Mouse { speed, response: MouseResponse::default() }
@@ -1126,6 +1182,7 @@ impl Layer {
         }
         for s in [&self.left_stick, &self.right_stick].into_iter().flatten() {
             all.extend(s.zones.iter().map(|z| &z.action));
+            all.extend(s.action.ring_actions());
         }
         all
     }
@@ -1144,6 +1201,7 @@ impl Layer {
         }
         for s in [&mut self.left_stick, &mut self.right_stick].into_iter().flatten() {
             all.extend(s.zones.iter_mut().map(|z| &mut z.action));
+            all.extend(s.action.ring_actions_mut());
         }
         all
     }
@@ -1391,6 +1449,7 @@ impl Profile {
             all.extend(t.zones.iter().map(|z| &z.action));
         }
         all.extend(self.left_stick.zones.iter().chain(&self.right_stick.zones).map(|z| &z.action));
+        all.extend(self.left_stick.action.ring_actions().iter().chain(self.right_stick.action.ring_actions()));
         all
     }
 
@@ -1408,6 +1467,7 @@ impl Profile {
         }
         for stick in [&mut self.left_stick, &mut self.right_stick] {
             all.extend(stick.zones.iter_mut().map(|z| &mut z.action));
+            all.extend(stick.action.ring_actions_mut());
         }
         all
     }

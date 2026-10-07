@@ -203,6 +203,8 @@ enum Target {
     MenuItem(usize, usize),
     /// The advanced response settings of a mouse stick.
     StickResponse(Stick),
+    /// Sector `.1` of a stick's button ring.
+    RingSector(Stick, usize),
 }
 
 /// Open-card indices after item `i` is removed: later items move up one place.

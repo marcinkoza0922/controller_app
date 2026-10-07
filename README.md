@@ -45,6 +45,7 @@ Each profile maps:
 
 - **buttons**: to a gamepad button, a key or key combo (`LEFTCTRL+C`), a mouse button, the scroll wheel (one notch per press, continuous while held), *next profile*, or **several of these at once**.
 - **sticks**: to a gamepad stick, mouse pointer, scroll wheel or direction keys (WASD/arrows), with a deadzone, a response curve and an adjustable press threshold. Mouse sticks also have **acceleration** (speed grows while held at full push), and under *Advanced response* a ramp time, an outer-edge boost, a vertical speed ratio and smoothing. Each stick's **directions also act as buttons** on top of that (Left Stick Up, …): they can have any action or gesture and can be part of combos, e.g. LB + Right Stick Right. Gamepad outputs include stick directions too, so a button (or the D-pad) can push the virtual stick, and two directions make a diagonal.
+- **button rings**: a stick can instead act as a ring of 4, 8 or 12 sectors; pointing it into a sector holds that sector's action (any action a button can have), with the angle of the first sector, how far out the stick must go and how sticky the sector boundaries are adjustable.
 - **triggers**: to an analog gamepad trigger, or to anything a button can do (a gamepad button, key, mouse button, macro, …), pressed once pulled past a threshold.
 
 On top of that:

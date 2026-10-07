@@ -1,6 +1,6 @@
 # Stick behaviors: mouse response, rings and flick stick
 
-Status: phases 0 and 1 (stick module, mouse response) implemented; ring and flick stick proposed (2026-10-07).
+Status: phases 0–2 (stick module, mouse response, ring) implemented; flick stick proposed (2026-10-07).
 
 ## Goal
 
@@ -87,8 +87,8 @@ Ring { sectors: u8, start_angle: f32, inner_radius: f32, hysteresis: f32, action
 Flick { full_turn_px: f32, flick_threshold: f32, flick_time_ms: u32, rotate_smoothing_ms: u32, forward_deadzone: f32, vertical: FlickVertical, vertical_speed: f32 }
 ```
 
-`Mouse { speed }` in older configs still parses because the new fields default. `Ring`'s
-`actions` is padded or truncated to `sectors` on load.
+`Mouse { speed }` in older configs still parses because the new fields default. A `Ring` with fewer
+`actions` than `sectors` leaves the missing sectors doing nothing; the editor keeps the two in step.
 
 ## How it behaves
 
@@ -154,9 +154,9 @@ flick not yet sent.
 - The stick kind picker in `src/gui/profile.rs` gains **Ring** and **Flick stick**.
 - **Mouse** keeps its speed and curve controls. A new "Response" section holds the acceleration
   slider, with ramp time and boost under **Advanced**, plus vertical scale and smoothing.
-- **Ring**: a sector count picker, the inner radius and hysteresis, and a radial preview like
-  the radial menu preview. Clicking a sector edits its action with the usual action editor. The
-  preview highlights the live sector from the controller state.
+- **Ring** ("Button ring" in the picker): a sector count picker, the first sector's angle, the
+  inner radius and hysteresis, and one action editor per sector, labelled with its direction.
+  The radial preview that highlights the live sector is not built yet.
 - **Flick stick**: the settings above, with a short note on finding `full_turn_px` (see
   below).
 - One-line summaries ("mouse, 1600 px/s, accel 40%", "ring, 8 sectors", "flick, 8000 px/turn")

@@ -100,6 +100,7 @@ pub(super) fn stick_summary(cfg: &StickConfig) -> String {
         }
         StickAction::Mouse { speed, .. } => format!("mouse, {speed:.0} px/s"),
         StickAction::Scroll { speed } => format!("scroll, {speed:.0} notches/s"),
+        StickAction::Ring { sectors, .. } => format!("button ring, {sectors} sectors"),
         StickAction::Keys { up, down, left, right } => {
             [up, left, down, right].map(|k| keyboard::label(k)).join("/")
         }
@@ -826,6 +827,7 @@ pub(super) enum StickKind {
     Gamepad,
     Mouse,
     Scroll,
+    Ring,
     Keys,
 }
 
@@ -836,6 +838,7 @@ impl fmt::Display for StickKind {
             StickKind::Gamepad => "Gamepad stick",
             StickKind::Mouse => "Mouse pointer",
             StickKind::Scroll => "Scroll wheel",
+            StickKind::Ring => "Button ring",
             StickKind::Keys => "Direction keys",
         })
     }
@@ -853,6 +856,7 @@ pub(super) fn stick_editor<'a>(
         StickAction::Gamepad { .. } => StickKind::Gamepad,
         StickAction::Mouse { .. } => StickKind::Mouse,
         StickAction::Scroll { .. } => StickKind::Scroll,
+        StickAction::Ring { .. } => StickKind::Ring,
         StickAction::Keys { .. } => StickKind::Keys,
     };
     let with = move |action: StickAction| {
@@ -865,6 +869,7 @@ pub(super) fn stick_editor<'a>(
         StickKind::Gamepad,
         StickKind::Mouse,
         StickKind::Scroll,
+        StickKind::Ring,
         StickKind::Keys,
     ];
     let picker = dropdown(kinds, Some(kind), move |k| {
@@ -873,6 +878,7 @@ pub(super) fn stick_editor<'a>(
             StickKind::Gamepad => StickAction::Gamepad { stick: s, invert_y: false },
             StickKind::Mouse => StickAction::mouse(1200.0),
             StickKind::Scroll => StickAction::Scroll { speed: 15.0 },
+            StickKind::Ring => StickAction::ring(8),
             StickKind::Keys => wasd(),
         })
     })
@@ -903,6 +909,7 @@ pub(super) fn stick_editor<'a>(
         StickAction::Mouse { .. } => {
             rows = mouse_rows(rows, s, cfg, expanded.contains(&Target::StickResponse(s)), with);
         }
+        StickAction::Ring { .. } => rows = ring_rows(rows, s, cfg, names, with),
         StickAction::Scroll { speed } => {
             rows = rows.push(value_slider("    Speed", 1.0..=60.0, *speed, 1.0, "notches/s", move |v| {
                 with(StickAction::Scroll { speed: v })
@@ -963,6 +970,62 @@ pub(super) fn stick_editor<'a>(
         Message::SetStick(s, c)
     }));
     rows.push(zone_editor(Analog::Stick(s), &cfg.zones, names)).into()
+}
+
+/// A button ring's settings and one action editor per sector.
+fn ring_rows<'a>(
+    mut rows: Column<'a, Message>,
+    s: Stick,
+    cfg: &'a StickConfig,
+    names: &Names,
+    with: impl Fn(StickAction) -> Message + Copy + 'a,
+) -> Column<'a, Message> {
+    let StickAction::Ring { sectors, start_angle, inner_radius, hysteresis, actions } = &cfg.action else {
+        return rows;
+    };
+    let (sectors, start_angle, inner_radius, hysteresis) = (*sectors, *start_angle, *inner_radius, *hysteresis);
+    let keep = actions.clone();
+    let set = move |sectors: u8, start_angle: f32, inner_radius: f32, hysteresis: f32| {
+        let mut actions = keep.clone();
+        actions.resize(usize::from(sectors), ButtonAction::Disabled);
+        with(StickAction::Ring { sectors, start_angle, inner_radius, hysteresis, actions })
+    };
+    rows = rows
+        .push(labeled(
+            "    Sectors",
+            dropdown([4_u8, 8, 12], Some(sectors), {
+                let set = set.clone();
+                move |n| set(n, start_angle, inner_radius, hysteresis)
+            })
+            .width(170)
+            .into(),
+        ))
+        .push(value_slider("    First sector at", 0.0..=345.0, start_angle, 15.0, "° from up", {
+            let set = set.clone();
+            move |v| set(sectors, v, inner_radius, hysteresis)
+        }))
+        .push(value_slider("    Starts at", 0.05..=0.95, inner_radius, 0.05, "of the way out", {
+            let set = set.clone();
+            move |v| set(sectors, start_angle, v, hysteresis)
+        }))
+        .push(value_slider("    Stickiness", 0.0..=0.4, hysteresis, 0.05, "of a sector", move |v| {
+            set(sectors, start_angle, inner_radius, v)
+        }));
+    let width = 360.0 / f32::from(sectors.max(1));
+    for i in 0..usize::from(sectors) {
+        let angle = start_angle + i as f32 * width;
+        let arrow = ["↑", "↗", "→", "↘", "↓", "↙", "←", "↖"][((angle / 45.0).round() as usize) % 8];
+        let action = actions.get(i).unwrap_or(&ButtonAction::Disabled);
+        let target = Target::RingSector(s, i);
+        rows = rows.push(labeled(
+            format!("    {arrow} Sector {}", i + 1),
+            container(action_editor(action, Button::South, &ACTION_KINDS, set_action(target), KeyField::root(target), names))
+                .padding(10)
+                .style(style::inset)
+                .into(),
+        ));
+    }
+    rows
 }
 
 /// A mouse stick's speed and response rows, the fine-tuning ones behind "Advanced response".
@@ -1244,6 +1307,11 @@ impl App {
                         Target::Zone(a, i) => {
                             if let Some(z) = p.zones_mut(a).get_mut(i) {
                                 z.action = action;
+                            }
+                        }
+                        Target::RingSector(st, i) => {
+                            if let Some(a) = p.stick_mut(st).action.ring_actions_mut().get_mut(i) {
+                                *a = action;
                             }
                         }
                         Target::MacroStep(..) | Target::MenuItem(..) | Target::StickResponse(_) => {}

@@ -42,6 +42,8 @@ enum Source {
     Combo(Vec<Button>),
     /// A held double/triple-tap or long-press action.
     Gesture(Button),
+    /// A ring sector of a stick that is active.
+    RingSector(Stick, usize),
     /// An analog zone (index into the stick's or trigger's zone list) that is active.
     Zone(Analog, usize),
     /// A menu item chosen on screen (menu name, item index).
@@ -67,7 +69,7 @@ impl Source {
             Source::Button(b) | Source::Gesture(b) => FiredFrom::Button(*b),
             Source::Combo(members) => FiredFrom::Combo(members.clone()),
             Source::Trigger(t) | Source::Zone(Analog::Trigger(t), _) => FiredFrom::Trigger(*t),
-            Source::Zone(Analog::Stick(s), _) => FiredFrom::Stick(*s),
+            Source::Zone(Analog::Stick(s), _) | Source::RingSector(s, _) => FiredFrom::Stick(*s),
             Source::MenuItem(..) => return None,
         })
     }
@@ -138,6 +140,8 @@ pub struct Engine {
     stick_smooth: HashMap<Stick, (f32, f32)>,
     /// Seconds each mouse stick has been held at full deflection, for acceleration.
     stick_ramp: HashMap<Stick, f32>,
+    /// The ring sector each stick in ring mode is pointing into.
+    ring_sector: HashMap<Stick, usize>,
     /// Seconds each held action containing a wheel direction has been held.
     wheel_held: HashMap<Source, f32>,
     wheel_acc: (f32, f32),
@@ -1171,6 +1175,7 @@ impl Engine {
         self.scroll_acc = (0.0, 0.0);
         self.stick_smooth.clear();
         self.stick_ramp.clear();
+        self.ring_sector.clear();
         self.wheel_held.clear();
         self.wheel_acc = (0.0, 0.0);
         // Pad axes were centered above; forget what fed them. Tilt tracking carries on.

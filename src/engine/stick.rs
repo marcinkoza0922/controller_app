@@ -2,7 +2,7 @@
 //! scroll output driven by `tick`.
 
 use super::*;
-use crate::config::MouseResponse;
+use crate::config::{MouseResponse, StickConfig};
 
 /// Deflection above which a mouse stick counts as fully pushed, for the outer boost and acceleration.
 const OUTER_EDGE: f32 = 0.9;
@@ -61,7 +61,8 @@ impl Engine {
             }
         }
         *held = now_held;
-        self.zones(profile, Analog::Stick(s), x.hypot(y).min(1.0), out)
+        let switch = self.update_ring(cfg, s, (x, y), out);
+        self.zones(profile, Analog::Stick(s), x.hypot(y).min(1.0), out) | switch
     }
 
     /// Sends a virtual-pad stick: the physical stick mapped to it plus gyro, macro and
@@ -184,10 +185,70 @@ impl Engine {
     }
 }
 
+/// The geometry of a button ring.
+#[derive(Clone, Copy)]
+struct RingShape {
+    sectors: u8,
+    start_angle: f32,
+    inner_radius: f32,
+    hysteresis: f32,
+}
+
+/// The ring sector a stick at `(x, y)` (screen coordinates: up is negative y) points into, given
+/// the sector it is in now. Sectors are `360 / sectors` degrees wide, the first centered
+/// `start_angle` degrees clockwise from up. The current sector is kept until the stick has gone
+/// `hysteresis` of a sector width past its edge, and until it drops `STICK_DIRECTION_HYSTERESIS`
+/// below `inner_radius`.
+fn pick_sector(current: Option<usize>, (x, y): (f32, f32), ring: &RingShape) -> Option<usize> {
+    let RingShape { sectors, start_angle, inner_radius, hysteresis } = *ring;
+    let mag = x.hypot(y);
+    let engaged = if current.is_some() { inner_radius - STICK_DIRECTION_HYSTERESIS } else { inner_radius };
+    if mag <= 0.0 || mag < engaged {
+        return None;
+    }
+    let n = usize::from(sectors.max(1));
+    let width = 360.0 / n as f32;
+    let angle = x.atan2(-y).to_degrees();
+    if let Some(c) = current.filter(|c| *c < n)
+        && angle_diff(angle, start_angle + c as f32 * width).abs() <= width / 2.0 + hysteresis * width
+    {
+        return Some(c);
+    }
+    Some(((angle - start_angle + width / 2.0).rem_euclid(360.0) / width) as usize % n)
+}
+
+impl Engine {
+    /// Holds the action of the ring sector the stick points into, releasing the previous one.
+    /// A stick no longer in ring mode (a layer changed it) lets go of its sector.
+    pub(super) fn update_ring(&mut self, cfg: &StickConfig, s: Stick, pos: (f32, f32), out: &mut Vec<OutEvent>) -> bool {
+        let current = self.ring_sector.get(&s).copied();
+        let target = match &cfg.action {
+            StickAction::Ring { sectors, start_angle, inner_radius, hysteresis, .. } => {
+                let shape = RingShape { sectors: *sectors, start_angle: *start_angle, inner_radius: *inner_radius, hysteresis: *hysteresis };
+                pick_sector(current, pos, &shape)
+            }
+            _ => None,
+        };
+        if target == current {
+            return false;
+        }
+        let mut switch = false;
+        if let Some(old) = current {
+            self.ring_sector.remove(&s);
+            switch |= self.digital(&Source::RingSector(s, old), &ButtonAction::Disabled, false, out);
+        }
+        if let Some(new) = target {
+            self.ring_sector.insert(s, new);
+            let action = cfg.action.ring_actions().get(new).cloned().unwrap_or(ButtonAction::Disabled);
+            switch |= self.digital(&Source::RingSector(s, new), &action, true, out);
+        }
+        switch
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::StickConfig;
 
     fn mouse_profile(response: MouseResponse) -> Profile {
         let mut p = Profile::passthrough("p");
@@ -284,5 +345,117 @@ mod tests {
         assert!(!text.contains("outer_boost") && !text.contains("smoothing_ms"), "{text}");
         assert_eq!(toml::from_str::<StickConfig>(&text).unwrap(), tuned);
         assert!(!toml::to_string(&old).unwrap().contains("accel"));
+    }
+
+    fn ring_profile() -> Profile {
+        let mut p = Profile::passthrough("p");
+        let key = |k: &str| ButtonAction::Keys(vec![k.into()]);
+        p.left_stick = StickConfig::new(
+            StickAction::Ring {
+                sectors: 4,
+                start_angle: 0.0,
+                inner_radius: 0.5,
+                hysteresis: 0.1,
+                actions: vec![key("KEY_W"), key("KEY_D"), key("KEY_S"), key("KEY_A")],
+            },
+            0.0,
+            1.0,
+        );
+        p
+    }
+
+    fn left(e: &mut Engine, p: &Profile, x: f32, y: f32) -> Vec<OutEvent> {
+        let mut out = Vec::new();
+        e.handle(p, InputEvent::Axis(Axis::LeftX, x), Instant::now(), &mut out);
+        e.handle(p, InputEvent::Axis(Axis::LeftY, y), Instant::now(), &mut out);
+        out.retain(|o| matches!(o, OutEvent::Key(..)));
+        out
+    }
+
+    #[test]
+    fn ring_holds_the_sector_the_stick_points_into() {
+        let p = ring_profile();
+        let mut e = Engine::default();
+        // Up is negative y.
+        assert_eq!(left(&mut e, &p, 0.0, -1.0), [OutEvent::Key(KeyCode::KEY_W, true)]);
+        assert_eq!(
+            left(&mut e, &p, 1.0, 0.0),
+            [OutEvent::Key(KeyCode::KEY_W, false), OutEvent::Key(KeyCode::KEY_D, true)]
+        );
+        assert_eq!(left(&mut e, &p, 0.0, 1.0).len(), 2);
+        assert_eq!(left(&mut e, &p, 0.0, 0.0), [OutEvent::Key(KeyCode::KEY_S, false)]);
+    }
+
+    #[test]
+    fn ring_needs_the_inner_radius_and_keeps_a_sector_a_little_longer() {
+        let p = ring_profile();
+        let mut e = Engine::default();
+        assert!(left(&mut e, &p, 0.0, -0.4).is_empty(), "inside the inner radius");
+        assert_eq!(left(&mut e, &p, 0.0, -0.6), [OutEvent::Key(KeyCode::KEY_W, true)]);
+        assert!(left(&mut e, &p, 0.0, -0.48).is_empty(), "stays on just below the radius");
+        assert_eq!(left(&mut e, &p, 0.0, -0.3), [OutEvent::Key(KeyCode::KEY_W, false)]);
+
+        // 50 degrees right of up is past the 45 degree edge but within the 10% stickiness (54).
+        let (x, y) = (50f32.to_radians().sin(), -50f32.to_radians().cos());
+        left(&mut e, &p, 0.0, -1.0);
+        assert!(left(&mut e, &p, x, y).is_empty(), "still up");
+        let (x, y) = (60f32.to_radians().sin(), -60f32.to_radians().cos());
+        assert_eq!(left(&mut e, &p, x, y).len(), 2, "moved to right");
+    }
+
+    #[test]
+    fn ring_start_angle_turns_the_sectors() {
+        let mut p = ring_profile();
+        if let StickAction::Ring { start_angle, .. } = &mut p.left_stick.action {
+            *start_angle = 45.0;
+        }
+        let mut e = Engine::default();
+        // 80 degrees right of up is the second sector from up, but the first once the sectors
+        // start at 45 degrees. Y is set first, so no half-way position lands in another sector.
+        let (x, y) = (80f32.to_radians().sin(), -80f32.to_radians().cos());
+        left(&mut e, &p, 0.0, y);
+        assert_eq!(left(&mut e, &p, x, y), [OutEvent::Key(KeyCode::KEY_W, true)]);
+        let mut e = Engine::default();
+        let p = ring_profile();
+        left(&mut e, &p, 0.0, y);
+        assert_eq!(left(&mut e, &p, x, y), [OutEvent::Key(KeyCode::KEY_D, true)]);
+    }
+
+    #[test]
+    fn ring_actions_are_released_when_the_mode_changes_and_follow_toggles() {
+        let mut p = ring_profile();
+        let mut e = Engine::default();
+        left(&mut e, &p, 0.0, -1.0);
+        p.left_stick.action = StickAction::Disabled;
+        assert_eq!(left(&mut e, &p, 0.0, -1.0), [OutEvent::Key(KeyCode::KEY_W, false)]);
+
+        // A toggle-wrapped sector action stays on after the stick leaves.
+        let mut p = ring_profile();
+        if let StickAction::Ring { actions, .. } = &mut p.left_stick.action {
+            actions[0] = ButtonAction::toggle(ButtonAction::Keys(vec!["KEY_W".into()]));
+        }
+        let mut e = Engine::default();
+        assert_eq!(left(&mut e, &p, 0.0, -1.0), [OutEvent::Key(KeyCode::KEY_W, true)]);
+        assert!(left(&mut e, &p, 0.0, 0.0).is_empty(), "toggle holds it");
+    }
+
+    #[test]
+    fn ring_config_roundtrips_and_fills_defaults() {
+        let ring: StickConfig = toml::from_str("deadzone = 0.1\n[action.ring]\nsectors = 4\n").unwrap();
+        assert!(matches!(ring.action, StickAction::Ring { sectors: 4, inner_radius, .. } if (inner_radius - 0.5).abs() < 1e-6));
+        let full = StickConfig::new(StickAction::ring(8), 0.1, 2.0);
+        assert_eq!(toml::from_str::<StickConfig>(&toml::to_string(&full).unwrap()).unwrap(), full);
+    }
+
+    #[test]
+    fn ring_actions_are_part_of_the_profile_actions() {
+        let mut p = ring_profile();
+        assert!(p.actions().contains(&&ButtonAction::Keys(vec!["KEY_D".into()])));
+        for a in p.actions_mut() {
+            if *a == ButtonAction::Keys(vec!["KEY_D".into()]) {
+                *a = ButtonAction::Keys(vec!["KEY_E".into()]);
+            }
+        }
+        assert_eq!(p.left_stick.action.ring_actions()[1], ButtonAction::Keys(vec!["KEY_E".into()]));
     }
 }
