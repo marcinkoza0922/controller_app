@@ -634,14 +634,14 @@ pub mod draw {
             line = line.push(match segment {
                 Segment::Text(t) => Element::from(text(t.clone()).font(c.font).size(16.0 * s).color(c.background_text)),
                 Segment::Glyph { label, fill, round } => glyph(label, *fill, *round, c, s, opacity),
-                Segment::Dpad(b) => dpad_glyph(*b, c, s),
+                Segment::Dpad(lit) => dpad_glyph(*lit, c, s),
             });
         }
         line.into()
     }
 
-    /// A cross-shaped D-pad with the pressed direction lit.
-    fn dpad_glyph<'a, M: 'a>(lit: crate::config::Button, c: Colors, s: f32) -> Element<'a, M> {
+    /// A cross-shaped D-pad with the pressed arms (`[up, down, left, right]`) lit.
+    fn dpad_glyph<'a, M: 'a>([up, down, left, right]: [bool; 4], c: Colors, s: f32) -> Element<'a, M> {
         let cell = 8.0 * s;
         let arm = |on: bool| -> Element<'a, M> {
             let color = if on { c.selected } else { c.item };
@@ -656,12 +656,7 @@ pub mod draw {
                 .into()
         };
         let gap = || -> Element<'a, M> { space().width(cell).height(cell).into() };
-        let on = |b: crate::config::Button| b == lit;
-        column![
-            row![gap(), arm(on(crate::config::Button::DpadUp)), gap()],
-            row![arm(on(crate::config::Button::DpadLeft)), arm(false), arm(on(crate::config::Button::DpadRight))],
-            row![gap(), arm(on(crate::config::Button::DpadDown)), gap()],
-        ]
+        column![row![gap(), arm(up), gap()], row![arm(left), arm(false), arm(right)], row![gap(), arm(down), gap()]]
         .into()
     }
 

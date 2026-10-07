@@ -195,8 +195,8 @@ pub enum Segment {
     Text(String),
     /// `fill` is the button's own color (e.g. Xbox A green); `None` draws it neutral.
     Glyph { label: String, fill: Option<[u8; 3]>, round: bool },
-    /// A cross-shaped D-pad with one direction (a `Dpad*` button) highlighted.
-    Dpad(Button),
+    /// A cross-shaped D-pad with its lit arms, `[up, down, left, right]` (two for a diagonal).
+    Dpad([bool; 4]),
 }
 
 /// What the overlay window draws for one info overlay.
@@ -431,7 +431,10 @@ pub fn button_glyph(b: Button, family: PadFamily) -> Segment {
         Button::Guide => named("Guide", "PS", "Home"),
         Button::LeftStick => named("LS", "L3", "LS"),
         Button::RightStick => named("RS", "R3", "RS"),
-        Button::DpadUp | Button::DpadDown | Button::DpadLeft | Button::DpadRight => Segment::Dpad(b),
+        Button::DpadUp => Segment::Dpad([true, false, false, false]),
+        Button::DpadDown => Segment::Dpad([false, true, false, false]),
+        Button::DpadLeft => Segment::Dpad([false, false, true, false]),
+        Button::DpadRight => Segment::Dpad([false, false, false, true]),
         other => glyph(crate::menu::button_badge(other), None, false),
     }
 }
@@ -655,10 +658,12 @@ mod tests {
             .iter()
             .filter_map(|s| match s {
                 Segment::Glyph { label, .. } => Some(label.as_str()),
-                _ => None,
+                Segment::Dpad(_) => Some("dpad"),
+                Segment::Text(_) => None,
             })
             .collect();
-        assert_eq!(labels, ["↓", "↘", "→", "B"]);
+        assert_eq!(labels, ["dpad", "dpad", "dpad", "B"]);
+        assert_eq!(cell[1], Segment::Dpad([false, true, false, true]), "a diagonal lights two arms");
     }
 
     fn overlay(rows: &[&[&str]]) -> InfoOverlay {

@@ -56,6 +56,13 @@ impl Dir {
         })
     }
 
+    /// The D-pad arms that make this direction, `[up, down, left, right]`.
+    pub fn arms(self) -> [bool; 4] {
+        let (up, down) = (matches!(self, Dir::Up | Dir::UpRight | Dir::UpLeft), matches!(self, Dir::Down | Dir::DownRight | Dir::DownLeft));
+        let (left, right) = (matches!(self, Dir::Left | Dir::UpLeft | Dir::DownLeft), matches!(self, Dir::Right | Dir::UpRight | Dir::DownRight));
+        [up, down, left, right]
+    }
+
     pub fn arrow(self) -> &'static str {
         match self {
             Dir::Up => "↑",

@@ -118,12 +118,12 @@ fn cells(seq: &[Entry], merge: bool, max: u8, family: PadFamily) -> Vec<LogCell>
         .collect()
 }
 
-/// An input's glyphs: the button's own, an arrow for a direction (in a disc with the
-/// stick's letter for a stick), and a combo's buttons joined by `+`.
+/// An input's glyphs: the button's own, the D-pad cross for a D-pad direction, an arrow in
+/// a disc with the stick's letter for a stick, and a combo's buttons joined by `+`.
 pub fn input_glyph(input: &Input, family: PadFamily) -> Vec<Segment> {
     match input {
         Input::Button(b) => vec![button_glyph(*b, family)],
-        Input::Direction(None, d) => vec![glyph(d.arrow(), None, false)],
+        Input::Direction(None, d) => vec![Segment::Dpad(d.arms())],
         Input::Direction(Some(s), d) => {
             let letter = if *s == Stick::Left { "L" } else { "R" };
             vec![glyph(&format!("{letter}{}", d.arrow()), None, true)]
