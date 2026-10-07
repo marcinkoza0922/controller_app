@@ -902,7 +902,11 @@ pub enum StickAction {
         invert_y: bool,
     },
     /// `speed` is pixels/second at full deflection.
-    Mouse { speed: f32 },
+    Mouse {
+        speed: f32,
+        #[serde(flatten)]
+        response: MouseResponse,
+    },
     /// `speed` is wheel notches/second at full deflection.
     Scroll { speed: f32 },
     /// Directional keys, e.g. WASD or arrows.
@@ -914,6 +918,61 @@ pub enum StickAction {
     },
 }
 
+
+/// How a mouse stick's deflection turns into pointer speed, beyond the deadzone and curve.
+/// The defaults change nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MouseResponse {
+    /// 0.0..1.0: extra speed gained while held at full deflection, as a share of `speed`.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub accel: f32,
+    /// Milliseconds at full deflection to reach the full acceleration.
+    #[serde(skip_serializing_if = "is_default_ramp")]
+    pub accel_ramp_ms: u32,
+    /// Vertical speed relative to horizontal.
+    #[serde(skip_serializing_if = "is_one")]
+    pub y_scale: f32,
+    /// Extra speed multiplier in the outer tenth of the stick's travel.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub outer_boost: f32,
+    /// Time constant (milliseconds) of a low-pass filter on the stick position; 0 is off.
+    #[serde(skip_serializing_if = "is_zero_ms")]
+    pub smoothing_ms: u32,
+}
+
+impl Default for MouseResponse {
+    fn default() -> Self {
+        MouseResponse { accel: 0.0, accel_ramp_ms: 400, y_scale: 1.0, outer_boost: 0.0, smoothing_ms: 0 }
+    }
+}
+
+#[expect(clippy::trivially_copy_pass_by_ref, reason = "serde's skip_serializing_if passes a reference")]
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
+}
+
+#[expect(clippy::trivially_copy_pass_by_ref, reason = "serde's skip_serializing_if passes a reference")]
+fn is_one(v: &f32) -> bool {
+    *v == 1.0
+}
+
+#[expect(clippy::trivially_copy_pass_by_ref, reason = "serde's skip_serializing_if passes a reference")]
+fn is_default_ramp(v: &u32) -> bool {
+    *v == MouseResponse::default().accel_ramp_ms
+}
+
+#[expect(clippy::trivially_copy_pass_by_ref, reason = "serde's skip_serializing_if passes a reference")]
+fn is_zero_ms(v: &u32) -> bool {
+    *v == 0
+}
+
+impl StickAction {
+    /// Mouse pointer at `speed` pixels/second, with the default response.
+    pub fn mouse(speed: f32) -> Self {
+        StickAction::Mouse { speed, response: MouseResponse::default() }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StickConfig {
@@ -1470,7 +1529,7 @@ impl Profile {
                 (Button::Guide, NextProfile),
             ]),
             left_stick,
-            right_stick: StickConfig::new(StickAction::Mouse { speed: 1600.0 }, 0.1, 2.0),
+            right_stick: StickConfig::new(StickAction::mouse(1600.0), 0.1, 2.0),
             left_trigger: TriggerAction::Button { action: Mouse(MouseButton::Right), threshold: 0.3 }.into(),
             right_trigger: TriggerAction::Button { action: Mouse(MouseButton::Left), threshold: 0.3 }.into(),
             // Gyro aiming while aiming down sights (LT), on pads that have a gyro.
@@ -1510,7 +1569,7 @@ impl Profile {
                 (Button::Select, key("KEY_TAB")),
                 (Button::Guide, NextProfile),
             ]),
-            left_stick: StickConfig::new(StickAction::Mouse { speed: 1400.0 }, 0.12, 2.2),
+            left_stick: StickConfig::new(StickAction::mouse(1400.0), 0.12, 2.2),
             right_stick,
             left_trigger: TriggerAction::Button { action: key("KEY_LEFTALT"), threshold: 0.4 }.into(),
             // Hold and move the pointer to drag a selection box.
@@ -1575,7 +1634,7 @@ impl Profile {
         Profile {
             name: name.into(),
             buttons,
-            left_stick: StickConfig::new(StickAction::Mouse { speed: 1200.0 }, 0.12, 2.0),
+            left_stick: StickConfig::new(StickAction::mouse(1200.0), 0.12, 2.0),
             right_stick: StickConfig::new(StickAction::Scroll { speed: 15.0 }, 0.15, 2.0),
             left_trigger: TriggerAction::Button {
                 action: Keys(vec!["KEY_LEFTSHIFT".into()]),

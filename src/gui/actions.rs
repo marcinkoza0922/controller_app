@@ -661,7 +661,7 @@ impl App {
                     Target::Gesture(b, kind) => p.gestures.get_mut(&b).and_then(|g| g.slot(kind).as_mut()),
                     Target::Zone(a, i) => p.zones_mut(a).get_mut(i).map(|z| &mut z.action),
                     // Handled above, outside any profile.
-                    Target::MacroStep(..) | Target::MenuItem(..) => None,
+                    Target::MacroStep(..) | Target::MenuItem(..) | Target::StickResponse(_) => None,
                 };
                 if let Some(action) = root.and_then(|a| action_at(a, &path)) {
                     *action = ButtonAction::Keys(keys);

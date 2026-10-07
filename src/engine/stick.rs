@@ -2,6 +2,12 @@
 //! scroll output driven by `tick`.
 
 use super::*;
+use crate::config::MouseResponse;
+
+/// Deflection above which a mouse stick counts as fully pushed, for the outer boost and acceleration.
+const OUTER_EDGE: f32 = 0.9;
+/// A smoothed stick this close to rest snaps to it.
+const SMOOTH_REST: f32 = 0.002;
 
 impl Engine {
     pub(super) fn stick_pos(&self, s: Stick, deadzone: f32) -> (f32, f32) {
@@ -95,29 +101,71 @@ impl Engine {
         if mag > 1.0 { (x / mag, y / mag) } else { (x, y) }
     }
 
-    /// Whether any stick has continuous output to produce: a mouse or scroll stick is deflected.
+    /// Whether any stick has continuous output to produce: a mouse or scroll stick is deflected,
+    /// or a smoothed one is still settling.
     pub(super) fn sticks_need_tick(&self, profile: &Profile) -> bool {
         [Stick::Left, Stick::Right].into_iter().any(|s| {
             let cfg = profile.stick(s);
             matches!(cfg.action, StickAction::Mouse { .. } | StickAction::Scroll { .. })
-                && self.stick_pos(s, cfg.deadzone) != (0.0, 0.0)
+                && (self.stick_pos(s, cfg.deadzone) != (0.0, 0.0) || self.stick_smooth.contains_key(&s))
         })
+    }
+
+    /// The stick's position as the mouse response sees it: smoothed with a low-pass filter when
+    /// `smoothing_ms` is set, which keeps settling toward rest after the stick is let go.
+    fn smoothed_pos(&mut self, s: Stick, raw: (f32, f32), smoothing_ms: u32, dt: f32) -> (f32, f32) {
+        if smoothing_ms == 0 {
+            self.stick_smooth.remove(&s);
+            return raw;
+        }
+        let tau = smoothing_ms as f32 / 1000.0;
+        let alpha = 1.0 - (-dt / tau).exp();
+        let prev = self.stick_smooth.get(&s).copied().unwrap_or_default();
+        let next = (prev.0 + (raw.0 - prev.0) * alpha, prev.1 + (raw.1 - prev.1) * alpha);
+        if raw == (0.0, 0.0) && next.0.hypot(next.1) < SMOOTH_REST {
+            self.stick_smooth.remove(&s);
+            return (0.0, 0.0);
+        }
+        self.stick_smooth.insert(s, next);
+        next
+    }
+
+    /// Speed multiplier from acceleration and the outer boost at deflection `mag`; advances the
+    /// stick's time at full deflection.
+    fn response_gain(&mut self, s: Stick, mag: f32, r: &MouseResponse, dt: f32) -> f32 {
+        let edge = ((mag - OUTER_EDGE) / (1.0 - OUTER_EDGE)).clamp(0.0, 1.0);
+        if mag < OUTER_EDGE {
+            self.stick_ramp.remove(&s);
+        } else if r.accel > 0.0 {
+            *self.stick_ramp.entry(s).or_insert(0.0) += dt;
+        }
+        let ramp = match self.stick_ramp.get(&s) {
+            Some(held) => (held * 1000.0 / r.accel_ramp_ms.max(1) as f32).min(1.0),
+            None => 0.0,
+        };
+        (1.0 + r.outer_boost * edge) * (1.0 + r.accel * ramp)
     }
 
     /// Advances the sticks' continuous outputs (mouse motion, scrolling) by `dt` seconds.
     pub(super) fn tick_sticks(&mut self, profile: &Profile, dt: f32, out: &mut Vec<OutEvent>) {
         for s in [Stick::Left, Stick::Right] {
             let cfg = profile.stick(s);
-            let (x, y) = self.stick_pos(s, cfg.deadzone);
+            let response = match &cfg.action {
+                StickAction::Mouse { response, .. } => *response,
+                _ => MouseResponse::default(),
+            };
+            let raw = self.stick_pos(s, cfg.deadzone);
+            let (x, y) = self.smoothed_pos(s, raw, response.smoothing_ms, dt);
             let mag = x.hypot(y).min(1.0);
             if mag == 0.0 {
+                self.stick_ramp.remove(&s);
                 continue;
             }
-            let gain = mag.powf(cfg.curve.max(0.1)) / mag;
+            let gain = mag.powf(cfg.curve.max(0.1)) / mag * self.response_gain(s, mag, &response, dt);
             let (x, y) = (x * gain, y * gain);
             match cfg.action {
-                StickAction::Mouse { speed } => {
-                    let (dx, dy) = take_whole(&mut self.mouse_acc, x * speed * dt, y * speed * dt);
+                StickAction::Mouse { speed, .. } => {
+                    let (dx, dy) = take_whole(&mut self.mouse_acc, x * speed * dt, y * speed * response.y_scale * dt);
                     if dx != 0 || dy != 0 {
                         out.push(OutEvent::MouseMove(dx, dy));
                     }
@@ -133,5 +181,108 @@ impl Engine {
                 _ => {}
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::StickConfig;
+
+    fn mouse_profile(response: MouseResponse) -> Profile {
+        let mut p = Profile::passthrough("p");
+        p.right_stick = StickConfig::new(StickAction::Mouse { speed: 1000.0, response }, 0.0, 1.0);
+        p
+    }
+
+    fn push(e: &mut Engine, p: &Profile, x: f32, y: f32) {
+        let mut out = Vec::new();
+        e.handle(p, InputEvent::Axis(Axis::RightX, x), Instant::now(), &mut out);
+        e.handle(p, InputEvent::Axis(Axis::RightY, y), Instant::now(), &mut out);
+    }
+
+    /// Total mouse movement over `secs` of 4 ms ticks.
+    fn travel(e: &mut Engine, p: &Profile, secs: f32) -> (i32, i32) {
+        let mut out = Vec::new();
+        for _ in 0..(secs / 0.004).round() as usize {
+            e.tick(p, 0.004, &mut out);
+        }
+        out.iter().fold((0, 0), |(x, y), o| match o {
+            OutEvent::MouseMove(dx, dy) => (x + dx, y + dy),
+            _ => (x, y),
+        })
+    }
+
+    #[test]
+    fn acceleration_builds_only_at_full_deflection() {
+        let p = mouse_profile(MouseResponse { accel: 1.0, accel_ramp_ms: 400, ..MouseResponse::default() });
+        let mut e = Engine::default();
+        push(&mut e, &p, 0.5, 0.0);
+        let (partial, _) = travel(&mut e, &p, 1.0);
+        assert!((498..=500).contains(&partial), "partial push moved {partial}px");
+
+        push(&mut e, &p, 1.0, 0.0);
+        let (full, _) = travel(&mut e, &p, 1.0);
+        // 0.4 s of ramp averaging 1.5x, then 0.6 s at 2x: 0.4 * 1500 + 0.6 * 2000.
+        assert!((1790..=1810).contains(&full), "full push moved {full}px");
+
+        // Letting go resets the ramp.
+        push(&mut e, &p, 0.0, 0.0);
+        travel(&mut e, &p, 0.1);
+        push(&mut e, &p, 1.0, 0.0);
+        let (again, _) = travel(&mut e, &p, 0.1);
+        assert!(again < 200, "ramp restarted, moved {again}px in 0.1s");
+    }
+
+    #[test]
+    fn vertical_scale_changes_only_vertical_speed() {
+        let p = mouse_profile(MouseResponse { y_scale: 0.5, ..MouseResponse::default() });
+        let mut e = Engine::default();
+        push(&mut e, &p, 0.5, 0.5);
+        let (x, y) = travel(&mut e, &p, 1.0);
+        assert!((x - 2 * y).abs() <= 2, "x {x}, y {y}");
+    }
+
+    #[test]
+    fn outer_boost_applies_only_near_the_edge() {
+        let p = mouse_profile(MouseResponse { outer_boost: 0.5, ..MouseResponse::default() });
+        let mut e = Engine::default();
+        push(&mut e, &p, 0.8, 0.0);
+        let (inner, _) = travel(&mut e, &p, 1.0);
+        assert!((798..=800).contains(&inner), "{inner}");
+        push(&mut e, &p, 1.0, 0.0);
+        let (outer, _) = travel(&mut e, &p, 1.0);
+        assert!((1498..=1500).contains(&outer), "{outer}");
+    }
+
+    #[test]
+    fn smoothing_eases_in_and_settles_after_release() {
+        let p = mouse_profile(MouseResponse { smoothing_ms: 100, ..MouseResponse::default() });
+        let mut e = Engine::default();
+        push(&mut e, &p, 1.0, 0.0);
+        let (first, _) = travel(&mut e, &p, 0.1);
+        assert!(first < 100, "smoothed start moved {first}px, unsmoothed would be 100");
+
+        push(&mut e, &p, 0.0, 0.0);
+        assert!(e.needs_tick(&p), "still settling after release");
+        let (tail, _) = travel(&mut e, &p, 2.0);
+        assert!(tail > 0, "keeps moving briefly after release");
+        assert!(!e.needs_tick(&p), "settled");
+    }
+
+    #[test]
+    fn response_fields_are_optional_in_config() {
+        let old: StickConfig = toml::from_str("deadzone = 0.1\ncurve = 2.0\n[action.mouse]\nspeed = 900.0\n").unwrap();
+        assert_eq!(old.action, StickAction::mouse(900.0));
+
+        let tuned = StickConfig::new(
+            StickAction::Mouse { speed: 900.0, response: MouseResponse { accel: 0.4, y_scale: 0.8, ..MouseResponse::default() } },
+            0.1,
+            2.0,
+        );
+        let text = toml::to_string(&tuned).unwrap();
+        assert!(!text.contains("outer_boost") && !text.contains("smoothing_ms"), "{text}");
+        assert_eq!(toml::from_str::<StickConfig>(&text).unwrap(), tuned);
+        assert!(!toml::to_string(&old).unwrap().contains("accel"));
     }
 }

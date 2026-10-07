@@ -201,6 +201,8 @@ enum Target {
     MacroStep(usize, usize),
     /// Item `.1` of menu `.0` (in the shown list).
     MenuItem(usize, usize),
+    /// The advanced response settings of a mouse stick.
+    StickResponse(Stick),
 }
 
 /// Open-card indices after item `i` is removed: later items move up one place.

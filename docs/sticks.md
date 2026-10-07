@@ -1,6 +1,6 @@
 # Stick behaviors: mouse response, rings and flick stick
 
-Status: proposed (2026-10-07). Nothing here is implemented yet.
+Status: phases 0 and 1 (stick module, mouse response) implemented; ring and flick stick proposed (2026-10-07).
 
 ## Goal
 
@@ -82,7 +82,7 @@ vertical_speed = 1200.0   # px/s at full deflection, used when vertical = "look"
 In Rust:
 
 ```rust
-Mouse { speed: f32, accel: f32, accel_ramp_ms: u32, y_scale: f32, outer_boost: f32, smoothing_ms: u32 }
+Mouse { speed: f32, #[serde(flatten)] response: MouseResponse }  // accel, accel_ramp_ms, y_scale, outer_boost, smoothing_ms
 Ring { sectors: u8, start_angle: f32, inner_radius: f32, hysteresis: f32, actions: Vec<ButtonAction> }
 Flick { full_turn_px: f32, flick_threshold: f32, flick_time_ms: u32, rotate_smoothing_ms: u32, forward_deadzone: f32, vertical: FlickVertical, vertical_speed: f32 }
 ```

@@ -134,6 +134,10 @@ pub struct Engine {
     layers_changed: bool,
     mouse_acc: (f32, f32),
     scroll_acc: (f32, f32),
+    /// Smoothed position of each mouse stick whose response smooths it, until it settles at rest.
+    stick_smooth: HashMap<Stick, (f32, f32)>,
+    /// Seconds each mouse stick has been held at full deflection, for acceleration.
+    stick_ramp: HashMap<Stick, f32>,
     /// Seconds each held action containing a wheel direction has been held.
     wheel_held: HashMap<Source, f32>,
     wheel_acc: (f32, f32),
@@ -1165,6 +1169,8 @@ impl Engine {
         }
         self.mouse_acc = (0.0, 0.0);
         self.scroll_acc = (0.0, 0.0);
+        self.stick_smooth.clear();
+        self.stick_ramp.clear();
         self.wheel_held.clear();
         self.wheel_acc = (0.0, 0.0);
         // Pad axes were centered above; forget what fed them. Tilt tracking carries on.
@@ -2516,7 +2522,7 @@ mod tests {
         let base = Profile::passthrough("p");
         let mut layer = crate::config::Layer::new("L");
         layer.left_stick = Some(StickConfig::new(wasd(), 0.1, 1.0));
-        layer.right_stick = Some(StickConfig::new(StickAction::Mouse { speed: 1000.0 }, 0.1, 1.0));
+        layer.right_stick = Some(StickConfig::new(StickAction::mouse(1000.0), 0.1, 1.0));
         layer.right_trigger = Some(TriggerAction::Gamepad(Trigger::Right).into());
         let on = layered(&base, &layer);
         let mut e = Engine::default();

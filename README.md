@@ -44,7 +44,7 @@ sudo udevadm control --reload && sudo udevadm trigger
 Each profile maps:
 
 - **buttons**: to a gamepad button, a key or key combo (`LEFTCTRL+C`), a mouse button, the scroll wheel (one notch per press, continuous while held), *next profile*, or **several of these at once**.
-- **sticks**: to a gamepad stick, mouse pointer, scroll wheel or direction keys (WASD/arrows), with a deadzone, a response curve and an adjustable press threshold. Each stick's **directions also act as buttons** on top of that (Left Stick Up, …): they can have any action or gesture and can be part of combos, e.g. LB + Right Stick Right. Gamepad outputs include stick directions too, so a button (or the D-pad) can push the virtual stick, and two directions make a diagonal.
+- **sticks**: to a gamepad stick, mouse pointer, scroll wheel or direction keys (WASD/arrows), with a deadzone, a response curve and an adjustable press threshold. Mouse sticks also have **acceleration** (speed grows while held at full push), and under *Advanced response* a ramp time, an outer-edge boost, a vertical speed ratio and smoothing. Each stick's **directions also act as buttons** on top of that (Left Stick Up, …): they can have any action or gesture and can be part of combos, e.g. LB + Right Stick Right. Gamepad outputs include stick directions too, so a button (or the D-pad) can push the virtual stick, and two directions make a diagonal.
 - **triggers**: to an analog gamepad trigger, or to anything a button can do (a gamepad button, key, mouse button, macro, …), pressed once pulled past a threshold.
 
 On top of that:

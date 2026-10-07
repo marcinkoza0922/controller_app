@@ -1,8 +1,9 @@
 //! The profile editor (buttons, sticks and triggers, combos, gyro), also used for layers, and the controller drawing.
 
-use iced::widget::{column, row};
+use iced::widget::{Column, column, row};
 
 use super::*;
+use crate::config::MouseResponse;
 
 /// Sections of the profile editor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,7 +95,10 @@ pub(super) fn stick_summary(cfg: &StickConfig) -> String {
     let mode = match &cfg.action {
         StickAction::Disabled => "Disabled".to_string(),
         StickAction::Gamepad { stick, .. } => format!("pad {stick}"),
-        StickAction::Mouse { speed } => format!("mouse, {speed:.0} px/s"),
+        StickAction::Mouse { speed, response } if response.accel > 0.0 => {
+            format!("mouse, {speed:.0} px/s, accel {:.0}%", response.accel * 100.0)
+        }
+        StickAction::Mouse { speed, .. } => format!("mouse, {speed:.0} px/s"),
         StickAction::Scroll { speed } => format!("scroll, {speed:.0} notches/s"),
         StickAction::Keys { up, down, left, right } => {
             [up, left, down, right].map(|k| keyboard::label(k)).join("/")
@@ -278,7 +282,7 @@ pub(super) fn view_profile<'a>(p: &'a Profile, ui: &Ui, tab: ProfileTab) -> Elem
             let mut sticks = Vec::new();
             for s in [Stick::Left, Stick::Right] {
                 let base = ui.layer.map_or(p.stick(s), |m| m.base.stick(s));
-                sticks.extend(layer_part(ui, LayerPart::Stick(s), s.to_string(), stick_summary(base), || vec![stick_editor(s, p.stick(s), names)]));
+                sticks.extend(layer_part(ui, LayerPart::Stick(s), s.to_string(), stick_summary(base), || vec![stick_editor(s, p.stick(s), names, ui.expanded)]));
                 for b in Button::stick_directions(s) {
                     sticks.extend(button_row(p, b, ui));
                 }
@@ -838,7 +842,12 @@ impl fmt::Display for StickKind {
 }
 
 #[expect(clippy::too_many_lines, reason = "predates the size lints")]
-pub(super) fn stick_editor<'a>(s: Stick, cfg: &'a StickConfig, names: &Names) -> Element<'a, Message> {
+pub(super) fn stick_editor<'a>(
+    s: Stick,
+    cfg: &'a StickConfig,
+    names: &Names,
+    expanded: &HashSet<Target>,
+) -> Element<'a, Message> {
     let kind = match cfg.action {
         StickAction::Disabled => StickKind::Disabled,
         StickAction::Gamepad { .. } => StickKind::Gamepad,
@@ -862,7 +871,7 @@ pub(super) fn stick_editor<'a>(s: Stick, cfg: &'a StickConfig, names: &Names) ->
         with(match k {
             StickKind::Disabled => StickAction::Disabled,
             StickKind::Gamepad => StickAction::Gamepad { stick: s, invert_y: false },
-            StickKind::Mouse => StickAction::Mouse { speed: 1200.0 },
+            StickKind::Mouse => StickAction::mouse(1200.0),
             StickKind::Scroll => StickAction::Scroll { speed: 15.0 },
             StickKind::Keys => wasd(),
         })
@@ -891,10 +900,8 @@ pub(super) fn stick_editor<'a>(s: Stick, cfg: &'a StickConfig, names: &Names) ->
                 .into(),
             ));
         }
-        StickAction::Mouse { speed } => {
-            rows = rows.push(value_slider("    Speed", 100.0..=4000.0, *speed, 50.0, "px/s", move |v| {
-                with(StickAction::Mouse { speed: v })
-            }));
+        StickAction::Mouse { .. } => {
+            rows = mouse_rows(rows, s, cfg, expanded.contains(&Target::StickResponse(s)), with);
         }
         StickAction::Scroll { speed } => {
             rows = rows.push(value_slider("    Speed", 1.0..=60.0, *speed, 1.0, "notches/s", move |v| {
@@ -956,6 +963,43 @@ pub(super) fn stick_editor<'a>(s: Stick, cfg: &'a StickConfig, names: &Names) ->
         Message::SetStick(s, c)
     }));
     rows.push(zone_editor(Analog::Stick(s), &cfg.zones, names)).into()
+}
+
+/// A mouse stick's speed and response rows, the fine-tuning ones behind "Advanced response".
+fn mouse_rows<'a>(
+    mut rows: Column<'a, Message>,
+    s: Stick,
+    cfg: &StickConfig,
+    open: bool,
+    with: impl Fn(StickAction) -> Message + Copy + 'a,
+) -> Column<'a, Message> {
+    let StickAction::Mouse { speed, response } = cfg.action else {
+        return rows;
+    };
+    rows = rows.push(value_slider("    Speed", 100.0..=4000.0, speed, 50.0, "px/s", move |v| {
+        with(StickAction::Mouse { speed: v, response })
+    }));
+    rows = rows.push(value_slider("    Acceleration", 0.0..=1.0, response.accel, 0.05, "(0 = off)", move |v| {
+        with(StickAction::Mouse { speed, response: MouseResponse { accel: v, ..response } })
+    }));
+    rows = rows.push(labeled("    ", row_toggle("Advanced response", Target::StickResponse(s), open, false)));
+    if open {
+        let set = move |r: MouseResponse| with(StickAction::Mouse { speed, response: r });
+        rows = rows
+            .push(value_slider("        Ramp time", 100.0..=2000.0, response.accel_ramp_ms as f32, 50.0, "ms", move |v| {
+                set(MouseResponse { accel_ramp_ms: v as u32, ..response })
+            }))
+            .push(value_slider("        Outer boost", 0.0..=1.0, response.outer_boost, 0.05, "", move |v| {
+                set(MouseResponse { outer_boost: v, ..response })
+            }))
+            .push(value_slider("        Vertical speed", 0.25..=2.0, response.y_scale, 0.05, "× horizontal", move |v| {
+                set(MouseResponse { y_scale: v, ..response })
+            }))
+            .push(value_slider("        Smoothing", 0.0..=200.0, response.smoothing_ms as f32, 5.0, "ms", move |v| {
+                set(MouseResponse { smoothing_ms: v as u32, ..response })
+            }));
+    }
+    rows
 }
 
 /// Extra actions held while the stick/trigger is within a range of travel.
@@ -1202,7 +1246,7 @@ impl App {
                                 z.action = action;
                             }
                         }
-                        Target::MacroStep(..) | Target::MenuItem(..) => {}
+                        Target::MacroStep(..) | Target::MenuItem(..) | Target::StickResponse(_) => {}
                     }
                 }
             }
