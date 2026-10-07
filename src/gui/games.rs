@@ -465,7 +465,7 @@ impl App {
                 row![
                     toggler(auto.enabled).label("Switch profiles automatically").on_toggle(Message::SetAutoSwitch),
                     space::horizontal(),
-                    text("Otherwise use"),
+                    text("Outside games use"),
                     dropdown(defaults, Some(default), Message::SetDefaultProfile).width(280),
                 ]
                 .spacing(12)

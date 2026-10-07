@@ -74,7 +74,8 @@ only while a "Show info overlay" action holds it up.
 **Profiles across games.**
 - The active profile is identified by (game, profile).
 - `NextProfile` cycles through the current game's profiles.
-- The auto-switch default profile (for windows no rule matches) points at a (game, profile),
+- The auto-switch default profile (taken when a game with rules loses focus to a window no rule
+  matches; General › Gamepad unless changed) points at a (game, profile),
   normally one in General.
 
 ### Navigation

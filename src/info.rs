@@ -251,11 +251,43 @@ impl Timers {
         self.start
             .values()
             .chain(self.lingering.values())
-            .map(|end| {
-                let fading = end.checked_sub(FADE_OUT).unwrap_or(now);
-                if now >= fading { now + frame } else { fading }
-            })
+            .map(|end| redraw_at(*end, now, frame))
             .min()
+    }
+}
+
+/// When something due to go at `end` next needs redrawing: as it starts to fade, then every
+/// frame while it does.
+fn redraw_at(end: Instant, now: Instant, frame: Duration) -> Instant {
+    let fading = end.checked_sub(FADE_OUT).unwrap_or(now);
+    if now >= fading { now + frame } else { fading }
+}
+
+/// How long a toast stays up, including its fade.
+pub const TOAST_TIME: Duration = Duration::from_millis(2500);
+
+/// A short notice (such as the profile just switched to), drawn like an info overlay at the
+/// top of the screen and fading out after [`TOAST_TIME`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct Toast {
+    lines: Vec<String>,
+    end: Instant,
+}
+
+impl Toast {
+    pub fn new(lines: Vec<String>, now: Instant) -> Self {
+        Toast { lines, end: now + TOAST_TIME }
+    }
+
+    /// What to draw now, or `None` once it's gone.
+    pub fn view(&self, now: Instant) -> Option<InfoView> {
+        let opacity = fade(now, self.end)?;
+        let rows = self.lines.iter().map(|l| vec![vec![Segment::Text(l.clone())]]).collect();
+        Some(InfoView { style: OverlayStyle::toast(), rows, opacity })
+    }
+
+    pub fn next_redraw(&self, now: Instant, frame: Duration) -> Instant {
+        redraw_at(self.end, now, frame)
     }
 }
 
@@ -578,6 +610,18 @@ mod tests {
         assert!((half - 0.5).abs() < 0.01, "{half}");
         assert_eq!(fade(now, now), None);
         assert_eq!(fade(now + s(1.0), now), None);
+    }
+
+    #[test]
+    fn toasts_show_their_lines_then_fade_away() {
+        let now = Instant::now();
+        let toast = Toast::new(vec!["Doom".into(), "Play".into()], now);
+        let view = toast.view(now).unwrap();
+        assert_eq!(view.rows, [[[Segment::Text("Doom".into())]], [[Segment::Text("Play".into())]]]);
+        assert_eq!(view.opacity, 1.0);
+        assert_eq!(toast.next_redraw(now, Duration::from_millis(33)), now + TOAST_TIME - FADE_OUT);
+        assert!(toast.view(now + TOAST_TIME - FADE_OUT / 2).unwrap().opacity < 1.0);
+        assert_eq!(toast.view(now + TOAST_TIME), None);
     }
 
     #[test]

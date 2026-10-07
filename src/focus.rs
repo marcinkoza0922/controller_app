@@ -246,21 +246,24 @@ pub fn rules(config: &Config) -> impl Iterator<Item = (&str, &Rule)> {
     config.games.iter().flat_map(|g| g.rules.iter().filter(|r| r.enabled).map(move |r| (g.name.as_str(), r)))
 }
 
-/// Profile for a focused window: the first matching rule's, else the default (if any).
+/// Profile for a focused window: the first matching rule's, `None` if it isn't a game's.
 pub fn profile_for(config: &Config, info: &WindowInfo) -> Option<ProfileRef> {
     rules(config)
         .find(|(_, r)| rule_matches(r.kind, &r.value, info))
         .map(|(game, r)| ProfileRef::new(Some(game), &r.profile))
-        .or_else(|| config.auto_switch.default_profile.clone())
 }
 
 /// Profile from running processes, for desktops without focus information: the first rule
-/// (in rule order) that matches any running process, else the default.
+/// (in rule order) that matches any running process.
 pub fn profile_for_processes(config: &Config, processes: &[WindowInfo]) -> Option<ProfileRef> {
     rules(config)
         .find(|(_, r)| processes.iter().any(|p| rule_matches(r.kind, &r.value, p)))
         .map(|(game, r)| ProfileRef::new(Some(game), &r.profile))
-        .or_else(|| config.auto_switch.default_profile.clone())
+}
+
+/// Whether rules can pick `game`, so it has focus only while one matches.
+pub fn has_rules(config: &Config, game: &str) -> bool {
+    rules(config).any(|(g, _)| g == game)
 }
 
 /// The game a rule matches this window to, and the window's process: a launch is the first
@@ -352,7 +355,7 @@ mod tests {
     }
 
     #[test]
-    fn first_matching_rule_wins_else_default() {
+    fn first_matching_rule_wins() {
         let mut config = config(&[
             ("Souls", &[(RuleKind::SteamAppId, "1245620")]),
             ("Other", &[(RuleKind::Executable, "ELDENRING.EXE")]),
@@ -369,9 +372,8 @@ mod tests {
         assert_eq!(profile_for(&config, &factorio), at("Factorio"));
 
         let browser = WindowInfo { class: "firefox".into(), exe: "firefox".into(), ..Default::default() };
-        assert_eq!(profile_for(&config, &browser), None);
-        config.auto_switch.default_profile = Some(ProfileRef::new(None, "Desktop"));
-        assert_eq!(profile_for(&config, &browser), Some(ProfileRef::new(None, "Desktop")));
+        assert_eq!(profile_for(&config, &browser), None, "the default is the daemon's call");
+        assert!(has_rules(&config, "Souls") && !has_rules(&config, "General"));
 
         config.games[0].rules[0].enabled = false;
         assert_eq!(profile_for(&config, &elden), at("Other"), "switched-off rules are skipped");
@@ -385,14 +387,13 @@ mod tests {
 
     #[test]
     fn process_scan_uses_rule_order() {
-        let mut config = config(&[("A", &[(RuleKind::Executable, "game.exe")]), ("B", &[(RuleKind::Executable, "bash")])]);
-        config.auto_switch.default_profile = Some(ProfileRef::new(None, "D"));
+        let config = config(&[("A", &[(RuleKind::Executable, "game.exe")]), ("B", &[(RuleKind::Executable, "bash")])]);
         let procs = |names: &[&str]| -> Vec<WindowInfo> {
             names.iter().map(|n| WindowInfo { exe: n.to_string(), ..Default::default() }).collect()
         };
         assert_eq!(profile_for_processes(&config, &procs(&["bash", "game.exe"])), at("A"));
         assert_eq!(profile_for_processes(&config, &procs(&["bash"])), at("B"));
-        assert_eq!(profile_for_processes(&config, &procs(&["zsh"])), Some(ProfileRef::new(None, "D")));
+        assert_eq!(profile_for_processes(&config, &procs(&["zsh"])), None);
     }
 
     #[test]

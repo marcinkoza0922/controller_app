@@ -204,6 +204,8 @@ struct Daemon {
     info_fade: Option<Instant>,
     /// Info overlays shown for a while: at the game's start, or lingering after being let go.
     info_timers: crate::info::Timers,
+    /// A notice at the top of the screen, such as the profile just switched to.
+    toast: Option<crate::info::Toast>,
     /// Each game's process when it last started, so focusing it again isn't another start.
     launches: HashMap<String, u32>,
     sampler: crate::info::Sampler,
@@ -250,6 +252,7 @@ pub fn run() -> Result<()> {
         info_refresh: None,
         info_fade: None,
         info_timers: crate::info::Timers::default(),
+        toast: None,
         launches: HashMap::new(),
         sampler: crate::info::Sampler::default(),
         overlay_started: None,
@@ -571,10 +574,19 @@ impl Daemon {
             self.sampler.sample();
         }
         let values = self.live_values();
-        let info = shown
+        let mut info: Vec<_> = shown
             .iter()
             .map(|(o, opacity)| crate::info::InfoView { opacity: *opacity, ..crate::info::resolve(o, &values) })
             .collect();
+        let now = Instant::now();
+        let toast = self.toast.as_ref().and_then(|t| Some((t.view(now)?, t.next_redraw(now, FADE_FRAME))));
+        match toast {
+            Some((view, redraw)) => {
+                info.push(view);
+                self.info_fade = Some(self.info_fade.map_or(redraw, |t| t.min(redraw)));
+            }
+            None => self.toast = None,
+        }
         OverlayFrame { info, active: self.overlay_view(), font: self.config.active_font().map(str::to_string) }
     }
 
@@ -839,8 +851,9 @@ impl Daemon {
         if !self.config.auto_switch.enabled {
             return;
         }
-        if let Some(target) = focus::profile_for(&self.config, window) {
-            self.auto_switch_to(target, &describe(window));
+        match focus::profile_for(&self.config, window) {
+            Some(target) => self.auto_switch_to(target, &describe(window), true),
+            None => self.leave_game(&describe(window)),
         }
         if let Some((game, pid)) = focus::game_launch(&self.config, window) {
             self.launched(&game, pid);
@@ -864,6 +877,7 @@ impl Daemon {
             return;
         }
         log!("{game} started");
+        self.toast_profile();
         self.info_timers.game_started(&self.scope.info, Instant::now());
         let Some(base) = self.config.active() else { return };
         for dev in self.devices.values_mut() {
@@ -889,8 +903,9 @@ impl Daemon {
         let target = focus::profile_for_processes(&self.config, &processes);
         if target != self.scan_target {
             self.scan_target = target.clone();
-            if let Some(target) = target {
-                self.auto_switch_to(target, "running processes");
+            match target {
+                Some(target) => self.auto_switch_to(target, "running processes", true),
+                None => self.leave_game("no game running"),
             }
         }
         if let Some((game, pid)) = focus::game_launch_in(&self.config, &processes) {
@@ -898,16 +913,42 @@ impl Daemon {
         }
     }
 
-    fn auto_switch_to(&mut self, target: ProfileRef, reason: &str) {
+    /// Switches to a profile a rule (or the default) picked, with a toast if `toast`.
+    fn auto_switch_to(&mut self, target: ProfileRef, reason: &str, toast: bool) {
         if target == self.config.active_ref() {
             return;
         }
         if self.config.profile(&target).is_none() {
-            log!("per-game rule points to missing profile {target}");
+            log!("auto-switch points to missing profile {target}");
             return;
         }
         log!("{reason} → profile {target}");
-        self.switch_profile(target);
+        if toast {
+            self.switch_profile(target);
+        } else {
+            self.set_profile(target);
+        }
+    }
+
+    /// No game has focus: a profile of a game that rules pick gives way to the default one.
+    /// No toast, since alt-tabbing out of a game would show one every time.
+    fn leave_game(&mut self, reason: &str) {
+        let in_game = self.config.active_ref().game.is_some_and(|g| focus::has_rules(&self.config, &g));
+        if in_game && let Some(default) = self.config.auto_switch.default_profile.clone() {
+            self.auto_switch_to(default, reason, false);
+        }
+    }
+
+    /// Briefly says which controller profile is now active, and for which game, at the top
+    /// of the screen.
+    fn toast_profile(&mut self) {
+        let active = self.config.active_ref();
+        let lines = [format!("Controller profile active: {}", active.profile)]
+            .into_iter()
+            .chain(active.game.map(|game| format!("Game: {game}")))
+            .collect();
+        self.toast = Some(crate::info::Toast::new(lines, Instant::now()));
+        self.broadcast_overlay();
     }
 
     fn broadcast(&mut self, snapshot: Option<&InputSnapshot>) {
@@ -1132,9 +1173,17 @@ impl Daemon {
         }
     }
 
+    /// Switches profile, showing the new one in a toast.
     fn switch_profile(&mut self, target: ProfileRef) {
+        if self.set_profile(target) {
+            self.toast_profile();
+        }
+    }
+
+    /// Switches profile; false if it was already active.
+    fn set_profile(&mut self, target: ProfileRef) -> bool {
         if target == self.config.active_ref() {
-            return;
+            return false;
         }
         log!("switching to profile {target}");
         // An open menu refers to menus by position, which another game's list changes.
@@ -1157,6 +1206,7 @@ impl Daemon {
         if let Err(e) = self.config.save() {
             log!("saving config: {e:#}");
         }
+        true
     }
 
     /// Releases every output held by every device (before a profile change).

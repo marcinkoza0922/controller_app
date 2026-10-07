@@ -572,6 +572,11 @@ impl OverlayStyle {
             ..OverlayStyle::default()
         }
     }
+
+    /// Notices such as the profile just switched to.
+    pub fn toast() -> Self {
+        OverlayStyle { position: ScreenPosition::TopCenter, background: Paint::new("#16181c", 0.85), ..OverlayStyle::default() }
+    }
 }
 
 fn default_keyboard_style() -> OverlayStyle {
@@ -1670,14 +1675,51 @@ impl fmt::Display for ProfileRef {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AutoSwitch {
     pub enabled: bool,
-    /// Profile for windows no rule matches; `None` leaves the current profile alone.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Profile to return to when a game (one with rules) loses focus; `None` leaves the
+    /// current profile alone.
+    #[serde(default = "AutoSwitch::gamepad", with = "keep_or_profile")]
     pub default_profile: Option<ProfileRef>,
+}
+
+impl AutoSwitch {
+    fn gamepad() -> Option<ProfileRef> {
+        Some(ProfileRef::new(None, "Gamepad"))
+    }
 }
 
 impl Default for AutoSwitch {
     fn default() -> Self {
-        AutoSwitch { enabled: true, default_profile: None }
+        AutoSwitch { enabled: true, default_profile: AutoSwitch::gamepad() }
+    }
+}
+
+/// The default profile, or `"keep"` for none: a missing value means General's Gamepad.
+mod keep_or_profile {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    use super::ProfileRef;
+
+    const KEEP: &str = "keep";
+
+    pub fn serialize<S: Serializer>(value: &Option<ProfileRef>, s: S) -> Result<S::Ok, S::Error> {
+        match value {
+            Some(at) => at.serialize(s),
+            None => s.serialize_str(KEEP),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<ProfileRef>, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Stored {
+            At(ProfileRef),
+            Keep(String),
+        }
+        match Stored::deserialize(d)? {
+            Stored::At(at) => Ok(Some(at)),
+            Stored::Keep(word) if word == KEEP => Ok(None),
+            Stored::Keep(word) => Err(serde::de::Error::custom(format!("expected a profile or \"{KEEP}\", found {word:?}"))),
+        }
     }
 }
 
@@ -2432,6 +2474,13 @@ mod tests {
         value.as_table_mut().unwrap().remove("auto_switch");
         let old: Config = toml::from_str(&toml::to_string(&value).unwrap()).unwrap();
         assert_eq!(old.auto_switch, AutoSwitch::default());
+        assert_eq!(old.auto_switch.default_profile, Some(ProfileRef::new(None, "Gamepad")));
+
+        // Keeping the current profile is written out, since a missing value means Gamepad.
+        config.auto_switch.default_profile = None;
+        let text = toml::to_string_pretty(&config).unwrap();
+        assert!(text.contains("default_profile = \"keep\""), "{text}");
+        assert_eq!(toml::from_str::<Config>(&text).unwrap().auto_switch.default_profile, None);
     }
 
     fn templates() -> Vec<Profile> {

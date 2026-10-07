@@ -134,7 +134,7 @@ Horizontal aim can come from yaw (turning), roll (tilting) or both, and either a
 
 ## Per-game profiles
 
-Each game's rules (on its Details tab) switch to one of its profiles when the game's window gets focus, and an optional default profile (on the Settings page) is used for everything else. Rules are checked game by game, in order; a rule can be switched off without deleting it. A rule matches on:
+Each game's rules (on its Details tab) switch to one of its profiles when the game's window gets focus, and when it loses focus the default profile (on the Settings page; General › Gamepad unless changed, or "keep current profile") takes over. Each switch, and each game launch, shows a short toast at the top of the screen naming the controller profile now active and its game; switching back to the default when a game loses focus doesn't. Rules are checked game by game, in order; a rule can be switched off without deleting it. A rule matches on:
 
 - **Executable**: the program's file name. For Wine/Proton games it's the Windows `.exe` (e.g. `eldenring.exe`), not the Wine loader.
 - **Steam App ID**: taken from the environment Steam sets, or from Proton's `steam_app_<id>` window class.
