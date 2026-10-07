@@ -67,7 +67,7 @@ pub struct Status {
     pub devices: Vec<DeviceInfo>,
     #[serde(default)]
     pub focus_backend: FocusBackend,
-    /// Currently focused window (KWin backend only).
+    /// Currently focused window (when the desktop reports it).
     #[serde(default)]
     pub focused: Option<WindowInfo>,
     /// Recently focused windows, newest first, for building rules.
@@ -88,9 +88,36 @@ pub struct Status {
 pub enum FocusBackend {
     /// KWin script reports focus changes (KDE Plasma, Wayland or X11).
     Kwin,
+    /// Sway's IPC socket reports focus changes.
+    Sway,
+    /// Hyprland's event socket reports focus changes.
+    Hyprland,
+    /// Our GNOME Shell extension reports focus changes.
+    Gnome,
     /// No focus information: rules match against running processes instead.
     #[default]
     ProcessScan,
+}
+
+impl FocusBackend {
+    /// The desktop whose windows are tracked, `None` when only processes are.
+    pub fn desktop(self) -> Option<&'static str> {
+        match self {
+            Self::Kwin => Some("KWin"),
+            Self::Sway => Some("Sway"),
+            Self::Hyprland => Some("Hyprland"),
+            Self::Gnome => Some("GNOME"),
+            Self::ProcessScan => None,
+        }
+    }
+
+    /// What per-game switching follows, for people.
+    pub fn label(self) -> String {
+        match self.desktop() {
+            Some(desktop) => format!("focused window ({desktop})"),
+            None => "running processes".into(),
+        }
+    }
 }
 
 /// What we know about a window (or, for process scanning, a process).

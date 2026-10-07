@@ -21,7 +21,7 @@ use crate::{
     },
     engine::Opener,
     info::PadFamily,
-    ipc::{self, FocusBackend, InputSnapshot, Request, Response, Status, WindowInfo},
+    ipc::{self, InputSnapshot, Request, Response, Status, WindowInfo},
     keyboard::{self, Layout},
     launchers, library,
     menu::MenuSession,

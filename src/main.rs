@@ -79,11 +79,7 @@ fn status() -> Result<()> {
         Some(game) => println!("profile: {} ({game})", s.active_profile),
         None => println!("profile: {}", s.active_profile),
     }
-    let tracking = match s.focus_backend {
-        ipc::FocusBackend::Kwin => "focused window (KWin)",
-        ipc::FocusBackend::ProcessScan => "running processes",
-    };
-    println!("per-game switching follows: {tracking}");
+    println!("per-game switching follows: {}", s.focus_backend.label());
     if let Some(w) = &s.focused {
         let steam = w.steam_app_id.as_deref().map(|id| format!(", Steam {id}")).unwrap_or_default();
         println!("focused: {} (class {}{steam})", w.exe, w.class);

@@ -449,12 +449,13 @@ impl App {
     pub(super) fn view_auto_switch(&self) -> Element<'_, Message> {
         let auto = &self.config.auto_switch;
         let how = match self.status.as_ref().map(|s| s.focus_backend) {
-            Some(FocusBackend::Kwin) => "Profiles switch as the focused window changes (KWin).",
-            Some(FocusBackend::ProcessScan) => {
-                "Window tracking isn't available on this desktop, so rules apply while a matching \
-                 process is running."
-            }
-            None => "Automatic switching needs the daemon to be running.",
+            Some(backend) => match backend.desktop() {
+                Some(desktop) => format!("Profiles switch as the focused window changes ({desktop})."),
+                None => "Window tracking isn't available on this desktop, so rules apply while a matching \
+                         process is running."
+                    .to_string(),
+            },
+            None => "Automatic switching needs the daemon to be running.".to_string(),
         };
         let mut defaults = vec![DefaultChoice(None)];
         defaults.extend(

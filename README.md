@@ -142,7 +142,14 @@ Each game's rules (on its Details tab) switch to one of its profiles when the ga
 
 A game's Details tab lists recently focused windows with a one-click "+ Rule". Switching with Guide or the GUI stays in effect until focus changes again. Focusing the settings window never switches profiles.
 
-Focus tracking uses a small KWin script (KDE Plasma, Wayland or X11). On other desktops, rules apply while a matching process is running.
+Focus tracking depends on the desktop; the daemon picks the right one by itself and logs which one it uses (`controller_app status` shows it):
+
+- **KDE Plasma** (Wayland or X11): a small KWin script.
+- **Sway**: the compositor's IPC socket (`$SWAYSOCK`).
+- **Hyprland**: its event and command sockets.
+- **GNOME** (45 and later): GNOME Shell lets no other program ask for the focused window, so the daemon installs a small Shell extension into `~/.local/share/gnome-shell/extensions/` (source in `dist/gnome-extension/`). A newly installed extension is only picked up by a new session, so **log out and back in once**; after that the daemon switches it on if it was turned off.
+
+On other desktops, rules apply while a matching process is running.
 
 ## GUI
 
