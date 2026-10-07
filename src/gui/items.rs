@@ -65,13 +65,82 @@ pub(super) fn view_new_menu_card<'a>() -> Element<'a, Message> {
 }
 
 /// A directional menu always has exactly four slots (up, right, down, left), some maybe empty.
+/// A grid holds at most `GRID_MAX` × `GRID_MAX` items, and gets enough columns that its rows
+/// stay within `GRID_MAX`.
 pub(super) fn fit_items(menu: &mut Menu) {
-    if let MenuKind::Directional { .. } = menu.kind {
-        menu.items.truncate(4);
-        while menu.items.len() < 4 {
-            menu.items.push(MenuItem { label: String::new(), action: ButtonAction::Disabled, button: None });
+    match menu.kind {
+        MenuKind::Directional { .. } => {
+            menu.items.truncate(4);
+            while menu.items.len() < 4 {
+                menu.items.push(MenuItem { label: String::new(), action: ButtonAction::Disabled, button: None });
+            }
         }
+        MenuKind::Grid { columns } => {
+            menu.items.truncate(GRID_MAX * GRID_MAX);
+            let fewest = menu.items.len().div_ceil(GRID_MAX).max(1);
+            menu.kind = MenuKind::Grid { columns: columns.clamp(fewest as u8, GRID_MAX as u8) };
+        }
+        _ => {}
     }
+}
+
+/// How many items a menu can take, if it has a limit.
+fn item_limit(kind: MenuKind) -> Option<usize> {
+    match kind {
+        MenuKind::Directional { .. } => Some(4),
+        _ => kind.grid_columns().map(|columns| columns * GRID_MAX),
+    }
+}
+
+/// A menu's kind picker and that kind's settings.
+fn menu_kind_row<'a>(mi: usize, menu: &Menu) -> Element<'a, Message> {
+    let mut kind_row = row![dropdown(MenuKindTag::ALL, Some(menu.kind.tag()), move |t| Message::SetMenuKind(mi, MenuKind::default_for(t))).width(280)]
+        .spacing(8)
+        .align_y(Alignment::Center);
+    match menu.kind {
+        MenuKind::Radial { stick } => {
+            kind_row = kind_row.push(text("aim with")).push(
+                dropdown([Stick::Left, Stick::Right], Some(stick), move |s| Message::SetMenuKind(mi, MenuKind::Radial { stick: s })).width(150),
+            );
+        }
+        MenuKind::Directional { cluster } => {
+            kind_row = kind_row.push(text("on the")).push(
+                dropdown([Cluster::DPad, Cluster::FaceButtons], Some(cluster), move |c| {
+                    Message::SetMenuKind(mi, MenuKind::Directional { cluster: c })
+                })
+                .width(150),
+            );
+        }
+        MenuKind::Carousel { controls } => {
+            kind_row = kind_row.push(text("cycle with")).push(
+                dropdown(CarouselControls::ALL, Some(controls), move |c| Message::SetMenuKind(mi, MenuKind::Carousel { controls: c }))
+                    .width(200),
+            );
+        }
+        MenuKind::Grid { columns } => {
+            // Too few columns would need more than `GRID_MAX` rows.
+            let fewest = menu.items.len().div_ceil(GRID_MAX).max(1) as u8;
+            let options: Vec<u8> = (fewest..=GRID_MAX as u8).collect();
+            kind_row = kind_row
+                .push(dropdown(options, Some(columns), move |c| Message::SetMenuKind(mi, MenuKind::Grid { columns: c })).width(70))
+                .push(text("columns"));
+        }
+        MenuKind::List | MenuKind::Buttons => {}
+    }
+kind_row.into()
+}
+
+/// "+ Add item", greyed out with a note once a grid is full.
+fn add_menu_item_row<'a>(mi: usize, menu: &Menu) -> Element<'a, Message> {
+    let full = item_limit(menu.kind).is_some_and(|limit| menu.items.len() >= limit);
+    let mut add = row![button(text("+ Add item").size(13)).style(button::secondary).on_press_maybe((!full).then_some(Message::AddMenuItem(mi)))]
+        .spacing(10)
+        .align_y(Alignment::Center);
+    if full {
+        let more = if menu.kind.grid_columns() < Some(GRID_MAX) { "; add columns to fit more" } else { "" };
+        add = add.push(text(format!("A grid holds up to {GRID_MAX} rows{more}.")).size(12).color(MUTED_COLOR));
+    }
+    add.into()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -277,7 +346,8 @@ pub(super) const MENUS_HELP: &str = "On-screen menus you open with the \"Open me
     action in \"Toggle\" to keep it up until pressed again. Radial: aim a stick, let go to choose. \
     Directional: four slots on the D-pad or face buttons. List: move with the D-pad or left stick, A \
     chooses. Button menu: a list where items also have their own button. Carousel: cycle with the chosen \
-    controls, A chooses. Items tap their action like a button press; an item can open another menu of the \
+    controls, A chooses. Grid: a list laid out in up to 6 columns and 6 rows, moved through in all four \
+    directions. Items tap their action like a button press; an item can open another menu of the \
     same kind (not from radial menus), which closes along with it.";
 
 impl App {
@@ -504,7 +574,9 @@ impl App {
                 }
             }
             Message::AddMenuItem(i) => {
-                if let Some(m) = self.menus_mut().get_mut(i) {
+                if let Some(m) = self.menus_mut().get_mut(i)
+                    && item_limit(m.kind).is_none_or(|limit| m.items.len() < limit)
+                {
                     let label = format!("Item {}", m.items.len() + 1);
                     m.items.push(MenuItem { label, action: ButtonAction::Keys(Vec::new()), button: None });
                 }
@@ -1018,33 +1090,7 @@ impl App {
             field("Menu name", &menu.name).on_input(move |n| Message::RenameMenu(mi, n)).width(240).into(),
         )];
 
-        // Kind and its settings.
-        let mut kind_row = row![dropdown(MenuKindTag::ALL, Some(menu.kind.tag()), move |t| Message::SetMenuKind(mi, MenuKind::default_for(t))).width(280)]
-            .spacing(8)
-            .align_y(Alignment::Center);
-        match menu.kind {
-            MenuKind::Radial { stick } => {
-                kind_row = kind_row.push(text("aim with")).push(
-                    dropdown([Stick::Left, Stick::Right], Some(stick), move |s| Message::SetMenuKind(mi, MenuKind::Radial { stick: s })).width(150),
-                );
-            }
-            MenuKind::Directional { cluster } => {
-                kind_row = kind_row.push(text("on the")).push(
-                    dropdown([Cluster::DPad, Cluster::FaceButtons], Some(cluster), move |c| {
-                        Message::SetMenuKind(mi, MenuKind::Directional { cluster: c })
-                    })
-                    .width(150),
-                );
-            }
-            MenuKind::Carousel { controls } => {
-                kind_row = kind_row.push(text("cycle with")).push(
-                    dropdown(CarouselControls::ALL, Some(controls), move |c| Message::SetMenuKind(mi, MenuKind::Carousel { controls: c }))
-                        .width(200),
-                );
-            }
-            MenuKind::List | MenuKind::Buttons => {}
-        }
-        rows.push(labeled("Kind", kind_row.into()));
+        rows.push(labeled("Kind", menu_kind_row(mi, menu)));
 
         // Appearance, with a live preview.
         let appearance_open = self.open_appearance.contains(&Some(mi));
@@ -1118,7 +1164,7 @@ impl App {
             items = items.push(container(boxed).padding(8).style(style::inset));
         }
         if direction_slots.is_none() {
-            items = items.push(button(text("+ Add item").size(13)).style(button::secondary).on_press(Message::AddMenuItem(mi)));
+            items = items.push(add_menu_item_row(mi, menu));
         } else {
             items = items.push(
                 text("Give a direction \"Open menu…\" to open another directional menu.").size(12).color(MUTED_COLOR),
@@ -1192,6 +1238,32 @@ mod tests {
             }
         }
         assert_eq!(StickPreset::of(0.3, -0.2), StickPreset::Custom);
+    }
+
+    #[test]
+    fn grid_menus_stay_within_six_by_six() {
+        let mut app = app();
+        let _ = app.update(Message::NewMenu(MenuKindTag::List));
+        for _ in 0..39 {
+            let _ = app.update(Message::AddMenuItem(0));
+        }
+        assert_eq!(app.config.general.menus[0].items.len(), 40);
+        let _ = app.update(Message::SetMenuKind(0, MenuKind::Grid { columns: 2 }));
+        let menu = &app.config.general.menus[0];
+        assert_eq!((menu.items.len(), menu.kind), (36, MenuKind::Grid { columns: 6 }), "trimmed to 6 × 6");
+        let _ = app.update(Message::AddMenuItem(0));
+        assert_eq!(app.config.general.menus[0].items.len(), 36, "full");
+
+        for _ in 0..26 {
+            let _ = app.update(Message::RemoveMenuItem(0, 0));
+        }
+        let _ = app.update(Message::SetMenuKind(0, MenuKind::Grid { columns: 1 }));
+        assert_eq!(app.config.general.menus[0].kind, MenuKind::Grid { columns: 2 }, "10 items need 2 columns for 6 rows");
+        for _ in 0..5 {
+            let _ = app.update(Message::AddMenuItem(0));
+        }
+        assert_eq!(app.config.general.menus[0].items.len(), 12, "2 columns hold 12");
+        assert_eq!(app.validate(), None);
     }
 
     #[test]

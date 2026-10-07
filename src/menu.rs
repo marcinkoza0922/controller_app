@@ -70,6 +70,9 @@ enum Mode {
 /// A stick-direction opener counts as let go once the stick is back within this.
 const DIRECTION_RELEASE: f32 = 0.25;
 
+/// One step through a list, grid or carousel: (x, y), each -1, 0 or 1; y is positive down.
+type Step = (i32, i32);
+
 struct Frame {
     menu: usize,
     cursor: Option<usize>,
@@ -86,10 +89,10 @@ pub struct MenuSession {
     armed: bool,
     axes: HashMap<Axis, f32>,
     held: HashSet<Button>,
-    /// Direction stepping through a list or carousel, and when it repeats.
-    stepping: Option<(i32, Instant)>,
-    /// Which list-step direction the stick currently holds.
-    stick_step: Option<i32>,
+    /// Direction (x, y) stepping through a list, grid or carousel, and when it repeats.
+    stepping: Option<(Step, Instant)>,
+    /// Which step direction the stick currently holds.
+    stick_step: Option<Step>,
     /// Which carousel trigger is currently pulled past the step point.
     trigger_step: Option<Trigger>,
 }
@@ -223,7 +226,7 @@ impl MenuSession {
     fn push(&mut self, menus: &[Menu], menu: usize) {
         let cursor = match menus[menu].kind {
             MenuKind::Radial { .. } | MenuKind::Directional { .. } => None,
-            MenuKind::List | MenuKind::Buttons | MenuKind::Carousel { .. } => Some(0),
+            MenuKind::List | MenuKind::Buttons | MenuKind::Carousel { .. } | MenuKind::Grid { .. } => Some(0),
         };
         self.stack.push(Frame { menu, cursor });
         self.stepping = None;
@@ -276,6 +279,7 @@ impl MenuSession {
             MenuKind::List => format!("↑↓ move · A choose · {close}"),
             MenuKind::Buttons => format!("Press an item's button, or ↑↓ and A · {close}"),
             MenuKind::Carousel { controls } => format!("{controls} to cycle · A choose · {close}"),
+            MenuKind::Grid { .. } => format!("↑↓←→ move · A choose · {close}"),
         };
         Some(MenuView {
             title: menu.name.clone(),
@@ -358,11 +362,11 @@ impl MenuSession {
                 }
                 self.list_button(menus, menu, b, now)
             }
-            MenuKind::List => self.list_button(menus, menu, b, now),
+            MenuKind::List | MenuKind::Grid { .. } => self.list_button(menus, menu, b, now),
             MenuKind::Carousel { controls } => {
                 let step = match (controls, b) {
-                    (CarouselControls::Bumpers, Button::LeftBumper) | (CarouselControls::DPad, Button::DpadLeft) => Some(-1),
-                    (CarouselControls::Bumpers, Button::RightBumper) | (CarouselControls::DPad, Button::DpadRight) => Some(1),
+                    (CarouselControls::Bumpers, Button::LeftBumper) | (CarouselControls::DPad, Button::DpadLeft) => Some((-1, 0)),
+                    (CarouselControls::Bumpers, Button::RightBumper) | (CarouselControls::DPad, Button::DpadRight) => Some((1, 0)),
                     _ => None,
                 };
                 if let Some(step) = step {
@@ -374,10 +378,14 @@ impl MenuSession {
         }
     }
 
+    /// The D-pad moves a list up and down, and a grid in all four directions; A chooses.
     fn list_button(&mut self, menus: &[Menu], menu: &Menu, b: Button, now: Instant) -> Option<MenuOutcome> {
+        let grid = matches!(menu.kind, MenuKind::Grid { .. });
         match b {
-            Button::DpadUp => self.start_stepping(menu, -1, now),
-            Button::DpadDown => self.start_stepping(menu, 1, now),
+            Button::DpadUp => self.start_stepping(menu, (0, -1), now),
+            Button::DpadDown => self.start_stepping(menu, (0, 1), now),
+            Button::DpadLeft if grid => self.start_stepping(menu, (-1, 0), now),
+            Button::DpadRight if grid => self.start_stepping(menu, (1, 0), now),
             Button::South => return self.choose_cursor(menus),
             _ => {}
         }
@@ -399,20 +407,26 @@ impl MenuSession {
             }
             MenuKind::List | MenuKind::Buttons => {
                 if axis == Axis::LeftY {
-                    self.stick_step(menu, value, now);
+                    self.stick_step(menu, (0.0, value), now);
+                }
+                None
+            }
+            MenuKind::Grid { .. } => {
+                if matches!(axis, Axis::LeftX | Axis::LeftY) {
+                    self.stick_step(menu, (self.axis(Axis::LeftX), self.axis(Axis::LeftY)), now);
                 }
                 None
             }
             MenuKind::Carousel { controls } => {
                 match (controls, axis) {
                     (CarouselControls::LeftStick, Axis::LeftX) | (CarouselControls::RightStick, Axis::RightX) => {
-                        self.stick_step(menu, value, now)
+                        self.stick_step(menu, (value, 0.0), now)
                     }
                     (CarouselControls::Triggers, Axis::LeftTrigger | Axis::RightTrigger) => {
                         let t = if axis == Axis::LeftTrigger { Trigger::Left } else { Trigger::Right };
                         if value >= TRIGGER_PRESS && self.trigger_step.is_none() {
                             self.trigger_step = Some(t);
-                            self.start_stepping(menu, if t == Trigger::Left { -1 } else { 1 }, now);
+                            self.start_stepping(menu, (if t == Trigger::Left { -1 } else { 1 }, 0), now);
                         } else if value < TRIGGER_RELEASE && self.trigger_step == Some(t) {
                             self.trigger_step = None;
                             self.stepping = None;
@@ -426,10 +440,17 @@ impl MenuSession {
         }
     }
 
-    /// A stick used like a two-way D-pad (up/down for lists, left/right for carousels).
-    fn stick_step(&mut self, menu: &Menu, value: f32, now: Instant) {
+    /// A stick used like a D-pad: up/down for lists, left/right for carousels, all four for
+    /// grids (whichever way it leans most).
+    fn stick_step(&mut self, menu: &Menu, (x, y): (f32, f32), now: Instant) {
         let threshold = if self.stick_step.is_some() { STICK_RELEASE } else { STICK_PRESS };
-        let dir = if value.abs() < threshold { None } else { Some(value.signum() as i32) };
+        let dir = if x.abs().max(y.abs()) < threshold {
+            None
+        } else if x.abs() > y.abs() {
+            Some((x.signum() as i32, 0))
+        } else {
+            Some((0, y.signum() as i32))
+        };
         if dir == self.stick_step {
             return;
         }
@@ -459,18 +480,22 @@ impl MenuSession {
         }
     }
 
-    fn start_stepping(&mut self, menu: &Menu, dir: i32, now: Instant) {
+    fn start_stepping(&mut self, menu: &Menu, dir: Step, now: Instant) {
         self.step(menu, dir);
         self.stepping = Some((dir, now + REPEAT_DELAY));
     }
 
-    fn step(&mut self, menu: &Menu, dir: i32) {
-        let n = menu.items.len() as i32;
+    fn step(&mut self, menu: &Menu, (dx, dy): Step) {
+        let n = menu.items.len();
         if let Some(frame) = self.stack.last_mut()
             && n > 0
         {
-            let cursor = frame.cursor.unwrap_or(0) as i32;
-            frame.cursor = Some((cursor + dir).rem_euclid(n) as usize);
+            let cursor = frame.cursor.unwrap_or(0).min(n - 1);
+            frame.cursor = Some(match menu.kind.grid_columns() {
+                Some(columns) => grid_step(cursor, n, columns, (dx, dy)),
+                // Lists and carousels are one line, whichever way it runs.
+                None => (cursor as i32 + dx + dy).rem_euclid(n as i32) as usize,
+            });
         }
     }
 
@@ -526,6 +551,17 @@ impl MenuSession {
     }
 }
 
+/// Moves through `n` items laid out `columns` wide, wrapping within the row or column (the
+/// last row may be short, so its columns are too).
+fn grid_step(cursor: usize, n: usize, columns: usize, (dx, dy): Step) -> usize {
+    let (col, row) = (cursor % columns, cursor / columns);
+    let row_len = (n - row * columns).min(columns);
+    let col_len = (n - col).div_ceil(columns);
+    let col = (col as i32 + dx).rem_euclid(row_len as i32) as usize;
+    let row = (row as i32 + dy).rem_euclid(col_len as i32) as usize;
+    row * columns + col
+}
+
 /// Whether `parent` may open `child` as a submenu: only menus of the same kind, and never
 /// from a radial menu (aiming a second wheel with the same release is awkward).
 pub fn can_open(parent: &Menu, child: &Menu) -> bool {
@@ -549,7 +585,7 @@ fn trigger_axis(t: Trigger) -> Axis {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{Cluster, MenuItem};
+    use crate::config::{Cluster, GRID_MAX, MenuItem};
 
     fn key(k: &str) -> ButtonAction {
         ButtonAction::Keys(vec![k.into()])
@@ -665,6 +701,57 @@ mod tests {
         assert_eq!(chose(press(&mut s, &menus, Button::South)).as_deref(), Some("KEY_2"));
         let mut s = MenuSession::open(&menus, "Pause", Opener::default()).unwrap();
         assert_eq!(press(&mut s, &menus, Button::East), Some(MenuOutcome::Close));
+    }
+
+    #[test]
+    fn grid_moves_in_four_directions_and_wraps_within_rows_and_columns() {
+        // 1 2 3
+        // 4 5 6
+        // 7
+        let menus = [menu("G", MenuKind::Grid { columns: 3 }, numbers(7))];
+        let mut s = MenuSession::open(&menus, "G", Opener::default()).unwrap();
+        let at = |s: &MenuSession| s.view(&menus).unwrap().selected;
+        press(&mut s, &menus, Button::DpadRight);
+        press(&mut s, &menus, Button::DpadDown);
+        assert_eq!(at(&s), Some(4), "item 5");
+        press(&mut s, &menus, Button::DpadDown);
+        assert_eq!(at(&s), Some(1), "column 2 has no third row, so it wraps to the top");
+        press(&mut s, &menus, Button::DpadLeft);
+        press(&mut s, &menus, Button::DpadLeft);
+        assert_eq!(at(&s), Some(2), "wraps to the end of the row");
+        press(&mut s, &menus, Button::DpadRight);
+        press(&mut s, &menus, Button::DpadUp);
+        assert_eq!(at(&s), Some(6), "column 1 wraps to the short last row");
+        press(&mut s, &menus, Button::DpadRight);
+        assert_eq!(at(&s), Some(6), "the short row wraps on itself");
+        // The left stick moves the way it leans most, and holding repeats.
+        let now = Instant::now();
+        s.handle(&menus, InputEvent::Axis(Axis::LeftY, -0.9), now);
+        assert_eq!(at(&s), Some(3));
+        s.handle(&menus, InputEvent::Axis(Axis::LeftX, 0.95), now);
+        assert_eq!(at(&s), Some(4), "leaning further right turns it into a step right");
+        assert!(s.tick(&menus, now + REPEAT_DELAY));
+        assert_eq!(at(&s), Some(5));
+        s.handle(&menus, InputEvent::Axis(Axis::LeftY, 0.0), now);
+        s.handle(&menus, InputEvent::Axis(Axis::LeftX, 0.0), now);
+        assert_eq!(s.next_deadline(), None);
+        assert_eq!(chose(press(&mut s, &menus, Button::South)).as_deref(), Some("KEY_6"));
+        assert!(s.view(&menus).unwrap().hint.contains("↑↓←→"));
+    }
+
+    #[test]
+    fn grid_steps_cover_every_cell() {
+        for columns in 1..=GRID_MAX {
+            for n in 1..=GRID_MAX * GRID_MAX {
+                for cursor in 0..n {
+                    for dir in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                        let next = grid_step(cursor, n, columns, dir);
+                        assert!(next < n, "{columns} columns, {n} items, {cursor} {dir:?}");
+                        assert_eq!(grid_step(next, n, columns, (-dir.0, -dir.1)), cursor, "steps undo");
+                    }
+                }
+            }
+        }
     }
 
     #[test]

@@ -327,7 +327,13 @@ pub enum MenuKind {
     Buttons,
     /// A row of items cycled with `controls`; A chooses.
     Carousel { controls: CarouselControls },
+    /// A list laid out `columns` wide (up to `GRID_MAX` rows), moved through with the D-pad
+    /// or left stick in all four directions; A chooses.
+    Grid { columns: u8 },
 }
+
+/// A grid menu is at most this many columns and this many rows.
+pub const GRID_MAX: usize = 6;
 
 impl MenuKind {
     pub fn default_for(kind: MenuKindTag) -> Self {
@@ -337,6 +343,7 @@ impl MenuKind {
             MenuKindTag::List => MenuKind::List,
             MenuKindTag::Buttons => MenuKind::Buttons,
             MenuKindTag::Carousel => MenuKind::Carousel { controls: CarouselControls::Bumpers },
+            MenuKindTag::Grid => MenuKind::Grid { columns: 3 },
         }
     }
 
@@ -347,6 +354,15 @@ impl MenuKind {
             MenuKind::List => MenuKindTag::List,
             MenuKind::Buttons => MenuKindTag::Buttons,
             MenuKind::Carousel { .. } => MenuKindTag::Carousel,
+            MenuKind::Grid { .. } => MenuKindTag::Grid,
+        }
+    }
+
+    /// A grid's column count, kept to 1..=`GRID_MAX` whatever the config says.
+    pub fn grid_columns(self) -> Option<usize> {
+        match self {
+            MenuKind::Grid { columns } => Some(usize::from(columns).clamp(1, GRID_MAX)),
+            _ => None,
         }
     }
 }
@@ -359,11 +375,18 @@ pub enum MenuKindTag {
     List,
     Buttons,
     Carousel,
+    Grid,
 }
 
 impl MenuKindTag {
-    pub const ALL: [MenuKindTag; 5] =
-        [MenuKindTag::Radial, MenuKindTag::Directional, MenuKindTag::List, MenuKindTag::Buttons, MenuKindTag::Carousel];
+    pub const ALL: [MenuKindTag; 6] = [
+        MenuKindTag::Radial,
+        MenuKindTag::Directional,
+        MenuKindTag::List,
+        MenuKindTag::Buttons,
+        MenuKindTag::Carousel,
+        MenuKindTag::Grid,
+    ];
 }
 
 impl MenuKindTag {
@@ -375,6 +398,7 @@ impl MenuKindTag {
             MenuKindTag::List => "List",
             MenuKindTag::Buttons => "Button menu",
             MenuKindTag::Carousel => "Carousel",
+            MenuKindTag::Grid => "Grid",
         }
     }
 }
@@ -387,6 +411,7 @@ impl fmt::Display for MenuKindTag {
             MenuKindTag::List => "List",
             MenuKindTag::Buttons => "Button menu (list + quick buttons)",
             MenuKindTag::Carousel => "Carousel",
+            MenuKindTag::Grid => "Grid (up to 6 × 6)",
         })
     }
 }

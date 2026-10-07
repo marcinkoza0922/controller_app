@@ -107,6 +107,7 @@ A game's Menus tab holds on-screen **action menus**. Open one from any button, g
 - **List**: move with the D-pad or left stick; A chooses.
 - **Button menu**: a list whose items can also be chosen directly with their own button.
 - **Carousel**: cycle with the bumpers, triggers, D-pad or a stick; A chooses.
+- **Grid**: a list laid out in up to 6 columns and 6 rows; move in all four directions with the D-pad or left stick, A chooses.
 
 An item can open another menu of the same kind (radial menus can't open menus). The new menu is a child of the first: letting go closes both. While a menu is open the controller drives it, and anything the mappings were holding is released. A quick tap can't hold a menu up, so a tap-triggered menu (e.g. on a double tap that isn't the button's last gesture) needs a Toggle. Menus opened from the command line or an analog zone, which can't be held, stay until an item is chosen or B is pressed (Select for face-button menus). The overlay window stays running invisibly between uses, so menus appear instantly.
 

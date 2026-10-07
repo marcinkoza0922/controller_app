@@ -14,7 +14,7 @@ use iced::{
 
 use crate::{
     config::{
-        Analog, Button, ButtonAction, CarouselControls, Cluster, Combo, Config, Game, GestureKind, GyroActivation,
+        Analog, Button, ButtonAction, CarouselControls, Cluster, Combo, Config, Game, GestureKind, GRID_MAX, GyroActivation,
         GyroConfig, GyroHorizontal, GyroInput, GyroMode, InfoOverlay, ItemKind, Macro, MacroStep, Menu, MenuItem,
         MenuKind, MenuKindTag, MouseButton, OverlayStyle, Paint, Profile, ProfileRef, Rule, RuleKind, ScopeRef,
         ScreenPosition, Stick, StickAction, StickConfig, Toggled, Trigger, TriggerAction, WheelDirection, Zone, free_name,

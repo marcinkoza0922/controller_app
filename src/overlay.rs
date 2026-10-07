@@ -793,6 +793,7 @@ pub mod draw {
             MenuKind::Directional { .. } => directional(m, c, s),
             MenuKind::List | MenuKind::Buttons => list(m, c, s),
             MenuKind::Carousel { .. } => carousel(m, c, s),
+            MenuKind::Grid { .. } => grid(m, c, s),
         };
         let depth = if m.depth > 0 { format!("  ({} deep)", m.depth + 1) } else { String::new() };
         container(
@@ -887,6 +888,22 @@ pub mod draw {
         .spacing(10.0 * s)
         .align_x(Alignment::Center)
         .into()
+    }
+
+    /// Items in rows of equal cells, read left to right; a short last row keeps to the left.
+    fn grid<'a, M: 'a>(m: &MenuView, c: Colors, s: f32) -> Element<'a, M> {
+        let columns = m.kind.grid_columns().unwrap_or(1);
+        let (w, h) = (150.0 * s, 64.0 * s);
+        let mut rows = column![].spacing(8.0 * s);
+        for start in (0..m.items.len()).step_by(columns) {
+            let mut line = row![].spacing(8.0 * s);
+            for i in start..(start + columns).min(m.items.len()) {
+                let (label, selected) = item_cell(m, i, c, 16.0 * s);
+                line = line.push(container(label).center_x(w).center_y(h).padding([0.0, 6.0 * s]).style(cell_style(c, selected)));
+            }
+            rows = rows.push(line);
+        }
+        rows.into()
     }
 
     fn list<'a, M: 'a>(m: &MenuView, c: Colors, s: f32) -> Element<'a, M> {

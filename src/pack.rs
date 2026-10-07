@@ -12,8 +12,8 @@ use crate::config::{
 };
 
 /// The pack format this app writes, and the newest it reads. 2 added layers; 3, toggles
-/// that start on; 4, the keyboard and numpad styles; 5, the overlay font.
-pub const FORMAT: u32 = 5;
+/// that start on; 4, the keyboard and numpad styles; 5, the overlay font; 6, grid menus.
+pub const FORMAT: u32 = 6;
 pub const EXTENSION: &str = "padpack";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
