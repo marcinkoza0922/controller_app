@@ -58,6 +58,18 @@ pub struct Opener {
 }
 
 impl Source {
+    /// The input this came from, as the input log knows it; `None` for a menu item.
+    fn fired_from(&self) -> Option<crate::inputlog::FiredFrom> {
+        use crate::inputlog::FiredFrom;
+        Some(match self {
+            Source::Button(b) | Source::Gesture(b) => FiredFrom::Button(*b),
+            Source::Combo(members) => FiredFrom::Combo(members.clone()),
+            Source::Trigger(t) | Source::Zone(Analog::Trigger(t), _) => FiredFrom::Trigger(*t),
+            Source::Zone(Analog::Stick(s), _) => FiredFrom::Stick(*s),
+            Source::MenuItem(..) => return None,
+        })
+    }
+
     fn opener(&self) -> Opener {
         match self {
             Source::Button(b) | Source::Gesture(b) => Opener { buttons: vec![*b], ..Opener::default() },
@@ -149,8 +161,13 @@ pub struct Engine {
     toggling: bool,
     /// Info overlays shown by held (or toggled) ShowInfo actions, with how many hold each.
     info_holds: HashMap<String, u32>,
-    /// Set when `info_holds` changes; the daemon takes it.
+    /// Log overlays shown by held (or toggled) ShowLog actions, likewise.
+    log_holds: HashMap<String, u32>,
+    /// Set when `info_holds` or `log_holds` changes; the daemon takes it.
     info_changed: bool,
+    /// Actions pressed since the daemon last took them, with the input that pressed each,
+    /// for the input log.
+    fired: Vec<(crate::inputlog::FiredFrom, ButtonAction)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -225,6 +242,11 @@ impl Engine {
     }
 
     /// A menu an OpenMenu action asked for since the last call, and what opened it.
+    /// Actions pressed since last taken, and the input behind each.
+    pub fn take_fired(&mut self) -> Vec<(crate::inputlog::FiredFrom, ButtonAction)> {
+        std::mem::take(&mut self.fired)
+    }
+
     pub fn take_menu_request(&mut self) -> Option<(String, Opener)> {
         self.menu_request.take()
     }
@@ -256,6 +278,11 @@ impl Engine {
     /// Info overlays held up by ShowInfo actions right now.
     pub fn shown_info(&self) -> impl Iterator<Item = &String> {
         self.info_holds.keys()
+    }
+
+    /// Log overlays held up by ShowLog actions right now.
+    pub fn shown_logs(&self) -> impl Iterator<Item = &String> {
+        self.log_holds.keys()
     }
 
     /// Which on-screen keyboard (or numpad) a toggle action asked for since the last call.
@@ -630,6 +657,9 @@ impl Engine {
                 return false;
             }
             self.held.insert(src.clone(), action.clone());
+            if let Some(from) = src.fired_from() {
+                self.fired.push((from, action.clone()));
+            }
             self.emit(src, action, true, 0, out)
         } else {
             if let Some(action) = self.held.remove(src) {
@@ -695,14 +725,11 @@ impl Engine {
             }
         }
         ButtonAction::ShowInfo(name) => {
-            if pressed {
-                *self.info_holds.entry(name.clone()).or_insert(0) += 1;
-            } else if let Some(n) = self.info_holds.get_mut(name) {
-                *n -= 1;
-                if *n == 0 {
-                    self.info_holds.remove(name);
-                }
-            }
+            count_hold(&mut self.info_holds, name, pressed);
+            self.info_changed = true;
+        }
+        ButtonAction::ShowLog(name) => {
+            count_hold(&mut self.log_holds, name, pressed);
             self.info_changed = true;
         }
         ButtonAction::OpenMenu(name) => {
@@ -1280,6 +1307,18 @@ impl Engine {
 }
 
 /// Difference between two angles in degrees, wrapped to -180..180.
+/// Counts one more (or one fewer) hold on a named overlay, forgetting it at none.
+fn count_hold(holds: &mut HashMap<String, u32>, name: &str, pressed: bool) {
+    if pressed {
+        *holds.entry(name.to_string()).or_insert(0) += 1;
+    } else if let Some(n) = holds.get_mut(name) {
+        *n -= 1;
+        if *n == 0 {
+            holds.remove(name);
+        }
+    }
+}
+
 fn angle_diff(a: f32, b: f32) -> f32 {
     (a - b + 540.0).rem_euclid(360.0) - 180.0
 }
@@ -1350,7 +1389,7 @@ fn trigger_axis(t: Trigger) -> Axis {
 }
 
 /// Radial deadzone, rescaled so output still spans the full 0..1 range.
-fn apply_deadzone(x: f32, y: f32, deadzone: f32) -> (f32, f32) {
+pub(crate) fn apply_deadzone(x: f32, y: f32, deadzone: f32) -> (f32, f32) {
     let mag = x.hypot(y);
     if mag <= deadzone || mag == 0.0 {
         return (0.0, 0.0);
@@ -1392,6 +1431,18 @@ mod tests {
             run(&mut e, &p, InputEvent::Button(Button::South, false)),
             vec![OutEvent::PadButton(Button::South, false)]
         );
+    }
+
+    #[test]
+    fn fired_actions_are_reported_once_per_press() {
+        use crate::inputlog::FiredFrom;
+        let mut p = Profile::passthrough("p");
+        p.set_button(Button::South, ButtonAction::Mouse(MouseButton::Left));
+        let mut e = Engine::default();
+        run(&mut e, &p, InputEvent::Button(Button::South, true));
+        assert_eq!(e.take_fired(), [(FiredFrom::Button(Button::South), ButtonAction::Mouse(MouseButton::Left))]);
+        run(&mut e, &p, InputEvent::Button(Button::South, false));
+        assert!(e.take_fired().is_empty());
     }
 
     #[test]

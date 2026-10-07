@@ -242,7 +242,7 @@ impl App {
         if general {
             title = title.push(help(
                 "Profiles for no particular game, such as the desktop or a plain gamepad. Its \
-                 Macros, Menus and Info overlays tabs also hold the shared items every game can use."
+                 Macros, Menus, Info overlays and Log overlays tabs also hold the shared items every game can use."
                     .into(),
             ));
         }
@@ -255,6 +255,7 @@ impl App {
             GameTab::Macros => macros_have_problem(self.macros(), &names),
             GameTab::Menus => menus_have_problem(self.menus(), &reachable, &names),
             GameTab::Info => info_has_problem(self.infos()),
+            GameTab::Logs => self.logs_have_problem(),
             GameTab::Details => !general && (rules_problem(game).is_some() || game.name.trim().is_empty()),
         };
         let mut segments = row![].spacing(2);
@@ -270,7 +271,7 @@ impl App {
         let tab = if general && self.game_tab == GameTab::Details { GameTab::Profiles } else { self.game_tab };
         let mut col = column![title, container(segments).padding(3).style(style::segments)].spacing(16);
 
-        let item_tab = matches!(tab, GameTab::Macros | GameTab::Menus | GameTab::Info);
+        let item_tab = matches!(tab, GameTab::Macros | GameTab::Menus | GameTab::Info | GameTab::Logs);
         if general && item_tab {
             let choice = |label: &'static str, shared: bool| {
                 button(text(label).size(14))
@@ -300,6 +301,7 @@ impl App {
             GameTab::Macros => self.view_macros(&names),
             GameTab::Menus => self.view_menus(&names, &reachable),
             GameTab::Info => self.view_infos(),
+            GameTab::Logs => self.view_logs(),
             GameTab::Details => self.view_details(),
         };
         col = col.push(body);
@@ -307,6 +309,7 @@ impl App {
             col = col.push(self.view_shared_section(match tab {
                 GameTab::Macros => ItemKind::Macro,
                 GameTab::Menus => ItemKind::Menu,
+                GameTab::Logs => ItemKind::Log,
                 _ => ItemKind::Info,
             }));
         }

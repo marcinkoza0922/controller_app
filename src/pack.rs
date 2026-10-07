@@ -7,7 +7,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::config::{
-    ButtonAction, Config, Game, GyroMode, Indicator, InfoOverlay, ItemKind, Layer, Macro, Menu, MacroStep, Origin,
+    ButtonAction, Config, Game, GyroMode, Indicator, InfoOverlay, ItemKind, Layer, LogOverlay, Macro, Menu, MacroStep, Origin,
     OverlayStyle, PackInfo, PackRef, Profile, Rule, Shared, free_name,
 };
 
@@ -30,6 +30,8 @@ pub struct Pack {
     pub menus: Vec<Menu>,
     #[serde(default)]
     pub info_overlays: Vec<InfoOverlay>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub log_overlays: Vec<LogOverlay>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub layers: Vec<Layer>,
     /// How the on-screen keyboard and numpad look in this game, if the author set that.
@@ -120,6 +122,7 @@ impl Pack {
             macros: self.macros.clone(),
             menus: self.menus.clone(),
             info: self.info_overlays.clone(),
+            logs: self.log_overlays.clone(),
             layers: self.layers.clone(),
             keyboard_style: self.keyboard_style.clone(),
             numpad_style: self.numpad_style.clone(),
@@ -246,7 +249,7 @@ pub fn dependencies(source: &Game, kind: ItemKind, name: &str, resolves: impl Fn
             ItemKind::Macro => source.macros.iter().find(|m| m.name == n).map(|m| references(&[], &[], std::slice::from_ref(m), &[])),
             ItemKind::Menu => source.menus.iter().find(|m| m.name == n).map(|m| references(&[], std::slice::from_ref(m), &[], &[])),
             ItemKind::Layer => source.layers.iter().find(|l| l.name == n).map(|l| references(&[], &[], &[], std::slice::from_ref(l))),
-            ItemKind::Info => None,
+            ItemKind::Info | ItemKind::Log => None,
         };
         for (rk, rn) in refs.unwrap_or_default() {
             let item = (rk, rn);
@@ -336,6 +339,7 @@ pub fn export(game: &Game, shared: &Shared, info: &PackInfo) -> Export {
                 ItemKind::Macro => pack_game.macros.extend(shared.macros.iter().find(|m| m.name == name).cloned()),
                 ItemKind::Menu => pack_game.menus.extend(shared.menus.iter().find(|m| m.name == name).cloned()),
                 ItemKind::Info => pack_game.info.extend(shared.info.iter().find(|o| o.name == name).cloned()),
+                ItemKind::Log => pack_game.logs.extend(shared.logs.iter().find(|o| o.name == name).cloned()),
                 // Never shared, so it was reported as dangling above.
                 ItemKind::Layer => {}
             }
@@ -365,6 +369,7 @@ pub fn export(game: &Game, shared: &Shared, info: &PackInfo) -> Export {
         macros: pack_game.macros,
         menus: pack_game.menus,
         info_overlays: pack_game.info,
+        log_overlays: pack_game.logs,
         layers: pack_game.layers,
         keyboard_style: pack_game.keyboard_style,
         numpad_style: pack_game.numpad_style,
@@ -401,6 +406,9 @@ pub fn item_hashes(game: &Game) -> BTreeMap<String, String> {
     }
     for o in &game.info {
         hashes.insert(format!("info overlay:{}", o.name), hash(o));
+    }
+    for o in &game.logs {
+        hashes.insert(format!("log overlay:{}", o.name), hash(o));
     }
     for l in &game.layers {
         hashes.insert(format!("layer:{}", l.name), hash(l));

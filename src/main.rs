@@ -5,6 +5,7 @@ mod focus;
 mod font;
 mod gui;
 mod info;
+mod inputlog;
 mod input;
 mod ipc;
 mod keyboard;

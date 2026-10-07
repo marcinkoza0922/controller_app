@@ -7,6 +7,11 @@ use std::{
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+mod log;
+mod summary;
+
+pub use log::*;
+
 /// Normalized gamepad button, following the Linux gamepad spec (Documentation/input/gamepad.rst).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Button {
@@ -221,6 +226,8 @@ pub enum ButtonAction {
     ToggleNumpad,
     /// Shows the info overlay named here while held (wrap in Toggle to keep it up).
     ShowInfo(String),
+    /// Shows the log overlay named here while held (wrap in Toggle to keep it up).
+    ShowLog(String),
     /// Shows the menu named here. As a menu item's action it opens a submenu.
     OpenMenu(String),
     /// While held, the game's layer named here applies on top of the active profile (wrap in
@@ -1795,6 +1802,9 @@ pub struct Game {
     /// Shown by `ButtonAction::ShowInfo`, or always while the game is active.
     #[serde(default, rename = "info_overlays")]
     pub info: Vec<InfoOverlay>,
+    /// Shown by `ButtonAction::ShowLog`, or always while the game is active.
+    #[serde(default, rename = "log_overlays", skip_serializing_if = "Vec::is_empty")]
+    pub logs: Vec<LogOverlay>,
     /// Held or toggled on with `ButtonAction::Layer`, over whichever profile is active.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub layers: Vec<Layer>,
@@ -1821,6 +1831,7 @@ impl Game {
             macros: Vec::new(),
             menus: Vec::new(),
             info: Vec::new(),
+            logs: Vec::new(),
             layers: Vec::new(),
             keyboard_style: None,
             numpad_style: None,
@@ -1842,7 +1853,7 @@ impl Game {
     pub fn names(&self, kind: ItemKind) -> Vec<&str> {
         match kind {
             ItemKind::Layer => self.layers.iter().map(|l| l.name.as_str()).collect(),
-            _ => item_names(&self.macros, &self.menus, &self.info, kind),
+            _ => item_names(&self.macros, &self.menus, &self.info, &self.logs, kind),
         }
     }
 
@@ -1854,6 +1865,7 @@ impl Game {
             ItemKind::Macro => self.macros.iter_mut().filter(|m| m.name == old).for_each(|m| m.name = new.clone()),
             ItemKind::Menu => self.menus.iter_mut().filter(|m| m.name == old).for_each(|m| m.name = new.clone()),
             ItemKind::Info => self.info.iter_mut().filter(|o| o.name == old).for_each(|o| o.name = new.clone()),
+            ItemKind::Log => self.logs.iter_mut().filter(|o| o.name == old).for_each(|o| o.name = new.clone()),
             ItemKind::Layer => self.layers.iter_mut().filter(|l| l.name == old).for_each(|l| l.name = new.clone()),
         }
     }
@@ -1873,6 +1885,8 @@ pub struct Shared {
     pub menus: Vec<Menu>,
     #[serde(default, rename = "info_overlays")]
     pub info: Vec<InfoOverlay>,
+    #[serde(default, rename = "log_overlays", skip_serializing_if = "Vec::is_empty")]
+    pub logs: Vec<LogOverlay>,
 }
 
 impl Shared {
@@ -1882,15 +1896,16 @@ impl Shared {
     }
 
     pub fn names(&self, kind: ItemKind) -> Vec<&str> {
-        item_names(&self.macros, &self.menus, &self.info, kind)
+        item_names(&self.macros, &self.menus, &self.info, &self.logs, kind)
     }
 }
 
-fn item_names<'a>(macros: &'a [Macro], menus: &'a [Menu], info: &'a [InfoOverlay], kind: ItemKind) -> Vec<&'a str> {
+fn item_names<'a>(macros: &'a [Macro], menus: &'a [Menu], info: &'a [InfoOverlay], logs: &'a [LogOverlay], kind: ItemKind) -> Vec<&'a str> {
     match kind {
         ItemKind::Macro => macros.iter().map(|m| m.name.as_str()).collect(),
         ItemKind::Menu => menus.iter().map(|m| m.name.as_str()).collect(),
         ItemKind::Info => info.iter().map(|o| o.name.as_str()).collect(),
+        ItemKind::Log => logs.iter().map(|o| o.name.as_str()).collect(),
         // Layers are always a game's own, never shared.
         ItemKind::Layer => Vec::new(),
     }
@@ -1911,17 +1926,19 @@ pub enum ItemKind {
     Macro,
     Menu,
     Info,
+    Log,
     Layer,
 }
 
 impl ItemKind {
-    pub const ALL: [ItemKind; 4] = [ItemKind::Macro, ItemKind::Menu, ItemKind::Info, ItemKind::Layer];
+    pub const ALL: [ItemKind; 5] = [ItemKind::Macro, ItemKind::Menu, ItemKind::Info, ItemKind::Log, ItemKind::Layer];
 
     pub fn noun(self) -> &'static str {
         match self {
             ItemKind::Macro => "macro",
             ItemKind::Menu => "menu",
             ItemKind::Info => "info overlay",
+            ItemKind::Log => "log overlay",
             ItemKind::Layer => "layer",
         }
     }
@@ -1932,6 +1949,7 @@ impl ItemKind {
             (ItemKind::Macro, ButtonAction::Macro { name, .. })
             | (ItemKind::Menu, ButtonAction::OpenMenu(name))
             | (ItemKind::Info, ButtonAction::ShowInfo(name))
+            | (ItemKind::Log, ButtonAction::ShowLog(name))
             | (ItemKind::Layer, ButtonAction::Layer(name)) => Some(name),
             _ => None,
         }
@@ -1942,6 +1960,7 @@ impl ItemKind {
             (ItemKind::Macro, ButtonAction::Macro { name, .. })
             | (ItemKind::Menu, ButtonAction::OpenMenu(name))
             | (ItemKind::Info, ButtonAction::ShowInfo(name))
+            | (ItemKind::Log, ButtonAction::ShowLog(name))
             | (ItemKind::Layer, ButtonAction::Layer(name)) => Some(name),
             _ => None,
         }
@@ -1997,6 +2016,7 @@ pub struct Scope {
     pub macros: Vec<Macro>,
     pub menus: Vec<Menu>,
     pub info: Vec<InfoOverlay>,
+    pub logs: Vec<LogOverlay>,
     /// The game's own (layers are never shared).
     pub layers: Vec<Layer>,
 }
@@ -2007,6 +2027,7 @@ pub struct ScopeRef<'a> {
     pub macros: Vec<&'a Macro>,
     pub menus: Vec<&'a Menu>,
     pub info: Vec<&'a InfoOverlay>,
+    pub logs: Vec<&'a LogOverlay>,
     pub layers: Vec<&'a Layer>,
 }
 
@@ -2016,6 +2037,7 @@ impl ScopeRef<'_> {
             ItemKind::Macro => self.macros.iter().map(|m| m.name.as_str()).collect(),
             ItemKind::Menu => self.menus.iter().map(|m| m.name.as_str()).collect(),
             ItemKind::Info => self.info.iter().map(|o| o.name.as_str()).collect(),
+            ItemKind::Log => self.logs.iter().map(|o| o.name.as_str()).collect(),
             ItemKind::Layer => self.layers.iter().map(|l| l.name.as_str()).collect(),
         }
     }
@@ -2347,6 +2369,7 @@ impl Config {
             macros: s.macros.into_iter().cloned().collect(),
             menus: s.menus.into_iter().cloned().collect(),
             info: s.info.into_iter().cloned().collect(),
+            logs: s.logs.into_iter().cloned().collect(),
             layers: s.layers.into_iter().cloned().collect(),
         }
     }
@@ -2359,14 +2382,15 @@ impl Config {
             all.extend(shared.iter().filter(|s| !own.iter().any(|o| name(o) == name(s))));
             all
         }
-        let (macros, menus, info) = match game {
-            Some(g) => (g.macros.as_slice(), g.menus.as_slice(), g.info.as_slice()),
-            None => (&[][..], &[][..], &[][..]),
+        let (macros, menus, info, logs) = match game {
+            Some(g) => (g.macros.as_slice(), g.menus.as_slice(), g.info.as_slice(), g.logs.as_slice()),
+            None => (&[][..], &[][..], &[][..], &[][..]),
         };
         ScopeRef {
             macros: merge(macros, &self.shared.macros, |m| &m.name),
             menus: merge(menus, &self.shared.menus, |m| &m.name),
             info: merge(info, &self.shared.info, |o| &o.name),
+            logs: merge(logs, &self.shared.logs, |o| &o.name),
             layers: game.map(|g| g.layers.iter().collect()).unwrap_or_default(),
         }
     }
@@ -2384,6 +2408,21 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn log_overlays_roundtrip_and_old_configs_load_without_them() {
+        let mut config = Config::default();
+        let mut log = LogOverlay::new("Inputs");
+        let LogSource::Input(s) = &mut log.source;
+        (s.device, s.newest, s.fade_after) = (Some(1), LogEnd::Bottom, 0.0);
+        config.general.logs.push(log);
+        config.general.profiles[0].set_button(Button::Select, ButtonAction::toggle(ButtonAction::ShowLog("Inputs".into())));
+        let back: Config = toml::from_str(&toml::to_string_pretty(&config).unwrap()).unwrap();
+        assert_eq!(back, config);
+        let plain = toml::to_string_pretty(&Config::default()).unwrap();
+        assert!(!plain.contains("log_overlays"), "nothing written when there are none");
+        assert!(toml::from_str::<Config>(&plain).unwrap().general.logs.is_empty());
+    }
 
     #[test]
     fn default_config_roundtrips_through_toml() {

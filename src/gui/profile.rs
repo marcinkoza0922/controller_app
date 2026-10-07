@@ -809,31 +809,7 @@ pub(super) fn combo_rows<'a>(p: &'a Profile, ui: &Ui) -> Vec<Element<'a, Message
 }
 
 pub(super) fn short_button(b: Button) -> &'static str {
-    match b {
-        Button::South => "A",
-        Button::East => "B",
-        Button::North => "Y",
-        Button::West => "X",
-        Button::LeftBumper => "LB",
-        Button::RightBumper => "RB",
-        Button::Select => "Select",
-        Button::Start => "Start",
-        Button::Guide => "Guide",
-        Button::LeftStick => "LS",
-        Button::RightStick => "RS",
-        Button::DpadUp => "Up",
-        Button::DpadDown => "Down",
-        Button::DpadLeft => "Left",
-        Button::DpadRight => "Right",
-        Button::LeftStickUp => "LS↑",
-        Button::LeftStickDown => "LS↓",
-        Button::LeftStickLeft => "LS←",
-        Button::LeftStickRight => "LS→",
-        Button::RightStickUp => "RS↑",
-        Button::RightStickDown => "RS↓",
-        Button::RightStickLeft => "RS←",
-        Button::RightStickRight => "RS→",
-    }
+    b.short_name()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

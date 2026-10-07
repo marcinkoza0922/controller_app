@@ -49,6 +49,9 @@ pub(super) struct Names {
     pub(super) infos: Vec<String>,
     /// Info overlays always on screen, which actions can't show.
     pub(super) always_infos: Vec<String>,
+    /// Log overlays an action can show, and those always on screen, likewise.
+    pub(super) logs: Vec<String>,
+    pub(super) always_logs: Vec<String>,
     pub(super) layers: Vec<String>,
     /// False for shared items, which can't use layers (they're always a game's own).
     pub(super) layers_allowed: bool,
@@ -58,11 +61,14 @@ impl Names {
     pub(super) fn of(scope: &ScopeRef, layers_allowed: bool) -> Self {
         let list = |kind| scope.names(kind).into_iter().map(str::to_string).collect();
         let infos = |always: bool| scope.info.iter().filter(|o| o.always == always).map(|o| o.name.clone()).collect();
+        let logs = |always: bool| scope.logs.iter().filter(|o| o.always == always).map(|o| o.name.clone()).collect();
         Names {
             macros: list(ItemKind::Macro),
             menus: list(ItemKind::Menu),
             infos: infos(false),
             always_infos: infos(true),
+            logs: logs(false),
+            always_logs: logs(true),
             layers: list(ItemKind::Layer),
             layers_allowed,
         }
@@ -83,6 +89,7 @@ impl Names {
             ItemKind::Macro => &self.macros,
             ItemKind::Menu => &self.menus,
             ItemKind::Info => &self.infos,
+            ItemKind::Log => &self.logs,
             ItemKind::Layer => &self.layers,
         }
     }
@@ -122,6 +129,12 @@ pub(super) fn action_problem(action: &ButtonAction, names: &Names) -> Option<Str
             }
             ButtonAction::ShowInfo(name) if !names.infos.contains(name) => {
                 problem = Some(format!("missing info overlay {name:?}"));
+            }
+            ButtonAction::ShowLog(name) if names.always_logs.contains(name) => {
+                problem = Some(format!("log overlay {name:?} is always shown, so an action can't show it"));
+            }
+            ButtonAction::ShowLog(name) if !names.logs.contains(name) => {
+                problem = Some(format!("missing log overlay {name:?}"));
             }
             ButtonAction::Layer(_) if !names.layers_allowed => {
                 problem = Some("shared items can't use layers".into());
@@ -235,6 +248,24 @@ pub(super) fn items_problem(macros: &[Macro], menus: &[Menu], info: &[InfoOverla
     None
 }
 
+/// The first thing saving would reject in a list of log overlays: empty or repeated names,
+/// or (for a game's) a shared one's name.
+pub(super) fn logs_problem(logs: &[LogOverlay], shared: Option<&Names>) -> Option<String> {
+    let clash = |name: &str| shared.is_some_and(|s| s.logs.iter().chain(&s.always_logs).any(|n| n == name));
+    for (i, o) in logs.iter().enumerate() {
+        if o.name.trim().is_empty() {
+            return Some("Log overlay names cannot be empty.".into());
+        }
+        if logs[..i].iter().any(|other| other.name == o.name) {
+            return Some(format!("Two log overlays are named {:?}.", o.name));
+        }
+        if clash(&o.name) {
+            return Some(format!("Log overlay {:?} has the same name as a shared one.", o.name));
+        }
+    }
+    None
+}
+
 /// The first thing saving would reject in a game (or General).
 pub(super) fn game_problem(config: &Config, g: &Game) -> Option<String> {
     if g.profiles.is_empty() {
@@ -243,6 +274,9 @@ pub(super) fn game_problem(config: &Config, g: &Game) -> Option<String> {
     let names = Names::for_game(config, g);
     let reachable = reachable_menus(config, Some(g));
     if let Some(problem) = items_problem(&g.macros, &g.menus, &g.info, &names, &reachable, Some(&Names::shared(config))) {
+        return Some(problem);
+    }
+    if let Some(problem) = logs_problem(&g.logs, Some(&Names::shared(config))) {
         return Some(problem);
     }
     for (i, p) in g.profiles.iter().enumerate() {
@@ -341,6 +375,9 @@ impl App {
         let shared = Names::shared(config);
         let reachable = reachable_menus(config, None);
         if let Some(problem) = items_problem(&config.shared.macros, &config.shared.menus, &config.shared.info, &shared, &reachable, None) {
+            return Some(format!("Shared: {problem}"));
+        }
+        if let Some(problem) = logs_problem(&config.shared.logs, None) {
             return Some(format!("Shared: {problem}"));
         }
         for (i, g) in config.games.iter().enumerate() {

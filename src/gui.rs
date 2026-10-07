@@ -15,7 +15,7 @@ use iced::{
 use crate::{
     config::{
         Analog, Button, ButtonAction, CarouselControls, Cluster, Combo, Config, Game, GestureKind, GRID_MAX, GyroActivation,
-        GyroConfig, GyroHorizontal, GyroInput, GyroMode, InfoOverlay, ItemKind, Macro, MacroStep, Menu, MenuItem,
+        GyroConfig, GyroHorizontal, GyroInput, GyroMode, InfoOverlay, ItemKind, LogOverlay, Macro, MacroStep, Menu, MenuItem,
         MenuKind, MenuKindTag, MouseButton, OverlayStyle, Paint, Profile, ProfileRef, Rule, RuleKind, ScopeRef,
         ScreenPosition, Stick, StickAction, StickConfig, Toggled, Trigger, TriggerAction, WheelDirection, Zone, free_name,
     },
@@ -33,6 +33,7 @@ mod checks;
 mod games;
 mod items;
 mod layers;
+mod logs;
 mod overlays;
 mod packs;
 mod profile;
@@ -71,7 +72,7 @@ struct App {
     /// The profile being edited, by index in the current game's profiles.
     editing: usize,
     game_tab: GameTab,
-    /// On General's Macros, Menus and Info overlays tabs: show the shared items (usable by
+    /// On General's Macros, Menus, Info and Log overlays tabs: show the shared items (usable by
     /// every game) instead of General's own.
     shared_view: bool,
     /// The read-only list of shared items under a game's own is open.
@@ -100,6 +101,9 @@ struct App {
     /// Info overlays (by index) whose card, or Appearance section, is open.
     open_infos: HashSet<usize>,
     open_info_appearance: HashSet<usize>,
+    /// Log overlays (by index) whose card, or Appearance section, is open.
+    open_logs: HashSet<usize>,
+    open_log_appearance: HashSet<usize>,
     /// The built-in game library.
     library: Vec<library::Entry>,
     /// Installed and running games, once looked up for the library picker.
@@ -138,11 +142,13 @@ enum GameTab {
     Macros,
     Menus,
     Info,
+    Logs,
     Details,
 }
 
 impl GameTab {
-    const ALL: [GameTab; 6] = [GameTab::Profiles, GameTab::Layers, GameTab::Macros, GameTab::Menus, GameTab::Info, GameTab::Details];
+    const ALL: [GameTab; 7] =
+        [GameTab::Profiles, GameTab::Layers, GameTab::Macros, GameTab::Menus, GameTab::Info, GameTab::Logs, GameTab::Details];
 }
 
 impl fmt::Display for GameTab {
@@ -153,6 +159,7 @@ impl fmt::Display for GameTab {
             GameTab::Macros => "Macros",
             GameTab::Menus => "Menus",
             GameTab::Info => "Info overlays",
+            GameTab::Logs => "Log overlays",
             GameTab::Details => "Details",
         })
     }
@@ -282,6 +289,13 @@ enum Message {
     InsertInfoToken(usize, usize, usize, TokenChoice),
     RemoveInfoCell(usize, usize, usize),
     SetInfoGlyphs(PadFamily),
+    NewLog,
+    ToggleLog(usize),
+    ToggleLogAppearance(usize),
+    DeleteLog(usize),
+    RenameLog(usize, String),
+    /// Log overlay `.0` replaced by this edited copy (its name is left as it is).
+    SetLog(usize, LogOverlay),
     NewMacro,
     DeleteMacro(usize),
     RenameMacro(usize, String),
@@ -402,6 +416,8 @@ impl App {
             numpad_appearance: false,
             open_infos: HashSet::new(),
             open_info_appearance: HashSet::new(),
+            open_logs: HashSet::new(),
+            open_log_appearance: HashSet::new(),
             library: library::entries(),
             installed: None,
             renames: Vec::new(),
@@ -454,9 +470,9 @@ impl App {
         }
     }
 
-    /// The Macros, Menus and Info overlays tabs show shared items (on General's page).
+    /// The Macros, Menus, Info and Log overlays tabs show shared items (on General's page).
     fn on_shared(&self) -> bool {
-        let item_tab = matches!(self.game_tab, GameTab::Macros | GameTab::Menus | GameTab::Info);
+        let item_tab = matches!(self.game_tab, GameTab::Macros | GameTab::Menus | GameTab::Info | GameTab::Logs);
         self.shared_view && item_tab && self.page == Page::Game(None)
     }
 
@@ -517,6 +533,8 @@ impl App {
         self.open_menus.clear();
         self.open_infos.clear();
         self.open_info_appearance.clear();
+        self.open_logs.clear();
+        self.open_log_appearance.clear();
         self.open_appearance.retain(Option::is_none);
         self.expanded.clear();
         self.found = None;

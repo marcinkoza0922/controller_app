@@ -238,6 +238,7 @@ impl App {
                 ItemKind::Macro => copy.macros.extend(items.macros.iter().find(|m| &m.name == n).cloned()),
                 ItemKind::Menu => copy.menus.extend(items.menus.iter().find(|m| &m.name == n).cloned()),
                 ItemKind::Info => copy.info.extend(items.info.iter().find(|o| &o.name == n).cloned()),
+                ItemKind::Log => copy.logs.extend(items.logs.iter().find(|o| &o.name == n).cloned()),
                 ItemKind::Layer => copy.layers.extend(items.layers.iter().find(|l| &l.name == n).cloned()),
             }
         }
@@ -262,21 +263,25 @@ impl App {
         }
         // Copies go first, the one asked for at the top of its list, opened.
         let shift = |set: &HashSet<usize>, by: usize| set.iter().map(|j| j + by).collect::<HashSet<_>>();
-        let (macros, menus, info) = (copy.macros.len(), copy.menus.len(), copy.info.len());
+        let (macros, menus, info, logs) = (copy.macros.len(), copy.menus.len(), copy.info.len(), copy.logs.len());
         let order = |list_kind: ItemKind, n: &str| !(list_kind == kind && n == renamed_root);
         copy.macros.sort_by_key(|m| order(ItemKind::Macro, &m.name));
         copy.menus.sort_by_key(|m| order(ItemKind::Menu, &m.name));
         copy.info.sort_by_key(|o| order(ItemKind::Info, &o.name));
+        copy.logs.sort_by_key(|o| order(ItemKind::Log, &o.name));
         copy.layers.sort_by_key(|l| order(ItemKind::Layer, &l.name));
         self.macros_mut().splice(0..0, copy.macros);
         self.menus_mut().splice(0..0, copy.menus);
         self.infos_mut().splice(0..0, copy.info);
+        self.logs_mut().splice(0..0, copy.logs);
         self.game_mut().layers.splice(0..0, copy.layers);
         self.open_macros = shift(&self.open_macros, macros);
         self.open_menus = shift(&self.open_menus, menus);
         self.open_appearance = self.open_appearance.iter().map(|a| a.map(|j| j + menus)).collect();
         self.open_infos = shift(&self.open_infos, info);
         self.open_info_appearance = shift(&self.open_info_appearance, info);
+        self.open_logs = shift(&self.open_logs, logs);
+        self.open_log_appearance = shift(&self.open_log_appearance, logs);
         match kind {
             ItemKind::Macro => {
                 self.open_macros.insert(0);
@@ -286,6 +291,9 @@ impl App {
             }
             ItemKind::Info => {
                 self.open_infos.insert(0);
+            }
+            ItemKind::Log => {
+                self.open_logs.insert(0);
             }
             ItemKind::Layer => self.layer = 0,
         }
@@ -614,6 +622,14 @@ impl App {
                         let sample = InfoOverlay { style: preview_style(&o.style), ..o.clone() };
                         let view = crate::info::resolve(&sample, &crate::info::Live::sample(self.config.info_glyphs));
                         (o.name.clone(), format!("{} rows", o.rows.len()), Some(preview(crate::overlay::draw::info_panel(&view, self.preview_font()))))
+                    }
+                    ItemKind::Log => {
+                        let o = &items.logs[i];
+                        let crate::config::LogSource::Input(s) = &o.source;
+                        let sample = crate::inputlog::Inputs::sample();
+                        let now = sample.now.unwrap_or_else(std::time::Instant::now);
+                        let view = crate::inputlog::log_view(&sample.entries(None), s, &preview_style(&o.style), self.config.info_glyphs, now);
+                        (o.name.clone(), format!("input · {} lines", s.lines), Some(preview(crate::overlay::draw::log_panel(&view, self.preview_font()))))
                     }
                     ItemKind::Layer => {
                         let l = &items.layers[i];

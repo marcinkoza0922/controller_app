@@ -618,7 +618,7 @@ impl App {
                     m.steps.remove(i);
                 }
             }
-            other => return self.update_profile(other),
+            other => return self.update_logs(other),
         }
         Task::none()
     }
@@ -647,6 +647,7 @@ impl App {
             ItemKind::Macro => self.macros().iter().map(|m| &m.name).collect(),
             ItemKind::Menu => self.menus().iter().map(|m| &m.name).collect(),
             ItemKind::Info => self.infos().iter().map(|o| &o.name).collect(),
+            ItemKind::Log => self.log_names(),
             ItemKind::Layer => self.game().layers.iter().map(|l| &l.name).collect(),
         };
         if list.iter().enumerate().any(|(i, n)| Some(i) != index && *n == name) {

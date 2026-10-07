@@ -37,6 +37,8 @@ use crate::{
     rumble,
 };
 
+mod logs;
+
 const TICK: Duration = Duration::from_millis(4);
 /// How often a fading info overlay is redrawn.
 const FADE_FRAME: Duration = Duration::from_millis(33);
@@ -86,6 +88,11 @@ struct Managed {
     /// The active profile with this controller's layers on top, while it has any, and which
     /// layers those are.
     layered: Option<(Vec<String>, Profile)>,
+    /// What it pressed lately, for the input log.
+    log: crate::inputlog::InputLog,
+    /// 0, 1, 2… in the order controllers connected, kept until this one disconnects
+    /// (`{current_input_device_N}`, a log overlay's controller).
+    number: u8,
 }
 
 /// What a controller's mappings come from: the active profile, or that profile with the
@@ -206,6 +213,12 @@ struct Daemon {
     info_timers: crate::info::Timers,
     /// A notice at the top of the screen, such as the profile just switched to.
     toast: Option<crate::info::Toast>,
+    /// Log overlays lingering after being let go.
+    log_timers: crate::info::Timers,
+    /// When a shown log or `{current_input}` cell next changes on its own.
+    log_redraw: Option<Instant>,
+    /// Something on screen shows the input log, so new input redraws it.
+    shows_input: bool,
     /// Each game's process when it last started, so focusing it again isn't another start.
     launches: HashMap<String, u32>,
     sampler: crate::info::Sampler,
@@ -253,6 +266,9 @@ pub fn run() -> Result<()> {
         info_fade: None,
         info_timers: crate::info::Timers::default(),
         toast: None,
+        log_timers: crate::info::Timers::default(),
+        log_redraw: None,
+        shows_input: false,
         launches: HashMap::new(),
         sampler: crate::info::Sampler::default(),
         overlay_started: None,
@@ -340,6 +356,7 @@ impl Daemon {
             .chain(overlay)
             .chain(self.info_refresh)
             .chain(self.info_fade)
+            .chain(self.log_redraw)
             .min()
     }
 
@@ -349,7 +366,7 @@ impl Daemon {
         if self.info_refresh.is_some_and(|t| t <= now) {
             self.sampler.sample();
             self.broadcast_overlay();
-        } else if self.info_fade.is_some_and(|t| t <= now) {
+        } else if self.info_fade.is_some_and(|t| t <= now) || self.log_redraw.is_some_and(|t| t <= now) {
             self.broadcast_overlay();
         }
         let (mut keyboard_actions, mut changed) = (Vec::new(), false);
@@ -370,10 +387,12 @@ impl Daemon {
         let mut switch = false;
         let mut toggle_overlay = None;
         let mut menu_request = None;
+        let mut fired = Vec::new();
         for (id, dev) in self.devices.iter_mut() {
             if dev.engine.next_deadline().is_none_or(|d| d > now) {
                 continue;
             }
+            fired.push(*id);
             let mut out = Vec::new();
             switch |= dev.engine.timers(layered(&dev.layered, base), now, &mut out);
             if dev.refresh_layers(&self.config) {
@@ -394,6 +413,10 @@ impl Daemon {
         }
         if let Some((id, (name, opener))) = menu_request {
             self.open_menu(id, &name, opener);
+        }
+        // A gesture or combo window ran out: its action labels the press it came from.
+        if fired.into_iter().fold(false, |any, id| self.log_fired(id) | any) {
+            self.log_changed();
         }
         self.check_info_changes();
     }
@@ -552,7 +575,7 @@ impl Daemon {
 
     fn broadcast_overlay(&mut self) {
         let frame = self.overlay_frame();
-        if !frame.info.is_empty()
+        if (!frame.info.is_empty() || !frame.logs.is_empty())
             && self.overlay_process.is_none()
             && self.overlay_started.is_none_or(|t| t.elapsed() > Duration::from_secs(10))
         {
@@ -566,14 +589,24 @@ impl Daemon {
     }
 
     fn overlay_frame(&mut self) -> OverlayFrame {
-        let shown = self.timed_info(Instant::now());
+        let now = Instant::now();
+        let shown = self.timed_info(now);
         // Live values (clock, CPU, …) refresh every second while shown.
         let live = shown.iter().any(|(o, _)| crate::info::is_live(o));
         self.info_refresh = live.then(|| Instant::now() + INFO_REFRESH);
         if live && self.sampler.sampled_at.is_none() {
             self.sampler.sample();
         }
-        let values = self.live_values();
+        let mut values = self.live_values();
+        let with_input: Vec<&crate::config::InfoOverlay> =
+            shown.iter().map(|(o, _)| o).filter(|o| !crate::info::input_tokens(o).is_empty()).collect();
+        if !with_input.is_empty() {
+            values.inputs = self.inputs(now);
+        }
+        let token_redraw = self.token_redraw(&with_input, &values.inputs, now);
+        let (logs, logs_up) = self.log_frame(now, values.family);
+        self.shows_input = !with_input.is_empty() || logs_up;
+        self.log_redraw = self.log_redraw.into_iter().chain(token_redraw).min();
         let mut info: Vec<_> = shown
             .iter()
             .map(|(o, opacity)| crate::info::InfoView { opacity: *opacity, ..crate::info::resolve(o, &values) })
@@ -587,7 +620,7 @@ impl Daemon {
             }
             None => self.toast = None,
         }
-        OverlayFrame { info, active: self.overlay_view(), font: self.config.active_font().map(str::to_string) }
+        OverlayFrame { info, logs, active: self.overlay_view(), font: self.config.active_font().map(str::to_string) }
     }
 
     /// The info overlays to draw now and how visible each is: steady ones fully, and those
@@ -677,6 +710,7 @@ impl Daemon {
             layers: self.active_layers(),
             family: pad.and_then(|d| d.family).unwrap_or(self.config.info_glyphs),
             system: self.sampler.stats.clone(),
+            inputs: crate::inputlog::Inputs::default(),
         }
     }
 
@@ -964,6 +998,7 @@ impl Daemon {
     }
 
     fn input(&mut self, id: u64, events: Vec<InputEvent>) {
+        let logged = self.log_input(id, &events, Instant::now());
         if self.active.is_some() {
             return self.overlay_input(id, events);
         }
@@ -1003,10 +1038,14 @@ impl Daemon {
         if let Some((name, opener)) = menu_request {
             self.open_menu(id, &name, opener);
         }
+        if self.log_fired(id) | logged {
+            self.log_changed();
+        }
         self.check_info_changes();
     }
 
     /// While the overlay shows something, controller input drives it instead of the mappings.
+    /// (Every way out redraws, so the input log's view of it shows too.)
     fn overlay_input(&mut self, id: u64, events: Vec<InputEvent>) {
         let now = Instant::now();
         if let Some(dev) = self.devices.get_mut(&id) {
@@ -1019,12 +1058,14 @@ impl Daemon {
             match &mut self.active {
                 Some(Active::Keyboard(k)) => {
                     let actions = k.handle(ev, now);
+                    self.log_keyboard(id, ev, &actions);
                     self.apply_keyboard(actions);
                 }
                 Some(Active::Menu { session, device }) => {
                     let device = *device;
                     match session.handle(&self.scope.menus, ev, now) {
                         Some(MenuOutcome::Choose { menu, item, action, close }) => {
+                            self.log_menu_choice(id, ev, &action);
                             if close {
                                 self.close_overlay();
                                 self.run_menu_item(device, &menu, item, &action);
@@ -1190,6 +1231,7 @@ impl Daemon {
         let game_changes = target.game != self.config.active_ref().game;
         if game_changes {
             self.info_timers.clear();
+            self.log_timers.clear();
         }
         if game_changes && matches!(self.active, Some(Active::Menu { .. })) {
             self.close_overlay();
@@ -1345,19 +1387,7 @@ impl Daemon {
             log!("cannot grab {name} ({}): {e}", path.display());
             return;
         }
-        // Mirror the controller's rumble support so games see it exactly when it exists.
-        let ff = dev
-            .supported_ff()
-            .filter(|ff| ff.iter().next().is_some() && dev.max_ff_effects() > 0)
-            .map(|effects| FfCaps { effects, max_effects: dev.max_ff_effects() as u32 });
-        let has_rumble = ff.is_some();
-        let pad = match VirtualPad::new(ff) {
-            Ok(pad) => pad,
-            Err(e) => {
-                log!("cannot create virtual pad: {e:#}");
-                return;
-            }
-        };
+        let Some((pad, has_rumble)) = virtual_pad_for(&dev) else { return };
         log!("managing {name} ({})", path.display());
         let id = self.next_id;
         self.next_id += 1;
@@ -1391,6 +1421,8 @@ impl Daemon {
             gyro_bias: [0.0; 3],
             calibrating: None,
             layered: None,
+            log: crate::inputlog::InputLog::default(),
+            number: logs::free_number(self.devices.values().map(|d| d.number)),
         };
         if let Some(profile) = self.config.active() {
             let mut out = Vec::new();
@@ -1398,6 +1430,23 @@ impl Daemon {
             dispatch(&mut managed.pad, &mut managed.out_view, &mut self.kbm, out);
         }
         self.devices.insert(id, managed);
+    }
+}
+
+/// The virtual pad a controller feeds, and whether it rumbles: it mirrors the controller's
+/// rumble support so games see it exactly when it exists.
+fn virtual_pad_for(dev: &Device) -> Option<(VirtualPad, bool)> {
+    let ff = dev
+        .supported_ff()
+        .filter(|ff| ff.iter().next().is_some() && dev.max_ff_effects() > 0)
+        .map(|effects| FfCaps { effects, max_effects: dev.max_ff_effects() as u32 });
+    let has_rumble = ff.is_some();
+    match VirtualPad::new(ff) {
+        Ok(pad) => Some((pad, has_rumble)),
+        Err(e) => {
+            log!("cannot create virtual pad: {e:#}");
+            None
+        }
     }
 }
 

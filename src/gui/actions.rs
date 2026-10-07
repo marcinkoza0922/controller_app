@@ -101,27 +101,7 @@ pub(super) fn view_picker(picker: &KeyPicker) -> Element<'_, Message> {
 
 /// One-line description of an action, for collapsed rows and the controller drawing.
 pub(super) fn summarize(action: &ButtonAction) -> String {
-    match action {
-        ButtonAction::Disabled => "—".into(),
-        ButtonAction::Gamepad(b) => format!("Pad {}", short_button(*b)),
-        ButtonAction::Keys(keys) if keys.is_empty() => "(no key)".into(),
-        ButtonAction::Keys(keys) => keys.iter().map(|k| keyboard::label(k)).collect::<Vec<_>>().join(" + "),
-        ButtonAction::Mouse(m) => format!("{m} click"),
-        ButtonAction::Wheel(d) => d.to_string(),
-        ButtonAction::NextProfile => "Next profile".into(),
-        ButtonAction::ToggleOverlay => "On-screen keyboard".into(),
-        ButtonAction::ToggleNumpad => "On-screen numpad".into(),
-        ButtonAction::OpenMenu(name) => format!("Menu “{name}”"),
-        ButtonAction::ShowInfo(name) => format!("Info “{name}”"),
-        ButtonAction::Multi(list) if list.is_empty() => "(nothing)".into(),
-        ButtonAction::Multi(list) => list.iter().map(summarize).collect::<Vec<_>>().join(" & "),
-        ButtonAction::Toggle(t) if t.start_on => format!("Toggle {} (starts on)", summarize(&t.action)),
-        ButtonAction::Toggle(t) => format!("Toggle {}", summarize(&t.action)),
-        ButtonAction::Turbo { action, rate } => format!("Turbo {} ({rate:.0}/s)", summarize(action)),
-        ButtonAction::Macro { name, repeat: true } => format!("Macro “{name}” (repeat)"),
-        ButtonAction::Macro { name, .. } => format!("Macro “{name}”"),
-        ButtonAction::Layer(name) => format!("Layer “{name}”"),
-    }
+    action.summary()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,6 +119,7 @@ pub(super) enum ActionKind {
     Macro,
     Menu,
     Info,
+    Log,
     Layer,
     Multiple,
 }
@@ -158,6 +139,7 @@ impl fmt::Display for ActionKind {
             ActionKind::Macro => "Macro…",
             ActionKind::Menu => "Open menu…",
             ActionKind::Info => "Show info overlay…",
+            ActionKind::Log => "Show log overlay…",
             ActionKind::Layer => "Layer…",
             ActionKind::Turbo => "Turbo (repeat while held)…",
             ActionKind::Multiple => "Multiple outputs…",
@@ -166,7 +148,7 @@ impl fmt::Display for ActionKind {
 }
 
 /// Every kind, for a top-level action.
-pub(super) const ACTION_KINDS: [ActionKind; 15] = [
+pub(super) const ACTION_KINDS: [ActionKind; 16] = [
     ActionKind::Disabled,
     ActionKind::Gamepad,
     ActionKind::Keys,
@@ -180,6 +162,7 @@ pub(super) const ACTION_KINDS: [ActionKind; 15] = [
     ActionKind::Macro,
     ActionKind::Menu,
     ActionKind::Info,
+    ActionKind::Log,
     ActionKind::Layer,
     ActionKind::Multiple,
 ];
@@ -241,6 +224,7 @@ pub(super) const TOGGLE_INNER_KINDS: &[ActionKind] = &[
     ActionKind::Macro,
     // Shown until toggled off.
     ActionKind::Info,
+    ActionKind::Log,
     // On until toggled off; how a menu item switches a layer.
     ActionKind::Layer,
     ActionKind::Multiple,
@@ -303,6 +287,7 @@ pub(super) fn action_kind(action: &ButtonAction) -> ActionKind {
         ButtonAction::Macro { .. } => ActionKind::Macro,
         ButtonAction::OpenMenu(_) => ActionKind::Menu,
         ButtonAction::ShowInfo(_) => ActionKind::Info,
+        ButtonAction::ShowLog(_) => ActionKind::Log,
         ButtonAction::Layer(_) => ActionKind::Layer,
     }
 }
@@ -335,6 +320,7 @@ pub(super) fn new_action(k: ActionKind, default_button: Button, current: &Button
         ActionKind::Macro => ButtonAction::Macro { name: names.macros.first().cloned().unwrap_or_default(), repeat: false },
         ActionKind::Menu => ButtonAction::OpenMenu(names.menus.first().cloned().unwrap_or_default()),
         ActionKind::Info => ButtonAction::ShowInfo(names.infos.first().cloned().unwrap_or_default()),
+        ActionKind::Log => ButtonAction::ShowLog(names.logs.first().cloned().unwrap_or_default()),
         // With no layers yet, picking the kind makes one.
         ActionKind::Layer => ButtonAction::Layer(names.layers.first().cloned().unwrap_or_else(|| NEW_LAYER.into())),
     }
@@ -471,6 +457,23 @@ pub(super) fn action_value<'a>(
                 line = line.push(text("always on screen, so it can't be triggered").size(12).color(ERROR_COLOR));
             } else if !names.infos.contains(name) {
                 line = line.push(text("missing info overlay").size(12).color(ERROR_COLOR));
+            }
+            line.into()
+        }
+        ButtonAction::ShowLog(_) if names.logs.is_empty() => {
+            text("No log overlays to show. Create one on the Log overlays tab (one that isn't set to always show).")
+                .size(12)
+                .color(MUTED_COLOR)
+                .into()
+        }
+        ButtonAction::ShowLog(name) => {
+            let mut line = row![dropdown(names.logs.clone(), Some(name.clone()), move |n| on_change(ButtonAction::ShowLog(n))).width(200)]
+                .spacing(8)
+                .align_y(Alignment::Center);
+            if names.always_logs.contains(name) {
+                line = line.push(text("always on screen, so it can't be triggered").size(12).color(ERROR_COLOR));
+            } else if !names.logs.contains(name) {
+                line = line.push(text("missing log overlay").size(12).color(ERROR_COLOR));
             }
             line.into()
         }

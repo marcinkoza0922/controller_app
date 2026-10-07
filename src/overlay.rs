@@ -55,6 +55,9 @@ pub enum OverlayView {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct OverlayFrame {
     pub info: Vec<crate::info::InfoView>,
+    /// Absent from an older daemon's frames.
+    #[serde(default)]
+    pub logs: Vec<crate::inputlog::LogView>,
     pub active: Option<OverlayView>,
     /// The font everything here is drawn in; the system's when unset.
     #[serde(default)]
@@ -63,7 +66,7 @@ pub struct OverlayFrame {
 
 impl OverlayFrame {
     pub fn is_empty(&self) -> bool {
-        self.info.is_empty() && self.active.is_none()
+        self.info.is_empty() && self.logs.is_empty() && self.active.is_none()
     }
 }
 
@@ -461,13 +464,15 @@ mod ui {
             return space().into();
         }
         let font = crate::font::resolve(state.frame.font.as_deref());
-        // Info overlays sharing a spot stack up there; the keyboard or a menu goes on top.
+        // Info and log overlays sharing a spot stack up there; the keyboard or a menu goes on top.
         let mut layers: Vec<Element<'_, Message>> = Vec::new();
         for spot in crate::config::ScreenPosition::GRID {
-            let here: Vec<_> = state.frame.info.iter().filter(|v| v.style.position == spot).collect();
-            if let Some(first) = here.first() {
-                let panels = column(here.iter().map(|v| draw::info_panel(v, font))).spacing(12);
-                layers.push(draw::place(panels.into(), &first.style));
+            let info = state.frame.info.iter().filter(|v| v.style.position == spot);
+            let logs = state.frame.logs.iter().filter(|v| v.style.position == spot);
+            let style = info.clone().map(|v| &v.style).chain(logs.clone().map(|v| &v.style)).next();
+            if let Some(style) = style {
+                let panels = info.map(|v| draw::info_panel(v, font)).chain(logs.map(|v| draw::log_panel(v, font)));
+                layers.push(draw::place(column(panels).spacing(12).into(), style));
             }
         }
         match &state.frame.active {
@@ -482,7 +487,11 @@ mod ui {
 /// Drawing for overlays, generic over the message type so the settings GUI can show the
 /// same thing as a live preview.
 pub mod draw {
+    mod log_panel;
+
     use std::f32::consts::TAU;
+
+    pub use log_panel::log_panel;
 
     use iced::{
         Alignment, Border, Color, Element, Length, Shadow, Vector,
@@ -941,6 +950,12 @@ pub mod draw {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn frames_from_an_older_daemon_still_load() {
+        let frame: OverlayFrame = serde_json::from_str(r#"{"info":[],"active":null}"#).unwrap();
+        assert!(frame.logs.is_empty() && frame.is_empty());
+    }
 
     fn at(c: &OverlayController) -> &'static str {
         keyboard::key_at(Layout::Keyboard, c.cursor()).code

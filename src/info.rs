@@ -84,6 +84,9 @@ pub enum Token {
     Stick(Stick),
     Dpad,
     Stat(Stat),
+    /// The inputs just pressed: `{current_input}` (every controller) or
+    /// `{current_input_device_N}`, then optionally `:gap_ms:stay_ms`.
+    CurrentInput { device: Option<u8>, gap_ms: u64, stay_ms: u64 },
 }
 
 /// Every token, with a description, for the editor's "Insert…" list.
@@ -120,10 +123,32 @@ pub const TOKENS: &[(&str, &str)] = &[
     ("ram", "Memory in use"),
     ("gpu", "GPU usage (AMD)"),
     ("controller", "Controller name"),
+    ("current_input", "Buttons just pressed (current_input_device_0 for one controller; :gap_ms:stay_ms to time it)"),
 ];
 
-fn token(name: &str) -> Option<Token> {
-    Some(match name.to_lowercase().as_str() {
+/// A token from what's between the braces: a name, and for `current_input` optional
+/// `:`-separated timings.
+fn token(inner: &str) -> Option<Token> {
+    let mut parts = inner.split(':');
+    let name = parts.next()?.trim().to_lowercase();
+    let args: Vec<&str> = parts.map(str::trim).collect();
+    if let Some(rest) = name.strip_prefix("current_input") {
+        let device = match rest {
+            "" => None,
+            n => Some(n.strip_prefix("_device_")?.parse().ok()?),
+        };
+        let num = |i: usize, default: u64| args.get(i).map_or(Some(default), |a| a.parse().ok());
+        if args.len() > 2 {
+            return None;
+        }
+        let gap_ms = num(0, crate::config::DEFAULT_GAP_MS)?;
+        let stay_ms = num(1, DEFAULT_STAY_MS)?;
+        return Some(Token::CurrentInput { device, gap_ms, stay_ms });
+    }
+    if !args.is_empty() {
+        return None;
+    }
+    Some(match name.as_str() {
         "south" => Token::Button(Button::South),
         "east" => Token::Button(Button::East),
         "west" => Token::Button(Button::West),
@@ -216,8 +241,13 @@ impl Timers {
 
     /// Notes what actions hold up now. Overlays let go since last time stay their linger time.
     pub fn update(&mut self, held: HashSet<String>, overlays: &[InfoOverlay], now: Instant) {
+        self.update_with(held, |name| overlays.iter().find(|o| o.name == name).and_then(|o| o.linger), now);
+    }
+
+    /// Like [`Timers::update`], for overlays whose lingering `linger` looks up by name.
+    pub fn update_with(&mut self, held: HashSet<String>, linger: impl Fn(&str) -> Option<f32>, now: Instant) {
         for name in self.held.difference(&held) {
-            if let Some(s) = overlays.iter().find(|o| &o.name == name).and_then(|o| o.linger) {
+            if let Some(s) = linger(name) {
                 self.lingering.insert(name.clone(), now + Duration::from_secs_f32(s.max(0.0)));
             }
         }
@@ -258,7 +288,7 @@ impl Timers {
 
 /// When something due to go at `end` next needs redrawing: as it starts to fade, then every
 /// frame while it does.
-fn redraw_at(end: Instant, now: Instant, frame: Duration) -> Instant {
+pub fn redraw_at(end: Instant, now: Instant, frame: Duration) -> Instant {
     let fading = end.checked_sub(FADE_OUT).unwrap_or(now);
     if now >= fading { now + frame } else { fading }
 }
@@ -307,7 +337,7 @@ pub fn parse(cell: &str) -> Vec<Result<String, Token>> {
         let Some(len) = rest[open..].find('}') else { break };
         let inner = &rest[open + 1..open + len];
         text.push_str(&rest[..open]);
-        match token(inner.trim()) {
+        match token(inner) {
             Some(t) => {
                 if !text.is_empty() {
                     parts.push(Ok(std::mem::take(&mut text)));
@@ -325,12 +355,26 @@ pub fn parse(cell: &str) -> Vec<Result<String, Token>> {
     parts
 }
 
+/// How long `{current_input}` stays after its sequence ends, unless set otherwise.
+pub const DEFAULT_STAY_MS: u64 = 1000;
+
+/// The `{current_input}` tokens in an overlay.
+pub fn input_tokens(overlay: &InfoOverlay) -> Vec<Token> {
+    overlay
+        .rows
+        .iter()
+        .flatten()
+        .flat_map(|cell| parse(cell))
+        .filter_map(|p| p.err().filter(|t| matches!(t, Token::CurrentInput { .. })))
+        .collect()
+}
+
 /// Whether an overlay shows anything that changes over time (so it needs refreshing).
 pub fn is_live(overlay: &InfoOverlay) -> bool {
     overlay.rows.iter().flatten().any(|cell| parse(cell).iter().any(|p| matches!(p, Err(Token::Stat(_)))))
 }
 
-fn glyph(label: &str, fill: Option<[u8; 3]>, round: bool) -> Segment {
+pub fn glyph(label: &str, fill: Option<[u8; 3]>, round: bool) -> Segment {
     Segment::Glyph { label: label.to_string(), fill, round }
 }
 
@@ -379,7 +423,7 @@ pub fn button_glyph(b: Button, family: PadFamily) -> Segment {
     }
 }
 
-fn trigger_glyph(t: Trigger, family: PadFamily) -> Segment {
+pub fn trigger_glyph(t: Trigger, family: PadFamily) -> Segment {
     let label = match (t, family) {
         (Trigger::Left, PadFamily::Xbox) => "LT",
         (Trigger::Right, PadFamily::Xbox) => "RT",
@@ -403,6 +447,8 @@ pub struct Live {
     pub layers: Vec<String>,
     pub family: PadFamily,
     pub system: SystemStats,
+    /// Recent input, for `{current_input}`.
+    pub inputs: crate::inputlog::Inputs,
 }
 
 impl Live {
@@ -417,6 +463,7 @@ impl Live {
             layers: vec!["Hotkeys".into()],
             family,
             system: SystemStats { cpu: Some(23.0), ram: Some((7.4, 31.2)), gpu: Some(61.0) },
+            inputs: crate::inputlog::Inputs::sample(),
         }
     }
 }
@@ -451,6 +498,10 @@ pub fn resolve(overlay: &InfoOverlay, live: &Live) -> InfoView {
                     let mut segments: Vec<Segment> = Vec::new();
                     for part in parse(cell) {
                         let segment = match part {
+                            Err(Token::CurrentInput { device, gap_ms, stay_ms }) => {
+                                segments.extend(live.inputs.current(device, gap_ms, stay_ms, live.family));
+                                continue;
+                            }
                             Ok(text) => Segment::Text(text),
                             Err(Token::Button(b)) => button_glyph(b, live.family),
                             Err(Token::Trigger(t)) => trigger_glyph(t, live.family),
@@ -559,6 +610,32 @@ fn gpu_busy() -> Option<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn current_input_tokens_take_a_controller_and_timings() {
+        let tok = |cell: &str| parse(cell).into_iter().find_map(Result::err);
+        let input = |device, gap_ms, stay_ms| Some(Token::CurrentInput { device, gap_ms, stay_ms });
+        assert_eq!(tok("{current_input}"), input(None, 250, 1000));
+        assert_eq!(tok("{current_input:400}"), input(None, 400, 1000));
+        assert_eq!(tok("{current_input_device_1:400:2000}"), input(Some(1), 400, 2000));
+        for literal in ["{current_input:x}", "{current_input_device_x}", "{current_input:1:2:3}", "{time:5}"] {
+            assert_eq!(parse(literal), vec![Ok(literal.to_string())], "{literal}");
+        }
+    }
+
+    #[test]
+    fn current_input_shows_the_sample_motion() {
+        let o = overlay(&[&["{current_input}"]]);
+        let cell = &resolve(&o, &Live::sample(PadFamily::Xbox)).rows[0][0];
+        let labels: Vec<&str> = cell
+            .iter()
+            .filter_map(|s| match s {
+                Segment::Glyph { label, .. } => Some(label.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(labels, ["↓", "↘", "→", "B"]);
+    }
 
     fn overlay(rows: &[&[&str]]) -> InfoOverlay {
         InfoOverlay {
