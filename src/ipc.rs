@@ -92,8 +92,6 @@ pub enum FocusBackend {
     Sway,
     /// Hyprland's event socket reports focus changes.
     Hyprland,
-    /// Our GNOME Shell extension reports focus changes.
-    Gnome,
     /// No focus information: rules match against running processes instead.
     #[default]
     ProcessScan,
@@ -106,7 +104,6 @@ impl FocusBackend {
             Self::Kwin => Some("KWin"),
             Self::Sway => Some("Sway"),
             Self::Hyprland => Some("Hyprland"),
-            Self::Gnome => Some("GNOME"),
             Self::ProcessScan => None,
         }
     }

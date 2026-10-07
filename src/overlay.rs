@@ -340,7 +340,16 @@ impl OverlayController {
 /// Runs the overlay window: a layer-shell surface at the bottom of the screen drawing the
 /// state the daemon streams, and exiting when the daemon hides it.
 pub fn run() -> anyhow::Result<()> {
-    ui::run()
+    // iced_layershell unwraps when the compositor has no layer-shell (GNOME): report that
+    // as an error instead of a panic and backtrace.
+    std::panic::set_hook(Box::new(|_| {}));
+    std::panic::catch_unwind(ui::run).unwrap_or_else(|panic| {
+        let why = panic.downcast_ref::<String>().cloned().or_else(|| panic.downcast_ref::<&str>().map(ToString::to_string));
+        anyhow::bail!(
+            "the overlay window could not start (the compositor probably lacks wlr-layer-shell, as GNOME does): {}",
+            why.unwrap_or_default()
+        )
+    })
 }
 
 mod ui {

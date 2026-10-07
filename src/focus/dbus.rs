@@ -1,4 +1,4 @@
-//! The D-Bus service that desktop-side helpers (the KWin script, the GNOME Shell extension)
+//! The D-Bus service that desktop-side helpers (the KWin script)
 //! report focus changes to, and a few helpers for calling the desktop's own services.
 
 use anyhow::{Context, Result};
@@ -39,11 +39,4 @@ where
 {
     let (dest, path, iface) = target;
     Ok(conn.call_method(Some(dest), path, Some(iface), method, body)?)
-}
-
-/// Whether some process owns `name` on the session bus (the desktop's shell is running).
-pub fn name_has_owner(conn: &Connection, name: &str) -> bool {
-    call(conn, ("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus"), "NameHasOwner", &(name,))
-        .and_then(|m| Ok(m.body().deserialize::<bool>()?))
-        .unwrap_or(false)
 }

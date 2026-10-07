@@ -3,7 +3,6 @@
 //! profile. Desktops without a tracker fall back to matching running processes.
 
 mod dbus;
-mod gnome;
 mod hyprland;
 mod identify;
 mod kwin;
@@ -43,11 +42,10 @@ fn report(notify: &Notify, window: Reported) {
     notify(FocusEvent::Focused(identify(window.class, window.title, window.pid)));
 }
 
-/// Tells the daemon about changes of backend, and logs them (and the reasons) once.
+/// Tells the daemon about changes of backend, and logs them once.
 struct Reporter {
     notify: Notify,
     backend: Option<FocusBackend>,
-    note: Option<&'static str>,
 }
 
 impl Reporter {
@@ -56,13 +54,6 @@ impl Reporter {
             log!("focus tracking: {}", now.label());
             (self.notify)(FocusEvent::Backend(now));
             self.backend = Some(now);
-        }
-    }
-
-    fn note(&mut self, text: &'static str) {
-        if self.note != Some(text) {
-            log!("{text}");
-            self.note = Some(text);
         }
     }
 }
@@ -84,7 +75,7 @@ pub fn spawn(notify: impl Fn(FocusEvent) + Send + Sync + 'static) {
         if let Some(conn) = &conn {
             let _ = kwin::unload_script(conn);
         }
-        let mut reporter = Reporter { notify: notify.clone(), backend: None, note: None };
+        let mut reporter = Reporter { notify: notify.clone(), backend: None };
         loop {
             track(&mut reporter, conn.as_ref());
             thread::sleep(WATCHDOG);
@@ -107,22 +98,14 @@ fn track(reporter: &mut Reporter, conn: Option<&Connection>) {
             log!("lost Hyprland: {e:#}");
         }
     } else {
-        let backend = conn.map_or(FocusBackend::ProcessScan, |conn| shell_backend(reporter, conn));
+        let backend = conn.map_or(FocusBackend::ProcessScan, shell_backend);
         reporter.backend(backend);
     }
 }
 
-/// The tracker for a desktop reached over D-Bus: GNOME (through our extension), else KWin.
-fn shell_backend(reporter: &mut Reporter, conn: &Connection) -> FocusBackend {
-    match gnome::ensure(conn) {
-        gnome::Gnome::Active => FocusBackend::Gnome,
-        gnome::Gnome::Inactive(why) => {
-            reporter.note(why);
-            FocusBackend::ProcessScan
-        }
-        gnome::Gnome::Absent if kwin::ensure_script(conn).is_ok() => FocusBackend::Kwin,
-        gnome::Gnome::Absent => FocusBackend::ProcessScan,
-    }
+/// The tracker for a desktop reached over D-Bus: KWin.
+fn shell_backend(conn: &Connection) -> FocusBackend {
+    if kwin::ensure_script(conn).is_ok() { FocusBackend::Kwin } else { FocusBackend::ProcessScan }
 }
 
 fn rule_matches(kind: RuleKind, value: &str, info: &WindowInfo) -> bool {

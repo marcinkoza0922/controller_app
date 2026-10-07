@@ -1,6 +1,0 @@
-{
-  "uuid": "controller-app-focus@marcinkoza0922.github.io",
-  "name": "controller_app focus",
-  "description": "Tells the controller_app daemon which window has focus, so it can switch profiles per game.",
-  "shell-version": ["45", "46", "47", "48", "49", "50"]
-}

@@ -147,9 +147,8 @@ Focus tracking depends on the desktop; the daemon picks the right one by itself 
 - **KDE Plasma** (Wayland or X11): a small KWin script.
 - **Sway**: the compositor's IPC socket (`$SWAYSOCK`).
 - **Hyprland**: its event and command sockets.
-- **GNOME** (45 and later): GNOME Shell lets no other program ask for the focused window, so the daemon installs a small Shell extension into `~/.local/share/gnome-shell/extensions/` (source in `dist/gnome-extension/`). A newly installed extension is only picked up by a new session, so **log out and back in once**; after that the daemon switches it on if it was turned off.
 
-On other desktops, rules apply while a matching process is running.
+GNOME is not supported: Mutter has no layer-shell, so the on-screen keyboard, menus and overlays can't be shown, and it lets no other program ask for the focused window. On other desktops, rules apply while a matching process is running.
 
 ## GUI
 
