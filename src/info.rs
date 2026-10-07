@@ -166,6 +166,8 @@ pub enum Segment {
     Text(String),
     /// `fill` is the button's own color (e.g. Xbox A green); `None` draws it neutral.
     Glyph { label: String, fill: Option<[u8; 3]>, round: bool },
+    /// A cross-shaped D-pad with one direction (a `Dpad*` button) highlighted.
+    Dpad(Button),
 }
 
 /// What the overlay window draws for one info overlay.
@@ -340,10 +342,7 @@ pub fn button_glyph(b: Button, family: PadFamily) -> Segment {
         Button::Guide => named("Guide", "PS", "Home"),
         Button::LeftStick => named("LS", "L3", "LS"),
         Button::RightStick => named("RS", "R3", "RS"),
-        Button::DpadUp => glyph("↑", None, false),
-        Button::DpadDown => glyph("↓", None, false),
-        Button::DpadLeft => glyph("←", None, false),
-        Button::DpadRight => glyph("→", None, false),
+        Button::DpadUp | Button::DpadDown | Button::DpadLeft | Button::DpadRight => Segment::Dpad(b),
         other => glyph(crate::menu::button_badge(other), None, false),
     }
 }
