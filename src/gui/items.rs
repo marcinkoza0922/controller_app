@@ -705,6 +705,9 @@ impl App {
         .width(Length::Fill)
         .style(style::card);
         let mut col = column![add].spacing(16);
+        if self.macros().is_empty() {
+            col = col.push(text("This game has no macros yet.").color(MUTED_COLOR));
+        }
         for (i, m) in self.macros().iter().enumerate() {
             col = col.push(self.view_macro_card(i, m, names));
         }
@@ -734,7 +737,7 @@ impl App {
         if let Some(problem) = &problem {
             header = header.push(text(format!("⚠ {problem}")).size(12).color(ERROR_COLOR));
         }
-        header = header.push(button(text("Delete").size(13)).style(button::danger).on_press(Message::DeleteMacro(mi)));
+        header = header.push(button(text("✕").size(14)).style(style::quiet_danger).on_press(Message::DeleteMacro(mi)));
         let mut col = column![header].spacing(12);
         if open {
             col = col.push(self.view_macro_editor(mi, m, names));
@@ -893,6 +896,9 @@ impl App {
 
     pub(super) fn view_menus<'a>(&'a self, names: &Names, reachable: &[&Menu]) -> Element<'a, Message> {
         let mut col = column![view_new_menu_card()].spacing(16);
+        if self.menus().is_empty() {
+            col = col.push(text("This game has no menus yet.").color(MUTED_COLOR));
+        }
         for (i, menu) in self.menus().iter().enumerate() {
             col = col.push(self.view_menu_card(i, menu, names, reachable));
         }
@@ -901,6 +907,9 @@ impl App {
 
     pub(super) fn view_infos(&self) -> Element<'_, Message> {
         let mut col = column![view_new_info_card()].spacing(16);
+        if self.infos().is_empty() {
+            col = col.push(text("This game has no info overlays yet.").color(MUTED_COLOR));
+        }
         for (i, o) in self.infos().iter().enumerate() {
             col = col.push(self.view_info_card(i, o));
         }
@@ -932,7 +941,7 @@ impl App {
         if let Some(problem) = problem {
             header = header.push(text(format!("⚠ {problem}")).size(12).color(ERROR_COLOR));
         }
-        header = header.push(button(text("Delete").size(13)).style(button::danger).on_press(Message::DeleteInfo(i)));
+        header = header.push(button(text("✕").size(14)).style(style::quiet_danger).on_press(Message::DeleteInfo(i)));
         let mut col = column![header].spacing(12);
         if open {
             col = col.push(self.view_info_editor(i, o));
@@ -1121,7 +1130,7 @@ impl App {
         if let Some(problem) = &problem {
             header = header.push(text(format!("⚠ {problem}")).size(12).color(ERROR_COLOR));
         }
-        header = header.push(button(text("Delete").size(13)).style(button::danger).on_press(Message::DeleteMenu(mi)));
+        header = header.push(button(text("✕").size(14)).style(style::quiet_danger).on_press(Message::DeleteMenu(mi)));
         let mut col = column![header].spacing(12);
         if open {
             col = col.push(self.view_menu_editor(mi, menu, names, reachable));

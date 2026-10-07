@@ -184,7 +184,12 @@ pub fn label(code: &str) -> String {
         "KEY_RIGHTSHIFT" | "KEY_RIGHTCTRL" | "KEY_RIGHTMETA" => {
             format!("Right {}", main_label.unwrap_or_default())
         }
-        _ if code.starts_with("KEY_KP") => format!("Keypad {}", code.trim_start_matches("KEY_KP")),
+        _ if code.starts_with("KEY_KP") => {
+            let name = code.trim_start_matches("KEY_KP").to_lowercase();
+            let mut chars = name.chars();
+            let first = chars.next().map(|c| c.to_uppercase().collect::<String>()).unwrap_or_default();
+            format!("Keypad {first}{}", chars.as_str())
+        }
         _ => main_label
             .map(str::to_string)
             .unwrap_or_else(|| code.trim_start_matches("KEY_").to_string()),
@@ -321,6 +326,7 @@ mod tests {
         assert_eq!(label("KEY_LEFTSHIFT"), "Left Shift");
         assert_eq!(label("KEY_RIGHTCTRL"), "Right Ctrl");
         assert_eq!(label("KEY_KP7"), "Keypad 7");
+        assert_eq!(label("KEY_KPPLUS"), "Keypad Plus");
         assert_eq!(label("KEY_A"), "A");
         assert_eq!(label("KEY_F13"), "F13");
     }

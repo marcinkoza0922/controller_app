@@ -234,7 +234,7 @@ impl App {
         let mut col = column![picker_row].spacing(16);
         let Some(layer) = game.layers.get(self.layer) else {
             return col
-                .push(text("This game has no layers.").color(MUTED_COLOR))
+                .push(text("This game has no layers yet.").color(MUTED_COLOR))
                 .into();
         };
 

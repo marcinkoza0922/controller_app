@@ -36,12 +36,11 @@ impl Button {
 impl ButtonAction {
     /// One-line description, for collapsed rows, the controller drawing and the input log.
     pub fn summary(&self) -> String {
-        use crate::keyboard;
         match self {
-            ButtonAction::Disabled => "—".into(),
+            ButtonAction::Disabled => "Disabled".into(),
             ButtonAction::Gamepad(b) => format!("Pad {}", b.short_name()),
             ButtonAction::Keys(keys) if keys.is_empty() => "(no key)".into(),
-            ButtonAction::Keys(keys) => keys.iter().map(|k| keyboard::label(k)).collect::<Vec<_>>().join(" + "),
+            ButtonAction::Keys(keys) => keys.iter().map(|k| key_name(k)).collect::<Vec<_>>().join(" + "),
             ButtonAction::Mouse(m) => format!("{m} click"),
             ButtonAction::Wheel(d) => d.to_string(),
             ButtonAction::NextProfile => "Next profile".into(),
@@ -59,5 +58,15 @@ impl ButtonAction {
             ButtonAction::Macro { name, .. } => format!("Macro “{name}”"),
             ButtonAction::Layer(name) => format!("Layer “{name}”"),
         }
+    }
+}
+
+/// A key's label, with single punctuation characters quoted so they stay visible (“;”, “]”).
+fn key_name(code: &str) -> String {
+    let label = crate::keyboard::label(code);
+    let mut chars = label.chars();
+    match (chars.next(), chars.next()) {
+        (Some(c), None) if !c.is_alphanumeric() => format!("“{c}”"),
+        _ => label,
     }
 }

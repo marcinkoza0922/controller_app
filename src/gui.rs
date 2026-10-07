@@ -87,6 +87,8 @@ struct App {
     picker: Option<KeyPicker>,
     dialog: Option<Dialog>,
     profile_tab: ProfileTab,
+    /// The controller picture is folded away on the Profiles tab.
+    picture_hidden: bool,
     /// Rows showing their full editor instead of a one-line summary.
     expanded: HashSet<Target>,
     /// Waiting for a controller button press to jump to its row.
@@ -267,6 +269,7 @@ enum Message {
     SetZoneRange(Analog, usize, f32, f32),
     SelectProfileTab(ProfileTab),
     ToggleExpanded(Target),
+    TogglePicture,
     /// Expand (true) or collapse every row in the current profile section.
     ExpandAll(bool),
     StartFind,
@@ -415,6 +418,7 @@ impl App {
             picker: None,
             dialog: None,
             profile_tab: ProfileTab::Buttons,
+            picture_hidden: false,
             expanded: HashSet::new(),
             finding: false,
             found: None,
@@ -691,7 +695,7 @@ impl App {
     fn view(&self) -> Element<'_, Message> {
         let page: Element<'_, Message> = match &self.page {
             Page::Overview => column![
-                self.view_live(self.config.active().map(|p| self.with_active_layers(p)).as_ref()),
+                self.view_live(self.config.active().map(|p| self.with_active_layers(p)).as_ref(), false),
                 rule::horizontal(1),
                 self.view_devices()
             ]
@@ -767,18 +771,21 @@ impl App {
             None if dirty => text("Unsaved changes").color(MUTED_COLOR).into(),
             None => space().into(),
         };
-        container(
-            row![
-                msg,
-                space::horizontal(),
-                button(text("Revert")).style(style::secondary).on_press_maybe(dirty.then_some(Message::Revert)),
-                button(text("Save & apply")).on_press_maybe(dirty.then_some(Message::Save)),
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center),
-        )
-        .padding(12)
-        .style(style::inset)
+        // Only a rule on top: a box would add a second line beside the sidebar's divider.
+        column![
+            rule::horizontal(1),
+            container(
+                row![
+                    msg,
+                    space::horizontal(),
+                    button(text("Revert")).style(style::secondary).on_press_maybe(dirty.then_some(Message::Revert)),
+                    button(text("Save & apply")).on_press_maybe(dirty.then_some(Message::Save)),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            )
+            .padding(12),
+        ]
         .into()
     }
 }

@@ -726,7 +726,8 @@ mod tests {
     fn summaries_read_like_the_mapping() {
         let keys = |k: &[&str]| ButtonAction::Keys(k.iter().map(std::string::ToString::to_string).collect());
         assert_eq!(summarize(&keys(&["KEY_LEFTCTRL", "KEY_C"])), "Left Ctrl + C");
-        assert_eq!(summarize(&ButtonAction::Disabled), "—");
+        assert_eq!(summarize(&ButtonAction::Disabled), "Disabled");
+        assert_eq!(summarize(&keys(&["KEY_SEMICOLON"])), "“;”");
         assert_eq!(
             summarize(&ButtonAction::toggle(ButtonAction::Turbo {
                 action: Box::new(ButtonAction::Mouse(MouseButton::Left)),

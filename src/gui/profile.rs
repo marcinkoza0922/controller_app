@@ -237,7 +237,10 @@ pub(super) fn drawing_labels(p: &Profile) -> Vec<(pad_svg::Spot, String)> {
         if passthrough && !gestures {
             continue;
         }
-        let mut label = summarize(p.button(b));
+        let mut label = match p.button(b) {
+            ButtonAction::Disabled => "(nothing)".to_string(),
+            action => summarize(action),
+        };
         if gestures {
             label.push_str(" +");
         }
@@ -247,7 +250,7 @@ pub(super) fn drawing_labels(p: &Profile) -> Vec<(pad_svg::Spot, String)> {
         let label = match p.trigger(t) {
             TriggerAction::Gamepad(out) if *out == t => continue,
             TriggerAction::Gamepad(out) => format!("Pad {}", if *out == Trigger::Left { "LT" } else { "RT" }),
-            TriggerAction::Disabled => "—".into(),
+            TriggerAction::Disabled => "(nothing)".into(),
             TriggerAction::Button { action, .. } => summarize(action),
         };
         labels.push((pad_svg::Spot::Trigger(t), label));
@@ -651,7 +654,8 @@ pub(super) fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<
 
     if !open {
         let disabled = matches!(p.button(b), ButtonAction::Disabled) && set_gestures.is_empty();
-        let summary = text(summarize(p.button(b))).color_maybe(disabled.then_some(MUTED_COLOR));
+        let passthrough = *p.button(b) == ButtonAction::Gamepad(b) && set_gestures.is_empty();
+        let summary = text(summarize(p.button(b))).color_maybe((disabled || passthrough).then_some(MUTED_COLOR));
         let mut line = row![row_toggle(&b.to_string(), target, false, problem.is_some()), summary]
             .spacing(10)
             .align_y(Alignment::Center);
@@ -1249,6 +1253,7 @@ impl App {
                 self.profile_tab = tab;
                 self.found = None;
             }
+            Message::TogglePicture => self.picture_hidden = !self.picture_hidden,
             Message::ToggleExpanded(target) => {
                 if !self.expanded.remove(&target) {
                     self.expanded.insert(target);
@@ -1377,7 +1382,7 @@ impl App {
     pub(super) fn view_profile_editor<'a>(&'a self, p: &'a Profile, names: &Names, layer: Option<LayerMarks<'a>>) -> Element<'a, Message> {
         // The active profile's drawing also shows the layers that are on right now.
         let live = (layer.is_none() && self.profile_ref().is_some_and(|at| at == self.saved.active)).then(|| self.with_active_layers(p));
-        let mut col = column![self.view_live(Some(live.as_ref().unwrap_or(p)))].spacing(16);
+        let mut col = column![self.view_live(Some(live.as_ref().unwrap_or(p)), true)].spacing(16);
 
         let find: Element<'_, Message> = if self.finding {
             row![
@@ -1429,7 +1434,7 @@ impl App {
     }
 
     /// The live controller drawing, labelled with `labels_from`'s mappings.
-    pub(super) fn view_live(&self, labels_from: Option<&Profile>) -> Element<'_, Message> {
+    pub(super) fn view_live(&self, labels_from: Option<&Profile>, foldable: bool) -> Element<'_, Message> {
         let caption = match (&self.live, &self.status) {
             (Some(live), _) => match live.gyro {
                 Some([pitch, yaw, roll]) => {
@@ -1443,8 +1448,23 @@ impl App {
         };
         let layers = self.status.as_ref().map(|s| s.active_layers.as_slice()).unwrap_or_default();
         let caption = if layers.is_empty() { caption } else { format!("{caption} · Layers: {}", layers.join(" + ")) };
+        let folded = foldable && self.picture_hidden;
+        let title: Element<'_, Message> = if foldable {
+            row![
+                text("Live input").size(20),
+                button(text(if folded { "Show" } else { "Hide" }).size(13)).style(button::text).on_press(Message::TogglePicture),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .into()
+        } else {
+            text("Live input").size(20).into()
+        };
+        if folded {
+            return title;
+        }
         column![
-            text("Live input").size(20),
+            title,
             container(controller_drawing(self.live.as_ref(), labels_from, self.status.is_none())).center_x(Length::Fill),
             container(text(caption).size(13).color(MUTED_COLOR)).center_x(Length::Fill),
         ]

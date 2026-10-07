@@ -120,6 +120,16 @@ pub fn secondary(theme: &Theme, status: button::Status) -> button::Style {
     }
 }
 
+/// A quiet "✕" for removing a card: muted until hovered, then red.
+pub fn quiet_danger(theme: &Theme, status: button::Status) -> button::Style {
+    let p = theme.extended_palette();
+    let text_color = match status {
+        button::Status::Hovered | button::Status::Pressed => p.danger.base.color,
+        _ => muted(p.background.base.text),
+    };
+    button::Style { text_color, ..button::Style::default() }
+}
+
 /// Field surface shared by dropdowns and text inputs: lighter than both page and cards.
 fn field(theme: &Theme, emphasized: bool) -> (Background, Border, Color) {
     let p = theme.extended_palette();

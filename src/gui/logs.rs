@@ -66,6 +66,9 @@ impl App {
 
     pub(super) fn view_logs(&self) -> Element<'_, Message> {
         let mut col = column![view_new_log_card()].spacing(16);
+        if self.logs().is_empty() {
+            col = col.push(text("This game has no log overlays yet.").color(MUTED_COLOR));
+        }
         for (i, o) in self.logs().iter().enumerate() {
             col = col.push(self.view_log_card(i, o));
         }
@@ -91,7 +94,7 @@ impl App {
         if let Some(problem) = problem {
             header = header.push(text(format!("⚠ {problem}")).size(12).color(ERROR_COLOR));
         }
-        header = header.push(button(text("Delete").size(13)).style(button::danger).on_press(Message::DeleteLog(i)));
+        header = header.push(button(text("✕").size(14)).style(style::quiet_danger).on_press(Message::DeleteLog(i)));
         let mut col = column![header].spacing(12);
         if open {
             col = col.push(self.view_log_editor(i, o));
