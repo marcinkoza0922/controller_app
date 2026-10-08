@@ -20,7 +20,7 @@ Triggers and stick directions can take actions too. See [Sticks and triggers](St
 Any action can be wrapped in one of two modifiers:
 
 - **Toggle**: press once to hold the action down, press again to release it. Use it for hold-to-crouch and similar games.
-- **Turbo**: repeats the action 2 to 30 times a second while held.
+- **Turbo**: repeats the action 2 to 30 times a second while held. A macro inside a turbo instead plays every set number of milliseconds, never faster than the macro takes to play.
 
 They combine. Toggle → Turbo is auto-fire you can switch on and off.
 

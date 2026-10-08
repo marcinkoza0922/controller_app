@@ -217,8 +217,14 @@ pub enum ButtonAction {
     Multi(Vec<ButtonAction>),
     /// First press holds the inner action down, the next press releases it.
     Toggle(Toggled),
-    /// While held, presses and releases the inner action `rate` times per second.
-    Turbo { action: Box<ButtonAction>, rate: f32 },
+    /// While held, presses and releases the inner action `rate` times per second. A macro
+    /// inside is played once every `every_ms` instead (see [`macro_turbo_ms`]).
+    Turbo {
+        action: Box<ButtonAction>,
+        rate: f32,
+        #[serde(default)]
+        every_ms: u64,
+    },
     /// Plays the macro named `name`: once per press, or looping while held if `repeat`.
     Macro { name: String, #[serde(default)] repeat: bool },
     /// Opens or closes the on-screen overlay (keyboard). While it is open the controller
@@ -680,6 +686,22 @@ pub struct Macro {
     pub steps: Vec<MacroStep>,
 }
 
+impl Macro {
+    /// How long one play of the macro takes, in milliseconds.
+    pub fn duration_ms(&self) -> u64 {
+        self.steps.iter().map(MacroStep::duration_ms).sum()
+    }
+}
+
+/// The shortest gap between a turbo's presses of a macro, in milliseconds (about 60 a second).
+pub const MIN_MACRO_TURBO_MS: u64 = 17;
+
+/// The gap a turbo of a macro really uses: what was asked for, but never less than the macro
+/// takes to play, so presses don't overlap.
+pub fn macro_turbo_ms(every_ms: u64, macro_ms: u64) -> u64 {
+    every_ms.max(macro_ms).max(MIN_MACRO_TURBO_MS)
+}
+
 /// An on-screen panel of text laid out in a grid, e.g. a game's button mappings. Cells may
 /// hold `{tokens}` for controller glyphs and live values (see `crate::info`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -944,9 +966,15 @@ pub enum StickAction {
         speed: f32,
         #[serde(flatten)]
         response: MouseResponse,
+        #[serde(default)]
+        invert_y: bool,
     },
     /// `speed` is wheel notches/second at full deflection.
-    Scroll { speed: f32 },
+    Scroll {
+        speed: f32,
+        #[serde(default)]
+        invert_y: bool,
+    },
     /// The stick's angle picks one of `sectors` equal slices, and that slice's action is held
     /// while the stick points into it.
     Ring {
@@ -989,13 +1017,6 @@ pub enum StickAction {
         /// Pixels/second at full deflection, when `vertical` is `look`.
         #[serde(default = "default_vertical_speed")]
         vertical_speed: f32,
-    },
-    /// Directional keys, e.g. WASD or arrows.
-    Keys {
-        up: String,
-        down: String,
-        left: String,
-        right: String,
     },
 }
 
@@ -1128,8 +1149,85 @@ impl StickAction {
 
     /// Mouse pointer at `speed` pixels/second, with the default response.
     pub fn mouse(speed: f32) -> Self {
-        StickAction::Mouse { speed, response: MouseResponse::default() }
+        StickAction::Mouse { speed, response: MouseResponse::default(), invert_y: false }
     }
+
+    /// A ring of eight directions that press keys: each sector is one direction, and the
+    /// diagonals press both of theirs (e.g. W and D).
+    pub fn directions(up: &str, down: &str, left: &str, right: &str) -> Self {
+        let key = |k: &str| ButtonAction::Keys(vec![k.to_string()]);
+        let both = |a: &str, b: &str| ButtonAction::Multi(vec![key(a), key(b)]);
+        let actions = vec![
+            key(up),
+            both(up, right),
+            key(right),
+            both(down, right),
+            key(down),
+            both(down, left),
+            key(left),
+            both(up, left),
+        ];
+        StickAction::Ring {
+            sectors: 8,
+            start_angle: 0.0,
+            inner_radius: default_ring_inner_radius(),
+            hysteresis: default_ring_hysteresis(),
+            actions,
+        }
+    }
+
+    /// A ring starting at `inner_radius` (deflection after the deadzone). Other actions are
+    /// unchanged.
+    pub fn starting_at(mut self, inner_radius: f32) -> Self {
+        if let StickAction::Ring { inner_radius: radius, .. } = &mut self {
+            *radius = inner_radius;
+        }
+        self
+    }
+
+    pub fn wasd() -> Self {
+        Self::directions("KEY_W", "KEY_S", "KEY_A", "KEY_D")
+    }
+
+    pub fn arrows() -> Self {
+        Self::directions("KEY_UP", "KEY_DOWN", "KEY_LEFT", "KEY_RIGHT")
+    }
+}
+
+/// Rewrites stick actions saved in the old direction-keys mode (`keys = { up, down, left,
+/// right }`) as the equivalent [`StickAction::directions`] ring, so older configs and packs
+/// keep working. Everything else is left alone.
+pub fn migrate_direction_keys(value: &mut toml::Value) {
+    match value {
+        toml::Value::Table(table) => {
+            // The threshold the keys pressed at was the stick's, next to its action.
+            let threshold = table.get("key_threshold").and_then(toml::Value::as_float).map_or(default_key_threshold(), |t| t as f32);
+            if let Some(ring) = table.get("action").and_then(|a| direction_keys_ring(a, threshold)) {
+                table.insert("action".into(), ring);
+            }
+            table.iter_mut().for_each(|(_, v)| migrate_direction_keys(v));
+        }
+        toml::Value::Array(items) => items.iter_mut().for_each(migrate_direction_keys),
+        _ => {}
+    }
+}
+
+/// The ring that replaces a `keys` table, if `action` is one.
+fn direction_keys_ring(action: &toml::Value, key_threshold: f32) -> Option<toml::Value> {
+    let keys = action.as_table()?.get("keys")?.as_table()?;
+    let key = |dir: &str| keys.get(dir)?.as_str().map(str::to_string);
+    let (up, down, left, right) = (key("up")?, key("down")?, key("left")?, key("right")?);
+    let ring = StickAction::directions(&up, &down, &left, &right).starting_at(key_threshold);
+    toml::Value::try_from(ring).ok()
+}
+
+/// `text` with [`migrate_direction_keys`] applied. Text that isn't TOML comes back as it was,
+/// for the parse to report.
+pub fn migrate_text(text: &str) -> String {
+    let Ok(table) = text.parse::<toml::Table>() else { return text.to_string() };
+    let mut value = toml::Value::Table(table);
+    migrate_direction_keys(&mut value);
+    toml::to_string(&value).unwrap_or_else(|_| text.to_string())
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1498,19 +1596,6 @@ pub enum Analog {
     Trigger(Trigger),
 }
 
-fn wasd() -> StickAction {
-    StickAction::Keys { up: "KEY_W".into(), down: "KEY_S".into(), left: "KEY_A".into(), right: "KEY_D".into() }
-}
-
-fn arrows() -> StickAction {
-    StickAction::Keys {
-        up: "KEY_UP".into(),
-        down: "KEY_DOWN".into(),
-        left: "KEY_LEFT".into(),
-        right: "KEY_RIGHT".into(),
-    }
-}
-
 impl StickConfig {
     pub fn new(action: StickAction, deadzone: f32, curve: f32) -> Self {
         StickConfig { action, deadzone, curve, key_threshold: default_key_threshold(), zones: Vec::new() }
@@ -1796,7 +1881,7 @@ impl Profile {
     pub fn pc_action(name: &str) -> Self {
         use ButtonAction::*;
         let key = |k: &str| Keys(vec![k.into()]);
-        let mut left_stick = StickConfig::new(wasd(), 0.12, 1.0);
+        let mut left_stick = StickConfig::new(StickAction::wasd().starting_at(0.25), 0.12, 1.0);
         left_stick.key_threshold = 0.25;
         left_stick.zones.push(Zone { min: 0.9, max: 1.0, action: key("KEY_LEFTSHIFT") });
         Profile {
@@ -1837,7 +1922,7 @@ impl Profile {
     pub fn strategy(name: &str) -> Self {
         use ButtonAction::*;
         let key = |k: &str| Keys(vec![k.into()]);
-        let mut right_stick = StickConfig::new(arrows(), 0.15, 1.0);
+        let mut right_stick = StickConfig::new(StickAction::arrows().starting_at(0.35), 0.15, 1.0);
         right_stick.key_threshold = 0.35;
         Profile {
             buttons: BTreeMap::from([
@@ -1871,7 +1956,7 @@ impl Profile {
     pub fn platformer(name: &str) -> Self {
         use ButtonAction::*;
         let key = |k: &str| Keys(vec![k.into()]);
-        let mut left_stick = StickConfig::new(arrows(), 0.15, 1.0);
+        let mut left_stick = StickConfig::new(StickAction::arrows().starting_at(0.4), 0.15, 1.0);
         left_stick.key_threshold = 0.4;
         Profile {
             buttons: BTreeMap::from([
@@ -1924,7 +2009,7 @@ impl Profile {
             name: name.into(),
             buttons,
             left_stick: StickConfig::new(StickAction::mouse(1200.0), 0.12, 2.0),
-            right_stick: StickConfig::new(StickAction::Scroll { speed: 15.0 }, 0.15, 2.0),
+            right_stick: StickConfig::new(StickAction::Scroll { speed: 15.0, invert_y: false }, 0.15, 2.0),
             left_trigger: TriggerAction::Button {
                 action: Keys(vec!["KEY_LEFTSHIFT".into()]),
                 threshold: 0.5,
@@ -2513,6 +2598,7 @@ impl Config {
         }
         let text = std::fs::read_to_string(&path)
             .with_context(|| format!("reading {}", path.display()))?;
+        let text = migrate_text(&text);
         match toml::from_str::<Config>(&text) {
             Ok(mut config) => {
                 if config.adopt_guide_layer() {
@@ -2983,6 +3069,20 @@ mod tests {
     }
 
     #[test]
+    fn old_direction_keys_stick_loads_as_a_ring_at_its_threshold() {
+        let old = r#"
+action = { keys = { up = "KEY_W", down = "KEY_S", left = "KEY_A", right = "KEY_D" } }
+deadzone = 0.1
+key_threshold = 0.2
+"#;
+        let cfg: StickConfig = toml::from_str(&migrate_text(old)).unwrap();
+        assert_eq!(cfg.action, StickAction::wasd().starting_at(0.2));
+        assert_eq!(cfg.key_threshold, 0.2);
+        // Text that isn't a config passes through for the parse to report.
+        assert_eq!(migrate_text("not = [toml"), "not = [toml");
+    }
+
+    #[test]
     fn templates_map_every_button_with_valid_keys() {
         use std::str::FromStr;
         for p in templates() {
@@ -2995,9 +3095,7 @@ mod tests {
             }
             for s in [Stick::Left, Stick::Right] {
                 let cfg = p.stick(s);
-                if let StickAction::Keys { up, down, left, right } = &cfg.action {
-                    keys.extend([up, down, left, right]);
-                }
+                keys.extend(cfg.action.ring_actions().iter().flat_map(|a| a.key_names()));
                 keys.extend(cfg.zones.iter().flat_map(|z| z.action.key_names()));
             }
             for k in keys {
@@ -3065,6 +3163,7 @@ mod tests {
         let auto_fire = ButtonAction::toggle(ButtonAction::Turbo {
             action: Box::new(ButtonAction::Mouse(MouseButton::Left)),
             rate: 12.0,
+            every_ms: 0,
         });
         config.general.profiles[0].set_button(Button::RightStick, crouch);
         config.general.profiles[0].set_button(Button::West, auto_fire);

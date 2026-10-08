@@ -1,7 +1,15 @@
 //! iced front-end. Talks to the daemon over IPC; falls back to editing the config file directly
 //! when the daemon is not running.
 
-use std::{borrow::Borrow, collections::HashSet, fmt, rc::Rc, str::FromStr, time::Duration};
+use std::{
+    borrow::Borrow,
+    collections::HashSet,
+    fmt,
+    mem::Discriminant,
+    rc::Rc,
+    str::FromStr,
+    time::{Duration, Instant},
+};
 
 use evdev::KeyCode;
 use iced::{
@@ -58,6 +66,7 @@ pub fn run() -> iced::Result {
     let app = iced::application(App::boot, App::update, App::view)
         .title("Padwight")
         .subscription(App::subscription)
+        .exit_on_close_request(false)
         .window(iced::window::Settings {
             size: iced::Size::new(1100.0, 900.0),
             icon: crate::icon::window(),
@@ -65,6 +74,11 @@ pub fn run() -> iced::Result {
         });
     crate::font::BUNDLED.iter().fold(app, |app, b| app.font(b.bytes)).run()
 }
+
+/// How many edits Ctrl+Z can take back.
+const UNDO_STEPS: usize = 100;
+/// Edits of the same kind this close together (a slider drag, typing) undo as one.
+const EDIT_RUN: Duration = Duration::from_secs(1);
 
 const LABEL_WIDTH: f32 = 170.0;
 const SIDEBAR_WIDTH: f32 = 210.0;
@@ -137,6 +151,14 @@ struct App {
     layer_view: Option<Profile>,
     /// The layer name label's Appearance section is open.
     indicator_appearance: bool,
+    /// The assignment the last failed save is about, to jump to.
+    problem_at: Option<checks::Place>,
+    /// Copies of `config` from before each edit, newest last, for Ctrl+Z.
+    undo: Vec<Config>,
+    /// The kind of the last edit recorded in `undo`, and when it was made.
+    last_edit: Option<(Discriminant<Message>, Instant)>,
+    /// Save & quit: close the window once the save goes through.
+    quit_after_save: bool,
 }
 
 /// What the sidebar shows on the right.
@@ -405,6 +427,15 @@ enum Message {
     Save,
     Saved(Result<(), String>),
     Revert,
+    Undo,
+    /// Jump to the assignment the failed save is about.
+    ShowProblem,
+    /// The window's close button was pressed.
+    CloseRequested,
+    /// Save first, then close (from the unsaved-changes prompt).
+    SaveAndQuit,
+    /// Close without saving (from the unsaved-changes prompt).
+    DiscardAndQuit,
 }
 
 async fn call(req: Request) -> Result<Response, String> {
@@ -457,6 +488,10 @@ impl App {
             compare: 0,
             layer_view: None,
             indicator_appearance: false,
+            problem_at: None,
+            undo: Vec::new(),
+            last_edit: None,
+            quit_after_save: false,
         };
         let load = Task::perform(
             async {
@@ -478,6 +513,8 @@ impl App {
         Subscription::batch([
             iced::time::every(Duration::from_secs(1)).map(|_| Message::Poll),
             Subscription::run(watch_input),
+            iced::event::listen_with(undo_shortcut),
+            iced::window::close_requests().map(|_| Message::CloseRequested),
         ])
     }
 
@@ -595,6 +632,10 @@ impl App {
         // Polling and live input don't change the config, and arrive many times a second.
         let edits = !matches!(message, Message::Poll | Message::LiveInput(_) | Message::StatusLoaded(_));
         let message = self.new_layer_for(message);
+        // Loading the config and undoing aren't edits to take back.
+        let undoable = edits && !matches!(message, Message::ConfigLoaded(..) | Message::Undo);
+        let kind = std::mem::discriminant(&message);
+        let snapshot = undoable.then(|| self.config.clone());
         // Edits in the layer editor change a working copy; they're kept as the layer's
         // overrides.
         let before = self.layer_view.clone().filter(|_| self.editing_layer());
@@ -604,11 +645,41 @@ impl App {
         {
             self.write_back(&before);
         }
+        if let Some(snapshot) = snapshot {
+            self.record_edit(kind, snapshot);
+        }
         if edits {
             self.refresh_layer_view();
             self.edited = if self.page == Page::Game(None) { Vec::new() } else { pack::edited_items(self.game()) };
         }
         task
+    }
+
+    /// Keeps `before` for Ctrl+Z if the config changed. A run of edits of one kind close
+    /// together is a single step.
+    fn record_edit(&mut self, kind: Discriminant<Message>, before: Config) {
+        if self.config == before {
+            return;
+        }
+        let now = Instant::now();
+        let continues = self.last_edit.is_some_and(|(k, at)| k == kind && now.duration_since(at) < EDIT_RUN);
+        if !continues {
+            self.undo.push(before);
+            if self.undo.len() > UNDO_STEPS {
+                self.undo.remove(0);
+            }
+        }
+        self.last_edit = Some((kind, now));
+    }
+
+    /// After the config was replaced wholesale: leaves a game that's gone, and keeps the
+    /// profile being edited in range.
+    fn settle_config(&mut self) {
+        let exists = self.game_key().is_none_or(|k| self.config.games.iter().any(|g| g.name == k));
+        if !exists {
+            self.show_game(None);
+        }
+        self.editing = self.editing.min(self.game().profiles.len().saturating_sub(1));
     }
 
     /// The app-wide messages: polling, status, saving. Each module handles its own and passes
@@ -666,28 +737,99 @@ impl App {
             Message::Save => {
                 if let Some(err) = self.validate() {
                     self.message = Some((err, true));
+                    self.problem_at = self.problem_place();
+                    self.quit_after_save = false;
                     return Task::none();
                 }
                 return self.push(self.config.clone());
             }
             Message::Saved(Ok(())) => {
                 self.saved = self.config.clone();
+                self.problem_at = None;
                 self.renames.clear();
                 self.message = Some(("Saved and applied.".into(), false));
+                if std::mem::take(&mut self.quit_after_save) {
+                    return iced::exit();
+                }
                 return Task::done(Message::Poll);
             }
-            Message::Saved(Err(e)) => self.message = Some((e, true)),
+            Message::Saved(Err(e)) => {
+                self.quit_after_save = false;
+                self.message = Some((e, true));
+            }
             Message::Revert => {
+                self.problem_at = None;
                 self.config = self.saved.clone();
                 self.renames.clear();
-                let exists = self.game_key().is_none_or(|k| self.config.games.iter().any(|g| g.name == k));
-                if !exists {
-                    self.show_game(None);
-                }
-                self.editing = self.editing.min(self.game().profiles.len().saturating_sub(1));
+                self.settle_config();
                 self.message = None;
             }
+            Message::Undo
+            | Message::ShowProblem
+            | Message::CloseRequested
+            | Message::SaveAndQuit
+            | Message::DiscardAndQuit => {
+                return self.update_session(&message);
+            }
             other => return self.update_games(other),
+        }
+        Task::none()
+    }
+
+    /// Shows the profile and assignment in `place`, open for editing.
+    fn go_to(&mut self, place: checks::Place) -> Task<Message> {
+        self.dialog = None;
+        self.picker = None;
+        self.show_game(place.game);
+        self.editing = place.profile;
+        self.game_tab = GameTab::Profiles;
+        self.expanded.insert(place.target);
+        match place.target {
+            Target::Button(b) | Target::Gesture(b, _) => self.jump_to(b),
+            Target::Combo(_) => {
+                self.profile_tab = ProfileTab::Combos;
+                Task::none()
+            }
+            Target::Trigger(_) | Target::Zone(..) | Target::RingSector(..) => {
+                self.profile_tab = ProfileTab::Sticks;
+                Task::none()
+            }
+            _ => Task::none(),
+        }
+    }
+
+    /// Undo and closing the window.
+    fn update_session(&mut self, message: &Message) -> Task<Message> {
+        match message {
+            Message::ShowProblem => {
+                if let Some(place) = self.problem_at.clone() {
+                    return self.go_to(place);
+                }
+            }
+            Message::Undo => {
+                if self.picker.is_none()
+                    && self.dialog.is_none()
+                    && let Some(previous) = self.undo.pop()
+                {
+                    self.config = previous;
+                    self.last_edit = None;
+                    self.settle_config();
+                }
+            }
+            Message::CloseRequested => {
+                if self.config == self.saved {
+                    return iced::exit();
+                }
+                if self.dialog.is_none() {
+                    self.dialog = Some(Dialog::ConfirmQuit);
+                }
+            }
+            Message::SaveAndQuit => {
+                self.quit_after_save = true;
+                return Task::done(Message::Save);
+            }
+            Message::DiscardAndQuit => return iced::exit(),
+            _ => {}
         }
         Task::none()
     }
@@ -785,22 +927,31 @@ impl App {
             None if dirty => text("Unsaved changes").color(MUTED_COLOR).into(),
             None => space().into(),
         };
+        let mut actions = row![msg, space::horizontal()].spacing(8).align_y(Alignment::Center);
+        if self.problem_at.is_some() {
+            actions = actions.push(button(text("Go to problem")).style(style::secondary).on_press(Message::ShowProblem));
+        }
+        actions = actions
+            .push(button(text("Revert")).style(style::secondary).on_press_maybe(dirty.then_some(Message::Revert)))
+            .push(button(text("Save & apply")).on_press_maybe(dirty.then_some(Message::Save)));
         // Only a rule on top: a box would add a second line beside the sidebar's divider.
         column![
             rule::horizontal(1),
-            container(
-                row![
-                    msg,
-                    space::horizontal(),
-                    button(text("Revert")).style(style::secondary).on_press_maybe(dirty.then_some(Message::Revert)),
-                    button(text("Save & apply")).on_press_maybe(dirty.then_some(Message::Save)),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            )
-            .padding(12),
+            container(actions).padding(12),
         ]
         .into()
+    }
+}
+
+/// Ctrl+Z, without Shift, undoes the last edit.
+fn undo_shortcut(event: iced::Event, _: iced::event::Status, _: iced::window::Id) -> Option<Message> {
+    match event {
+        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: iced::keyboard::Key::Character(c),
+            modifiers,
+            ..
+        }) if modifiers.command() && !modifiers.shift() && c.eq_ignore_ascii_case("z") => Some(Message::Undo),
+        _ => None,
     }
 }
 
@@ -921,4 +1072,57 @@ mod tests {
         let _ = app.view();
     }
 
+    #[test]
+    fn ctrl_z_takes_back_the_last_edit() {
+        let mut app = app();
+        let before = app.config.clone();
+        let _ = app.update(Message::SetAction(Target::Button(Button::South), ButtonAction::Keys(vec!["KEY_A".into()])));
+        assert_ne!(app.config, before);
+        let _ = app.update(Message::Undo);
+        assert_eq!(app.config, before);
+        // Nothing left to undo: a no-op.
+        let _ = app.update(Message::Undo);
+        assert_eq!(app.config, before);
+    }
+
+    #[test]
+    fn quick_edits_of_one_kind_undo_together() {
+        let mut app = app();
+        let before = app.config.clone();
+        let _ = app.update(Message::SetAction(Target::Button(Button::South), ButtonAction::Keys(vec!["KEY_A".into()])));
+        let _ = app.update(Message::SetAction(Target::Button(Button::East), ButtonAction::Keys(vec!["KEY_B".into()])));
+        let _ = app.update(Message::Undo);
+        assert_eq!(app.config, before);
+    }
+
+    #[test]
+    fn closing_with_unsaved_edits_asks_first() {
+        let mut app = app();
+        let _ = app.update(Message::CloseRequested);
+        assert!(app.dialog.is_none(), "nothing unsaved: closes without asking");
+        let _ = app.update(Message::SetAction(Target::Button(Button::South), ButtonAction::Keys(vec!["KEY_A".into()])));
+        let _ = app.update(Message::CloseRequested);
+        assert!(matches!(app.dialog, Some(Dialog::ConfirmQuit)));
+        let _ = app.update(Message::CloseDialog);
+        assert!(app.dialog.is_none());
+    }
+
+    #[test]
+    fn a_blocked_save_can_jump_to_the_turbo_at_fault() {
+        let mut app = app();
+        app.config.general.macros.push(Macro { name: "Long".into(), steps: vec![MacroStep::Wait(300)] });
+        let turbo = ButtonAction::Turbo { action: Box::new(ButtonAction::Macro { name: "Long".into(), repeat: false }), rate: 10.0, every_ms: 50 };
+        app.config.general.profiles[0].set_button(Button::West, turbo);
+        let _ = app.update(Message::Save);
+        assert!(app.message.as_ref().is_some_and(|(m, err)| *err && m.contains("raise the turbo's gap")));
+        assert_eq!(app.problem_at.as_ref().map(|p| (p.game.clone(), p.profile, p.target)), Some((None, 0, Target::Button(Button::West))));
+
+        // Somewhere else first, then the jump brings the turbo's row up for editing.
+        app.show_game(None);
+        app.editing = 0;
+        app.expanded.clear();
+        let _ = app.update(Message::ShowProblem);
+        assert!(app.expanded.contains(&Target::Button(Button::West)));
+        assert_eq!(app.profile_tab, ProfileTab::Buttons);
+    }
 }

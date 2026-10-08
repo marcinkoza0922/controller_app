@@ -12,8 +12,6 @@ pub(super) const NEW_LAYER: &str = "+ New layer";
 pub(super) enum KeyField {
     /// A `Keys` action at `target`, reached through these `Multi` list indices.
     Action { target: Target, path: Vec<usize> },
-    /// One direction (0 up, 1 down, 2 left, 3 right) of a stick in direction-keys mode.
-    StickDir { stick: Stick, dir: usize },
 }
 
 impl KeyField {
@@ -22,14 +20,10 @@ impl KeyField {
     }
 
     pub(super) fn child(&self, index: usize) -> Self {
-        match self {
-            KeyField::Action { target, path } => {
-                let mut path = path.clone();
-                path.push(index);
-                KeyField::Action { target: *target, path }
-            }
-            other => other.clone(),
-        }
+        let KeyField::Action { target, path } = self;
+        let mut path = path.clone();
+        path.push(index);
+        KeyField::Action { target: *target, path }
     }
 }
 
@@ -137,20 +131,20 @@ impl fmt::Display for ActionKind {
             ActionKind::Mouse => "Mouse button",
             ActionKind::Wheel => "Scroll wheel",
             ActionKind::NextProfile => "Next profile",
-            ActionKind::Overlay => "On-screen keyboard",
-            ActionKind::Numpad => "On-screen numpad",
+            ActionKind::Overlay => "Keyboard overlay",
+            ActionKind::Numpad => "Numpad overlay",
             ActionKind::Screenshot => "Take screenshot",
-            ActionKind::Recording => "Start / stop recording",
+            ActionKind::Recording => "Toggle recording",
             ActionKind::Media => "Media controls",
-            ActionKind::ForceQuit => "Force quit focused window (hold)",
-            ActionKind::Toggle => "Toggle (each press switches on / off)…",
+            ActionKind::ForceQuit => "Force quit (hold)",
+            ActionKind::Toggle => "Toggle on / off…",
             ActionKind::Macro => "Macro…",
             ActionKind::Menu => "Open menu…",
-            ActionKind::Info => "Show info overlay…",
-            ActionKind::Log => "Show log overlay…",
+            ActionKind::Info => "Info overlay…",
+            ActionKind::Log => "Log overlay…",
             ActionKind::Layer => "Layer…",
-            ActionKind::Turbo => "Turbo (repeat while held)…",
-            ActionKind::Multiple => "Multiple outputs…",
+            ActionKind::Turbo => "Turbo…",
+            ActionKind::Multiple => "Several outputs…",
         })
     }
 }
@@ -250,6 +244,8 @@ pub(super) const TURBO_INNER_KINDS: &[ActionKind] = &[
     ActionKind::Keys,
     ActionKind::Mouse,
     ActionKind::Wheel,
+    // Played once every so often, rather than looping.
+    ActionKind::Macro,
     ActionKind::Multiple,
 ];
 
@@ -278,7 +274,7 @@ pub(super) fn action_editor<'a>(
     let kind_picker = {
         let on_change = on_change.clone();
         let (current, names) = (action.clone(), names.clone());
-        dropdown(kinds, Some(kind), move |k| on_change(new_action(k, default_button, &current, &names))).width(170)
+        dropdown(kinds, Some(kind), move |k| on_change(new_action(k, default_button, &current, &names))).width(200)
     };
     let value = action_value(action, default_button, on_change, field, names);
     row![kind_picker, value].spacing(8).align_y(Alignment::Start).into()
@@ -337,6 +333,7 @@ pub(super) fn new_action(k: ActionKind, default_button: Button, current: &Button
         ActionKind::Turbo => ButtonAction::Turbo {
             action: Box::new(wrappable.unwrap_or(ButtonAction::Mouse(MouseButton::Left))),
             rate: DEFAULT_TURBO_RATE,
+            every_ms: 0,
         },
         ActionKind::Macro => ButtonAction::Macro { name: names.macros.first().cloned().unwrap_or_default(), repeat: false },
         ActionKind::Menu => ButtonAction::OpenMenu(names.menus.first().cloned().unwrap_or_default()),
@@ -345,6 +342,63 @@ pub(super) fn new_action(k: ActionKind, default_button: Button, current: &Button
         // With no layers yet, picking the kind makes one.
         ActionKind::Layer => ButtonAction::Layer(names.layers.first().cloned().unwrap_or_else(|| NEW_LAYER.into())),
     }
+}
+
+/// A Turbo's settings: a rate for keys, buttons and the like, or the gap between presses for a
+/// macro, and the action it repeats (`turbo` is that action, its rate and its gap).
+fn turbo_editor<'a>(
+    turbo: (&'a ButtonAction, f32, u64),
+    default_button: Button,
+    on_change: OnAction<'a>,
+    field: &KeyField,
+    names: &Names,
+) -> Element<'a, Message> {
+    let (inner, rate, every_ms) = turbo;
+    let parent = on_change.clone();
+    // A macro put inside starts out taking as long as it does.
+    let macro_ms_of = names.macro_ms.clone();
+    let wrap: OnAction<'a> = Rc::new(move |a: ButtonAction| {
+        let every = match &a {
+            ButtonAction::Macro { name, .. } if every_ms == 0 => macro_ms_of.get(name).copied().unwrap_or(0),
+            _ => every_ms,
+        };
+        parent(ButtonAction::Turbo { action: Box::new(a), rate, every_ms: every })
+    });
+    let pace: Element<'a, Message> = match inner {
+        ButtonAction::Macro { name, .. } => {
+            let macro_ms = names.macro_ms.get(name).copied().unwrap_or(0);
+            let shown = crate::config::macro_turbo_ms(every_ms, macro_ms);
+            let repeated = inner.clone();
+            let set_every = move |ms: u64| on_change(ButtonAction::Turbo { action: Box::new(repeated.clone()), rate, every_ms: ms });
+            let mut line = row![text("Press every").size(13), ms_field(every_ms, set_every)]
+                .spacing(8)
+                .align_y(Alignment::Center);
+            if shown != every_ms {
+                line = line
+                    .push(text(format!("(raised to {shown} ms: the macro takes that long)")).size(12).color(MUTED_COLOR));
+            }
+            line.into()
+        }
+        _ => {
+            let repeated = inner.clone();
+            let set_rate = move |r: f32| on_change(ButtonAction::Turbo { action: Box::new(repeated.clone()), rate: r, every_ms });
+            row![
+                slider(2.0..=30.0, rate, set_rate).step(1.0_f32).width(200),
+                text(format!("{rate:.0} presses/s")).size(13),
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center)
+            .into()
+        }
+    };
+    let inside = Names { in_turbo: true, ..names.clone() };
+    column![
+        text("Repeats while held:").size(12).color(MUTED_COLOR),
+        action_editor(inner, default_button, TURBO_INNER_KINDS, wrap, field.child(0), &inside),
+        pace,
+    ]
+    .spacing(4)
+    .into()
 }
 
 /// The settings to the right of an action's kind picker.
@@ -414,26 +468,8 @@ pub(super) fn action_value<'a>(
             .spacing(4)
             .into()
         }
-        ButtonAction::Turbo { action: inner, rate } => {
-            let rate = *rate;
-            let parent = on_change.clone();
-            let wrap: OnAction<'a> = Rc::new(move |a| parent(ButtonAction::Turbo { action: Box::new(a), rate }));
-            let set_rate = {
-                let inner = inner.clone();
-                move |r: f32| on_change(ButtonAction::Turbo { action: inner.clone(), rate: r })
-            };
-            column![
-                text("Repeats while held:").size(12).color(MUTED_COLOR),
-                action_editor(inner, default_button, TURBO_INNER_KINDS, wrap, field.child(0), names),
-                row![
-                    slider(2.0..=30.0, rate, set_rate).step(1.0_f32).width(200),
-                    text(format!("{rate:.0} presses/s")).size(13),
-                ]
-                .spacing(10)
-                .align_y(Alignment::Center),
-            ]
-            .spacing(4)
-            .into()
+        ButtonAction::Turbo { action: inner, rate, every_ms } => {
+            turbo_editor((inner, *rate, *every_ms), default_button, on_change, &field, names)
         }
         ButtonAction::Macro { .. } if names.macros.is_empty() => {
             text("No macros yet. Create one on the Macros tab.").size(12).color(MUTED_COLOR).into()
@@ -449,12 +485,17 @@ pub(super) fn action_value<'a>(
             let missing = !names.macros.contains(&name);
             let mut line = row![
                 pick,
-                checkbox(repeat)
-                    .label("Repeat while held")
-                    .on_toggle(move |r| on_change(ButtonAction::Macro { name: name.clone(), repeat: r })),
             ]
             .spacing(12)
             .align_y(Alignment::Center);
+            // A macro in a turbo plays once per press, so there's nothing to loop.
+            if !names.in_turbo {
+                line = line.push(
+                    checkbox(repeat)
+                        .label("Repeat while held")
+                        .on_toggle(move |r| on_change(ButtonAction::Macro { name: name.clone(), repeat: r })),
+                );
+            }
             if missing {
                 line = line.push(text("missing macro").size(12).color(ERROR_COLOR));
             }
@@ -607,10 +648,6 @@ pub(super) fn text_to_keys(s: &str) -> Vec<String> {
     s.split('+').map(|k| format!("KEY_{k}")).collect()
 }
 
-pub(super) fn single_key(s: &str) -> String {
-    text_to_keys(s).into_iter().next().unwrap_or_default()
-}
-
 impl App {
     pub(super) fn update_actions(&mut self, message: Message) -> Task<Message> {
         match message {
@@ -667,17 +704,6 @@ impl App {
         }
         let Some(p) = self.profile_mut() else { return };
         match field {
-            KeyField::StickDir { stick, dir } => {
-                if let StickAction::Keys { up, down, left, right } = &mut p.stick_mut(stick).action {
-                    let slot = match dir {
-                        0 => up,
-                        1 => down,
-                        2 => left,
-                        _ => right,
-                    };
-                    *slot = keys.into_iter().next().unwrap_or_default();
-                }
-            }
             KeyField::Action { target, path } => {
                 let root = match target {
                     Target::Button(b) => Some(p.buttons.entry(b).or_insert(ButtonAction::Disabled)),
@@ -725,18 +751,6 @@ mod tests {
     }
 
     #[test]
-    fn single_picker_sets_stick_direction() {
-        let mut app = app();
-        app.config.general.profiles[0].left_stick.action = wasd();
-        let _ = app.update(Message::OpenKeyPicker(KeyField::StickDir { stick: Stick::Left, dir: 2 }, vec![], true));
-        // Single mode closes itself by scheduling PickerClose; run it like the runtime would.
-        let _ = app.update(Message::PickerKey("KEY_LEFT"));
-        let _ = app.update(Message::PickerClose { apply: true });
-        let StickAction::Keys { left, up, .. } = &app.config.general.profiles[0].left_stick.action else { panic!() };
-        assert_eq!((left.as_str(), up.as_str()), ("KEY_LEFT", "KEY_W"));
-    }
-
-    #[test]
     fn wrapping_in_toggle_keeps_the_action_and_picker_writes_inside_it() {
         let mut app = app();
         app.config.general.profiles[0].set_button(Button::RightStick, ButtonAction::Keys(vec!["KEY_C".into()]));
@@ -760,7 +774,8 @@ mod tests {
         assert_eq!(
             summarize(&ButtonAction::toggle(ButtonAction::Turbo {
                 action: Box::new(ButtonAction::Mouse(MouseButton::Left)),
-                rate: 12.0
+                rate: 12.0,
+                every_ms: 0,
             })),
             "Toggle Turbo Left click (12/s)"
         );

@@ -139,8 +139,8 @@ The `action` table picks what the stick does:
 |---|---|---|
 | `disabled` | | Nothing. |
 | `gamepad` | `gamepad = { stick = "Left", invert_y = false }` | Feeds a virtual-pad stick. |
-| `mouse` | `mouse = { speed = 1600.0 }` | Pointer movement; `speed` is pixels per second at full push. Optional: `accel`, `accel_ramp_ms`, `y_scale`, `outer_boost`, `smoothing_ms`. |
-| `scroll` | `scroll = { speed = 4.0 }` | Wheel notches per second at full push. |
+| `mouse` | `mouse = { speed = 1600.0 }` | Pointer movement; `speed` is pixels per second at full push. Optional: `accel`, `accel_ramp_ms`, `y_scale`, `outer_boost`, `smoothing_ms`, `invert_y`. |
+| `scroll` | `scroll = { speed = 4.0, invert_y = false }` | Wheel notches per second at full push. `invert_y` flips the direction (stick up scrolls down). |
 | `keys` | the table above | Direction keys (WASD, arrows). |
 | `ring` | `ring = { sectors = 8, start_angle = 0.0, inner_radius = …, hysteresis = …, actions = [...] }` | The stick's angle picks one of `sectors` slices, and that slice's action is held. |
 | `flick` | `flick = { full_turn_px = 8000.0, flick_threshold = 0.9, flick_time_ms = 100, rotate_smoothing_ms = 0, forward_deadzone = 0.0, vertical = "off", vertical_speed = 1200.0 }` | Flick stick for turning the camera. `vertical = "look"` adds up and down. |

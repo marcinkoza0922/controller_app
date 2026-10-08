@@ -42,7 +42,7 @@ Everything the daemon knows about the desktop comes from focus trackers (see bel
 
 1. **Input.** `input.rs` reads each physical pad's evdev node and turns raw events into normalized buttons (following the Linux gamepad spec), sticks in −1..1, and triggers in 0..1. Touchpads have their own node (`input/touchpad.rs`) and reach the engine like buttons.
 2. **Daemon.** `daemon.rs` grabs the physical devices so nothing else sees them, keeps one `engine` state per controller, and decides who gets each event: an open menu (`menu.rs`), the on-screen keyboard or numpad (`overlay.rs`), a library-game offer (`offer.rs`), or the mapping engine.
-3. **Engine.** `engine.rs` turns normalized input into output for the active profile: buttons, gestures (double/triple tap, long press), combos, toggles, turbo, macros, layers, and zones. `engine/stick.rs` handles the sticks' continuous output (mouse, scroll, direction keys, rings), `engine/flick.rs` the flick stick, and `engine/touchpad.rs` the touchpad.
+3. **Engine.** `engine.rs` turns normalized input into output for the active profile: buttons, gestures (double/triple tap, long press), combos, toggles, turbo, macros, layers, and zones. `engine/stick.rs` handles the sticks' continuous output (mouse, scroll, rings), `engine/flick.rs` the flick stick, and `engine/touchpad.rs` the touchpad.
 4. **Output.** `output.rs` writes to virtual uinput devices: an Xbox 360-style pad, a keyboard and a mouse. `rumble.rs` mirrors force-feedback uploads from games back to the physical pad.
 5. **Focus.** `focus/` finds the focused window and its game, and the daemon picks the profile from the game's rules (see [Focus tracking](#focus-tracking)).
 
@@ -68,7 +68,7 @@ Line counts are approximate and change; `scripts/long-files.sh` lists the files 
 |---|---|
 | `input.rs`, `input/touchpad.rs` | evdev → normalized input. Handles xpad's swapped X/Y labels. |
 | `engine.rs` | Per-device mapping state for the active profile. One of the largest files; its tests are in the same file. |
-| `engine/stick.rs` | Sticks: gamepad feeds, direction keys, zones, mouse and scroll output, rings. |
+| `engine/stick.rs` | Sticks: gamepad feeds, zones, mouse and scroll output, rings. |
 | `engine/flick.rs` | Flick stick. |
 | `engine/touchpad.rs` | Touchpad click and finger-to-mouse movement. |
 | `menu.rs` | On-screen menus: all controller input while one is open. |
