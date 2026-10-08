@@ -20,6 +20,7 @@ use crate::{
 
 mod flick;
 pub(crate) mod stick;
+mod touchpad;
 
 /// A stick-direction button releases this far below its press threshold.
 const STICK_DIRECTION_HYSTERESIS: f32 = 0.05;
@@ -39,6 +40,8 @@ const TILT_SMOOTHING: f32 = 0.05;
 enum Source {
     Button(Button),
     Trigger(Trigger),
+    /// The touchpad's click.
+    Touchpad,
     /// An active combo, identified by its sorted member buttons.
     Combo(Vec<Button>),
     /// A held double/triple-tap or long-press action.
@@ -68,6 +71,7 @@ impl Source {
         use crate::inputlog::FiredFrom;
         Some(match self {
             Source::Button(b) | Source::Gesture(b) => FiredFrom::Button(*b),
+            Source::Touchpad => FiredFrom::Touchpad,
             Source::Combo(members) => FiredFrom::Combo(members.clone()),
             Source::Trigger(t) | Source::Zone(Analog::Trigger(t), _) => FiredFrom::Trigger(*t),
             Source::Zone(Analog::Stick(s), _) | Source::RingSector(s, _) => FiredFrom::Stick(*s),
@@ -137,6 +141,8 @@ pub struct Engine {
     layers_changed: bool,
     mouse_acc: (f32, f32),
     scroll_acc: (f32, f32),
+    /// Sub-pixel pointer movement from the touchpad, not yet sent.
+    touchpad_acc: (f32, f32),
     /// Smoothed position of each mouse stick whose response smooths it, until it settles at rest.
     stick_smooth: HashMap<Stick, (f32, f32)>,
     /// Seconds each mouse stick has been held at full deflection, for acceleration.
@@ -505,6 +511,7 @@ impl Engine {
                 }
             }
             InputEvent::Button(b, pressed) => self.solo(profile, b, pressed, now, out),
+            InputEvent::Touchpad(ev) => self.touchpad(profile, ev, out),
             InputEvent::Axis(axis, value) => {
                 self.axes.insert(axis, value);
                 match axis {
@@ -919,6 +926,7 @@ impl Engine {
                 inputs.push((Source::Trigger(t), action));
             }
         }
+        inputs.push((Source::Touchpad, &profile.touchpad.click));
         for a in [Analog::Stick(Stick::Left), Analog::Stick(Stick::Right), Analog::Trigger(Trigger::Left), Analog::Trigger(Trigger::Right)] {
             inputs.extend(profile.zones(a).iter().enumerate().map(|(i, z)| (Source::Zone(a, i), &z.action)));
         }

@@ -9,8 +9,10 @@ use serde::{Deserialize, Serialize};
 
 mod log;
 mod summary;
+mod touchpad;
 
 pub use log::*;
+pub use touchpad::*;
 
 /// Normalized gamepad button, following the Linux gamepad spec (Documentation/input/gamepad.rst).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -1625,6 +1627,9 @@ pub struct Profile {
     /// aiming to a scheme that works without it leaves this empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub requires: Vec<Feature>,
+    /// The touchpad's click and what finger movement does, for controllers that have one.
+    #[serde(default, skip_serializing_if = "TouchpadConfig::is_default")]
+    pub touchpad: TouchpadConfig,
 }
 
 impl Profile {
@@ -1655,6 +1660,7 @@ impl Profile {
             all.extend(t.zones.iter().map(|z| &z.action));
         }
         all.extend(self.left_stick.zones.iter().chain(&self.right_stick.zones).map(|z| &z.action));
+        all.push(&self.touchpad.click);
         all.extend(self.left_stick.action.ring_actions().iter().chain(self.right_stick.action.ring_actions()));
         all
     }
@@ -1675,6 +1681,7 @@ impl Profile {
             all.extend(stick.zones.iter_mut().map(|z| &mut z.action));
             all.extend(stick.action.ring_actions_mut());
         }
+        all.push(&mut self.touchpad.click);
         all
     }
 
@@ -1778,6 +1785,7 @@ impl Profile {
             long_press_ms: default_long_press_ms(),
             gyro: GyroConfig::default(),
             requires: Vec::new(),
+            touchpad: TouchpadConfig::default(),
         };
         p.take_guide();
         p
@@ -1937,6 +1945,7 @@ impl Profile {
             long_press_ms: default_long_press_ms(),
             gyro: GyroConfig::default(),
             requires: Vec::new(),
+            touchpad: TouchpadConfig::default(),
         };
         p.take_guide();
         p

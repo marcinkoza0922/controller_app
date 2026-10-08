@@ -180,7 +180,7 @@ impl OverlayController {
                 Vec::new()
             }
             InputEvent::Axis(Axis::LeftTrigger, v) if self.layout == Layout::Keyboard => self.left_trigger(v),
-            InputEvent::Axis(..) => Vec::new(),
+            InputEvent::Axis(..) | InputEvent::Touchpad(_) => Vec::new(),
         }
     }
 

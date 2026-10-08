@@ -307,6 +307,7 @@ impl MenuSession {
             InputEvent::Axis(axis, value) => {
                 self.axes.insert(axis, value);
             }
+            InputEvent::Touchpad(_) => {}
         }
 
         let down = self.opener_is_down();
@@ -325,6 +326,7 @@ impl MenuSession {
             }
             InputEvent::Button(..) => None,
             InputEvent::Axis(axis, value) => self.axis_moved(&menu, axis, value, now),
+            InputEvent::Touchpad(_) => None,
         }
     }
 

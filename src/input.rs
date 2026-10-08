@@ -6,6 +6,10 @@ use evdev::{AbsoluteAxisCode as Abs, Device, EventSummary, KeyCode, MiscCode, Pr
 
 use crate::config::Button;
 
+mod touchpad;
+
+pub use touchpad::{TouchNormalizer, TouchpadEvent, is_touchpad};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Axis {
     LeftX,
@@ -21,6 +25,7 @@ pub enum InputEvent {
     Button(Button, bool),
     /// Sticks are -1.0..1.0 (Y positive = down), triggers 0.0..1.0.
     Axis(Axis, f32),
+    Touchpad(TouchpadEvent),
 }
 
 #[derive(Clone, Copy)]

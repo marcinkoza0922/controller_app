@@ -117,6 +117,7 @@ impl InputView {
             InputEvent::Axis(a, v) => {
                 self.axes.insert(a, v);
             }
+            InputEvent::Touchpad(_) => {}
         }
     }
 
