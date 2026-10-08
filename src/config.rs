@@ -579,6 +579,11 @@ impl OverlayStyle {
         OverlayStyle { position: ScreenPosition::BottomCenter, ..OverlayStyle::default() }
     }
 
+    /// The media controls: top center, like the notices.
+    pub fn media() -> Self {
+        OverlayStyle { position: ScreenPosition::TopCenter, ..OverlayStyle::default() }
+    }
+
     /// A layer's name label: top center, small and see-through.
     pub fn indicator() -> Self {
         OverlayStyle {
@@ -621,6 +626,14 @@ fn default_keyboard_style() -> OverlayStyle {
 
 fn default_numpad_style() -> OverlayStyle {
     OverlayStyle::numpad()
+}
+
+fn default_media_style() -> OverlayStyle {
+    OverlayStyle::media()
+}
+
+fn default_menu_style() -> OverlayStyle {
+    OverlayStyle::default()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1953,6 +1966,33 @@ impl Profile {
         }
     }
 
+    /// PC action with gyro aiming: the gyro turns the view all the time, so it needs a gyro. LB
+    /// is a clutch: hold it to reposition the controller without turning.
+    pub fn gyro_aim(name: &str) -> Self {
+        let mut p = Profile::pc_action(name);
+        p.requires = vec![Feature::Gyro];
+        p.gyro = GyroConfig {
+            mode: GyroMode::Mouse { sensitivity: 15.0 },
+            activation: GyroActivation::UnlessHeld(GyroInput::Button(Button::LeftBumper)),
+            ..GyroConfig::default()
+        };
+        p
+    }
+
+    /// PC action with a flick stick: pushing the right stick turns the view to that direction,
+    /// and gyro aims up and down and fine-tunes, so it needs a gyro. LB is the same clutch.
+    pub fn flick_stick(name: &str) -> Self {
+        let mut p = Profile::pc_action(name);
+        p.requires = vec![Feature::Gyro];
+        p.right_stick = StickConfig::new(StickAction::flick(), 0.1, 2.0);
+        p.gyro = GyroConfig {
+            mode: GyroMode::Mouse { sensitivity: 22.0 },
+            activation: GyroActivation::UnlessHeld(GyroInput::Button(Button::LeftBumper)),
+            ..GyroConfig::default()
+        };
+        p
+    }
+
     /// Keyboard-only retro games, indie platformers and emulators: arrows plus Z/X/C/V.
     pub fn platformer(name: &str) -> Self {
         use ButtonAction::*;
@@ -2251,6 +2291,13 @@ pub struct Game {
     pub keyboard_style: Option<OverlayStyle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub numpad_style: Option<OverlayStyle>,
+    /// Looks of the media controls and the in-game menu (Guide + Start, Edit Controls included)
+    /// while this game is active; the global ones (`Config::media_style`, `Config::menu_style`)
+    /// apply when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_style: Option<OverlayStyle>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub menu_style: Option<OverlayStyle>,
     /// Font of every overlay, menu and keyboard while this game is active; `Config::overlay_font`
     /// applies when unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2274,6 +2321,8 @@ impl Game {
             layers: Vec::new(),
             keyboard_style: None,
             numpad_style: None,
+            media_style: None,
+            menu_style: None,
             overlay_font: None,
         };
         if game.profiles.iter().any(Profile::holds_guide_layer) {
@@ -2525,6 +2574,11 @@ pub struct Config {
     pub keyboard_style: OverlayStyle,
     #[serde(default = "default_numpad_style")]
     pub numpad_style: OverlayStyle,
+    #[serde(default = "default_media_style")]
+    pub media_style: OverlayStyle,
+    /// The in-game menu (Guide + Start), Edit Controls included.
+    #[serde(default = "default_menu_style")]
+    pub menu_style: OverlayStyle,
     /// Whose button glyphs info overlays use when the controller in use isn't recognized.
     #[serde(default)]
     pub info_glyphs: crate::info::PadFamily,
@@ -2562,6 +2616,8 @@ impl Default for Config {
             gyro_calibration: BTreeMap::new(),
             keyboard_style: OverlayStyle::keyboard(),
             numpad_style: OverlayStyle::numpad(),
+            media_style: OverlayStyle::media(),
+            menu_style: OverlayStyle::default(),
             info_glyphs: crate::info::PadFamily::default(),
             overlay_font: None,
             general: Game::new("General", vec![Profile::passthrough("Gamepad"), Profile::desktop("Desktop")]),
@@ -2699,6 +2755,8 @@ impl Config {
             gyro_calibration: old.gyro_calibration,
             keyboard_style: old.keyboard_style,
             numpad_style: old.numpad_style,
+            media_style: OverlayStyle::media(),
+            menu_style: OverlayStyle::default(),
             info_glyphs: old.info_glyphs,
             overlay_font: None,
             general: Game::new("General", Vec::new()),
@@ -2808,6 +2866,16 @@ impl Config {
     /// Like [`Config::active_keyboard_style`], for the numpad.
     pub fn active_numpad_style(&self) -> &OverlayStyle {
         self.active_game().numpad_style.as_ref().unwrap_or(&self.numpad_style)
+    }
+
+    /// Like [`Config::active_keyboard_style`], for the media controls.
+    pub fn active_media_style(&self) -> &OverlayStyle {
+        self.active_game().media_style.as_ref().unwrap_or(&self.media_style)
+    }
+
+    /// Like [`Config::active_keyboard_style`], for the in-game menu and Edit Controls.
+    pub fn active_menu_style(&self) -> &OverlayStyle {
+        self.active_game().menu_style.as_ref().unwrap_or(&self.menu_style)
     }
 
     /// The font overlays are drawn in now: the active game's own, else the global one.
@@ -3072,7 +3140,21 @@ mod tests {
             Profile::pc_action("c"),
             Profile::strategy("d"),
             Profile::platformer("e"),
+            Profile::gyro_aim("f"),
+            Profile::flick_stick("g"),
         ]
+    }
+
+    #[test]
+    fn gyro_templates_need_a_gyro() {
+        let aim = Profile::gyro_aim("f");
+        assert!(matches!(aim.gyro.mode, GyroMode::Mouse { .. }));
+        assert!(matches!(aim.gyro.activation, GyroActivation::UnlessHeld(_)));
+        assert!(!aim.usable_with(&[]) && aim.usable_with(&[Feature::Gyro]));
+        let flick = Profile::flick_stick("g");
+        assert!(matches!(flick.right_stick.action, StickAction::Flick { .. }));
+        assert!(!flick.usable_with(&[]) && flick.usable_with(&[Feature::Gyro]));
+        assert!(Profile::pc_action("c").usable_with(&[]), "PC action is playable without a gyro");
     }
 
     #[test]

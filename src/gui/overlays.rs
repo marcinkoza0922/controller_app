@@ -106,48 +106,92 @@ impl App {
         }
     }
 
-    /// The keyboard and numpad cards: each follows the Settings page until given its own look.
+    /// The keyboard, numpad, media controls and in-game menu cards: each follows the Settings
+    /// page until given its own look.
     pub(super) fn view_game_overlays(&self) -> Element<'_, Message> {
         let game = self.game();
+        let font = self.preview_font();
+        let look = self.menu_look();
         column![
             self.view_game_font(),
-            self.view_game_overlay(Layout::Keyboard, "On-screen keyboard", game.keyboard_style.as_ref(), &self.config.keyboard_style),
-            self.view_game_overlay(Layout::Numpad, "On-screen numpad", game.numpad_style.as_ref(), &self.config.numpad_style),
+            game_overlay_card(
+                "On-screen keyboard",
+                game.keyboard_style.as_ref(),
+                &self.config.keyboard_style,
+                |s| Message::SetGameOverlayStyle(Layout::Keyboard, s),
+                move |style| keyboard_preview(Layout::Keyboard, style, font),
+            ),
+            game_overlay_card(
+                "On-screen numpad",
+                game.numpad_style.as_ref(),
+                &self.config.numpad_style,
+                |s| Message::SetGameOverlayStyle(Layout::Numpad, s),
+                move |style| keyboard_preview(Layout::Numpad, style, font),
+            ),
+            game_overlay_card(
+                "Media controls",
+                game.media_style.as_ref(),
+                &self.config.media_style,
+                Message::SetGameMediaStyle,
+                move |style| preview(crate::overlay::draw::media_panel(&crate::media::MediaView::sample(preview_style(style)), font)),
+            ),
+            game_overlay_card(
+                "In-game menu",
+                game.menu_style.as_ref(),
+                &self.config.menu_style,
+                Message::SetGameMenuStyle,
+                move |style| {
+                    let sample = crate::system_menu::main_page(preview_style(style), 0);
+                    preview(crate::overlay::draw::menu_panel(&sample, font, look))
+                },
+            ),
         ]
         .spacing(16)
         .into()
     }
+}
 
-    fn view_game_overlay<'a>(
-        &self,
-        layout: Layout,
-        title: &'a str,
-        own: Option<&'a OverlayStyle>,
-        global: &'a OverlayStyle,
-    ) -> Element<'a, Message> {
-        let toggle = checkbox(own.is_some())
-            .label("Use its own appearance in this game")
-            .on_toggle(move |on| Message::SetGameOverlayStyle(layout, on.then(|| global.clone())));
-        let mut rows: Vec<Element<'a, Message>> = vec![toggle.into()];
-        if let Some(style) = own {
-            rows.push(style_editor(style, Rc::new(move |s| Message::SetGameOverlayStyle(layout, Some(s)))));
-            let sample = KeyboardView {
-                layout,
-                style: preview_style(style),
-                cursor: match layout {
-                    Layout::Keyboard => crate::keyboard::find(layout, "KEY_H").unwrap_or_default(),
-                    Layout::Numpad => layout.home(),
-                },
-                latched: Vec::new(),
-                pressed: None,
-                closing: 0.0,
-            };
-            rows.push(preview(crate::overlay::draw::keyboard_panel(&sample, self.preview_font())));
-        } else {
-            rows.push(text("Following the appearance set on the Settings page.").size(13).color(MUTED_COLOR).into());
-        }
-        section(title, None, rows)
+/// One overlay's card: whether the game has its own look (`own`), that look's editor and a
+/// preview, or a note that it follows `global`. `set` makes the message for a new look.
+fn game_overlay_card<'a>(
+    title: &'a str,
+    own: Option<&'a OverlayStyle>,
+    global: &'a OverlayStyle,
+    set: impl Fn(Option<OverlayStyle>) -> Message + 'a,
+    sample: impl Fn(&OverlayStyle) -> Element<'static, Message>,
+) -> Element<'a, Message> {
+    let set = Rc::new(set);
+    let on_style = {
+        let set = set.clone();
+        Rc::new(move |s| set(Some(s))) as OnStyle<'a>
+    };
+    let toggle = checkbox(own.is_some())
+        .label("Use its own appearance in this game")
+        .on_toggle(move |on| set(on.then(|| global.clone())));
+    let mut rows: Vec<Element<'a, Message>> = vec![toggle.into()];
+    if let Some(style) = own {
+        rows.push(style_editor(style, on_style));
+        rows.push(sample(style));
+    } else {
+        rows.push(text("Following the appearance set on the Settings page.").size(13).color(MUTED_COLOR).into());
     }
+    section(title, None, rows)
+}
+
+/// A keyboard or numpad drawn with `style`, with the cursor on a key, for the card's preview.
+fn keyboard_preview(layout: Layout, style: &OverlayStyle, font: iced::Font) -> Element<'static, Message> {
+    let sample = KeyboardView {
+        layout,
+        style: preview_style(style),
+        cursor: match layout {
+            Layout::Keyboard => crate::keyboard::find(layout, "KEY_H").unwrap_or_default(),
+            Layout::Numpad => layout.home(),
+        },
+        latched: Vec::new(),
+        pressed: None,
+        closing: 0.0,
+    };
+    preview(crate::overlay::draw::keyboard_panel(&sample, font))
 }
 
 #[cfg(test)]
@@ -165,6 +209,19 @@ mod tests {
         assert_eq!(doom.numpad_style, None);
         let _ = app.update(Message::SetGameOverlayStyle(Layout::Keyboard, None));
         assert!(app.config.games.iter().find(|g| g.name == "Doom").unwrap().keyboard_style.is_none());
+    }
+
+    #[test]
+    fn a_game_can_override_the_media_and_in_game_menu_looks() {
+        let mut app = with_game();
+        let style = OverlayStyle { position: ScreenPosition::BottomLeft, ..OverlayStyle::default() };
+        let _ = app.update(Message::SetGameMediaStyle(Some(style.clone())));
+        let _ = app.update(Message::SetGameMenuStyle(Some(style.clone())));
+        let doom = app.config.games.iter().find(|g| g.name == "Doom").unwrap();
+        assert_eq!((doom.media_style.clone(), doom.menu_style.clone()), (Some(style.clone()), Some(style.clone())));
+        assert_eq!(doom.keyboard_style, None);
+        let _ = app.update(Message::SetGameMediaStyle(None));
+        assert!(app.config.games.iter().find(|g| g.name == "Doom").unwrap().media_style.is_none());
     }
 
     #[test]

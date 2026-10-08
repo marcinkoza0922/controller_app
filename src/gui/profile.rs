@@ -145,6 +145,8 @@ pub(super) enum Template {
     Gamepad,
     Desktop,
     Action,
+    GyroAim,
+    FlickStick,
     Strategy,
     Platformer,
     Duplicate,
@@ -157,15 +159,19 @@ impl Template {
             Template::Gamepad | Template::Duplicate => Profile::passthrough(name),
             Template::Desktop => Profile::desktop(name),
             Template::Action => Profile::pc_action(name),
+            Template::GyroAim => Profile::gyro_aim(name),
+            Template::FlickStick => Profile::flick_stick(name),
             Template::Strategy => Profile::strategy(name),
             Template::Platformer => Profile::platformer(name),
         }
     }
 
     /// Offered in the "New from template" list (Duplicate has its own button).
-    pub(super) const NEW: [Template; 5] = [
+    pub(super) const NEW: [Template; 7] = [
         Template::Gamepad,
         Template::Action,
+        Template::GyroAim,
+        Template::FlickStick,
         Template::Strategy,
         Template::Platformer,
         Template::Desktop,
@@ -176,6 +182,8 @@ impl Template {
             Template::Gamepad => "Gamepad",
             Template::Desktop => "Desktop",
             Template::Action => "PC Action",
+            Template::GyroAim => "Gyro Aim",
+            Template::FlickStick => "Flick Stick",
             Template::Strategy => "Strategy",
             Template::Platformer => "Platformer",
             Template::Duplicate => "Copy",
@@ -189,6 +197,8 @@ impl fmt::Display for Template {
             Template::Gamepad => "Gamepad passthrough",
             Template::Desktop => "Desktop navigation",
             Template::Action => "PC action (WASD + mouse look)",
+            Template::GyroAim => "PC action with gyro aiming (needs a gyro)",
+            Template::FlickStick => "PC action with a flick stick (needs a gyro)",
             Template::Strategy => "Strategy (mouse pointer + hotkeys)",
             Template::Platformer => "Retro / platformer (arrows + Z/X/C)",
             Template::Duplicate => "Copy of this profile",

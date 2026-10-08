@@ -10,7 +10,7 @@ mod views;
 mod zones;
 
 use crate::{
-    config::{Button, ButtonAction, Combo, Config, Game, GestureKind, MenuKind, OverlayStyle, ScreenPosition, Stick, Trigger},
+    config::{Button, ButtonAction, Combo, Config, Game, GestureKind, MenuKind, Stick, Trigger},
     menu::{ItemView, MenuView},
     system_menu::active_profile_mut,
 };
@@ -442,7 +442,7 @@ impl LayoutEditor {
     /// The page as the overlay draws it. `parents` are the menus the editor was opened from,
     /// outermost first; the editor's own pages before this one follow them as breadcrumbs.
     pub fn view(&self, config: &Config, parents: &[String]) -> MenuView {
-        let style = OverlayStyle { position: ScreenPosition::Center, ..OverlayStyle::default() };
+        let style = config.active_menu_style().clone();
         let profile = config.active();
         let (items, hint) = match self.page {
             Page::Top => (top_rows().into_iter().map(|row| top_item(row, config)).collect(), "A change · B back"),

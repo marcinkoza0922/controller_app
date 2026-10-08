@@ -124,6 +124,9 @@ struct App {
     open_appearance: HashSet<Option<usize>>,
     /// The numpad card's Appearance section is open.
     numpad_appearance: bool,
+    /// The media controls' and the in-game menu's Appearance sections are open.
+    media_appearance: bool,
+    menu_appearance: bool,
     /// Info overlays (by index) whose card, or Appearance section, is open.
     open_infos: HashSet<usize>,
     open_info_appearance: HashSet<usize>,
@@ -287,6 +290,10 @@ enum Message {
     ToggleNumpad,
     ToggleNumpadAppearance,
     SetNumpadStyle(OverlayStyle),
+    ToggleMediaAppearance,
+    SetMediaStyle(OverlayStyle),
+    ToggleInGameMenuAppearance,
+    SetInGameMenuStyle(OverlayStyle),
     CalibrateGyro(String),
     CopyMotionRuleCommand,
     SetGyro(GyroConfig),
@@ -368,6 +375,9 @@ enum Message {
     SetGameOverlayFont(Option<String>),
     /// A game's own style for the keyboard or numpad, or back to the global one.
     SetGameOverlayStyle(crate::keyboard::Layout, Option<OverlayStyle>),
+    /// A game's own look for the media controls or the in-game menu, or back to the global one.
+    SetGameMediaStyle(Option<OverlayStyle>),
+    SetGameMenuStyle(Option<OverlayStyle>),
     AddMenuItem(usize),
     RemoveMenuItem(usize, usize),
     MoveMenuItem(usize, usize, bool),
@@ -476,6 +486,8 @@ impl App {
             open_menus: HashSet::new(),
             open_appearance: HashSet::new(),
             numpad_appearance: false,
+            media_appearance: false,
+            menu_appearance: false,
             open_infos: HashSet::new(),
             open_info_appearance: HashSet::new(),
             open_logs: HashSet::new(),
@@ -713,7 +725,13 @@ impl App {
                 self.config.active = follow_renames(&self.renames, active);
                 self.status = Some(status);
             }
-            Message::StatusLoaded(Err(_)) => self.status = None,
+            Message::StatusLoaded(Err(_)) => {
+                // The daemon has quit (from its tray, say), so close like the window's close button:
+                // unsaved edits get asked about first.
+                if self.status.take().is_some() {
+                    return Task::done(Message::CloseRequested);
+                }
+            }
             Message::ConfigLoaded(config, err) => {
                 let config = *config;
                 self.saved = config.clone();

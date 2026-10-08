@@ -906,7 +906,7 @@ mod tests {
         assert!(!imported.rules[0].enabled && app.config.games[0].rules[0].enabled, "kept mine");
         assert_eq!(app.validate(), None);
 
-        let _ = app.update(Message::PackFileRead(Some(Ok("format = 9".into()))));
+        let _ = app.update(Message::PackFileRead(Some(Ok(format!("format = {}", pack::FORMAT + 1)))));
         assert!(app.message.as_ref().is_some_and(|(m, err)| *err && m.contains("newer version")));
     }
 

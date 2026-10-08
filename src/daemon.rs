@@ -800,17 +800,10 @@ impl Daemon {
         {
             return;
         }
-        let mut command = std::process::Command::new(std::env::current_exe().unwrap_or_default());
-        // SAFETY: only calls `prctl`, which is async-signal-safe. The window closes when the
-        // daemon exits, however it exits. The parent thread is the one running the daemon loop,
-        // so it lives as long as the daemon does.
-        unsafe {
-            command.pre_exec(|| {
-                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
-                Ok(())
-            });
-        }
-        match command.spawn() {
+        // Not tied to the daemon's life: a signal would skip the window's unsaved-changes check.
+        // The window notices the daemon has gone and closes itself the same way, however it was
+        // opened.
+        match std::process::Command::new(std::env::current_exe().unwrap_or_default()).spawn() {
             Ok(child) => self.settings_process = Some(child),
             Err(e) => log!("cannot open the settings window: {e}"),
         }
@@ -938,7 +931,11 @@ impl Daemon {
                 Some(OverlayView::Keyboard(view))
             }
             Some(Active::Menu { session, .. }) => session.view(&self.scope.menus).map(OverlayView::Menu),
-            Some(Active::Media(m)) => Some(OverlayView::Media(m.view())),
+            Some(Active::Media(m)) => {
+                let mut view = m.view();
+                view.style = self.config.active_media_style().clone();
+                Some(OverlayView::Media(view))
+            }
             Some(Active::Offer(o)) => Some(OverlayView::Offer(o.view())),
             Some(Active::Settings(m)) => Some(OverlayView::Menu(m.view(&self.config))),
             None => None,

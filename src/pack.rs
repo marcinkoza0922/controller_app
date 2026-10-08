@@ -15,8 +15,9 @@ use crate::config::{
 /// that start on; 4, the keyboard and numpad styles; 5, the overlay font; 6, grid menus; 7,
 /// the Guide shift, screenshot, recording and force-quit actions and layer indicators
 /// with generated bindings, extra info overlays and a delay; 8, profiles stating what
-/// controller features they need (replacing the pack-wide list).
-pub const FORMAT: u32 = 8;
+/// controller features they need (replacing the pack-wide list); 9, the media controls and
+/// in-game menu looks.
+pub const FORMAT: u32 = 9;
 pub const EXTENSION: &str = "padpack";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -42,6 +43,11 @@ pub struct Pack {
     pub keyboard_style: Option<OverlayStyle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub numpad_style: Option<OverlayStyle>,
+    /// The look of the media controls and the in-game menu, if the author set those.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_style: Option<OverlayStyle>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub menu_style: Option<OverlayStyle>,
     /// The font of this game's overlays, menus and keyboards, if the author set one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub overlay_font: Option<String>,
@@ -112,6 +118,8 @@ impl Pack {
             layers: self.layers.clone(),
             keyboard_style: self.keyboard_style.clone(),
             numpad_style: self.numpad_style.clone(),
+            media_style: self.media_style.clone(),
+            menu_style: self.menu_style.clone(),
             overlay_font: self.overlay_font.clone(),
         }
     }
@@ -382,6 +390,8 @@ pub fn export(game: &Game, shared: &Shared, info: &PackInfo) -> Export {
         layers: pack_game.layers,
         keyboard_style: pack_game.keyboard_style,
         numpad_style: pack_game.numpad_style,
+        media_style: pack_game.media_style,
+        menu_style: pack_game.menu_style,
         overlay_font: pack_game.overlay_font,
     };
     Export { pack, pulled_in, dangling: dangling.into_iter().collect(), features }
@@ -643,6 +653,8 @@ pub fn apply(config: &mut Config, plan: &Plan, choices: &Choices) -> String {
             let old = &config.games[i];
             game.keyboard_style = game.keyboard_style.or_else(|| old.keyboard_style.clone());
             game.numpad_style = game.numpad_style.or_else(|| old.numpad_style.clone());
+            game.media_style = game.media_style.or_else(|| old.media_style.clone());
+            game.menu_style = game.menu_style.or_else(|| old.menu_style.clone());
             game.overlay_font = game.overlay_font.or_else(|| old.overlay_font.clone());
             config.games[i] = game;
         }
@@ -897,6 +909,19 @@ mod tests {
         let updated = config.games.iter().find(|g| g.name == "Mine").unwrap();
         assert_eq!(updated.numpad_style, mine.numpad_style);
         assert_eq!(updated.keyboard_style.as_ref().unwrap().scale, 1.5);
+    }
+
+    #[test]
+    fn media_and_menu_styles_travel_in_packs() {
+        let mut config = setup();
+        let style = OverlayStyle { scale: 1.2, ..OverlayStyle::media() };
+        config.games[0].media_style = Some(style.clone());
+        config.games[0].menu_style = Some(OverlayStyle::default());
+        let out = export(&config.games[0], &config.shared, &draft(&config.games[0], false));
+        let pack = parse(&out.pack.to_toml().unwrap()).unwrap();
+        assert_eq!(pack.to_game().media_style, Some(style));
+        assert_eq!(pack.to_game().menu_style, Some(OverlayStyle::default()));
+        assert_eq!(pack.to_game().keyboard_style, None);
     }
 
     #[test]

@@ -31,7 +31,7 @@ Click **+ Add game**. You can:
 - start from an **empty game** from a template, or
 - **import a file** (a `.padpack`). See [Packs and the library](Packs-and-the-Library).
 
-Templates include **PC action**, **Strategy** and **Retro / platformer**. Each one is a complete starting point for its kind of game.
+Templates include **PC action**, **PC action with gyro aiming**, **PC action with a flick stick**, **Strategy** and **Retro / platformer**. The two gyro ones need a controller with a gyro. Each one is a complete starting point for its kind of game.
 
 ![The Add a game picker, with the library's built-in games and the template dropdown](https://raw.githubusercontent.com/marcinkoza0922/padwight/main/docs/images/add-game.png)
 

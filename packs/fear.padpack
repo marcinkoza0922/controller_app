@@ -1,4 +1,4 @@
-format = 8
+format = 9
 macros = []
 overlay_font = "Rajdhani"
 
@@ -98,11 +98,12 @@ right = "KEY_D"
 
 [profiles.right_stick]
 deadzone = 0.1
-curve = 2.0
+curve = 1.8
 key_threshold = 0.5
 
 [profiles.right_stick.action.mouse]
 speed = 1100.0
+accel = 0.2
 
 [profiles.left_trigger.action.button]
 threshold = 0.4
@@ -205,11 +206,12 @@ right = "KEY_D"
 
 [profiles.right_stick]
 deadzone = 0.1
-curve = 2.0
+curve = 1.8
 key_threshold = 0.5
 
 [profiles.right_stick.action.mouse]
 speed = 1100.0
+accel = 0.2
 
 [profiles.left_trigger.action.button]
 threshold = 0.4
@@ -418,15 +420,15 @@ position = "center"
 scale = 1.0
 
 [menus.style.background]
-color = "#16181c"
+color = "#111a14"
 opacity = 0.92
 
 [menus.style.items]
-color = "#30343c"
+color = "#25332a"
 opacity = 0.95
 
 [menus.style.selected]
-color = "#b02f2f"
+color = "#7d9a72"
 opacity = 1.0
 
 [[info_overlays]]
@@ -495,15 +497,15 @@ position = "center"
 scale = 0.9
 
 [info_overlays.style.background]
-color = "#16181c"
+color = "#111a14"
 opacity = 0.88
 
 [info_overlays.style.items]
-color = "#30343c"
+color = "#25332a"
 opacity = 0.95
 
 [info_overlays.style.selected]
-color = "#b02f2f"
+color = "#7d9a72"
 opacity = 1.0
 
 [[layers]]
@@ -518,15 +520,15 @@ position = "bottom_left"
 scale = 0.8
 
 [layers.indicator_style.background]
-color = "#16181c"
+color = "#111a14"
 opacity = 0.85
 
 [layers.indicator_style.items]
-color = "#30343c"
+color = "#25332a"
 opacity = 0.95
 
 [layers.indicator_style.selected]
-color = "#2f5db0"
+color = "#7d9a72"
 opacity = 1.0
 
 [layers.buttons]
@@ -565,3 +567,67 @@ threshold = 0.3
 
 [layers.right_trigger.action.button.action]
 mouse = "Left"
+
+[keyboard_style]
+position = "bottom_center"
+scale = 1.0
+
+[keyboard_style.background]
+color = "#111a14"
+opacity = 0.94
+
+[keyboard_style.items]
+color = "#25332a"
+opacity = 0.95
+
+[keyboard_style.selected]
+color = "#7d9a72"
+opacity = 1.0
+
+[numpad_style]
+position = "bottom_center"
+scale = 1.0
+
+[numpad_style.background]
+color = "#111a14"
+opacity = 0.94
+
+[numpad_style.items]
+color = "#25332a"
+opacity = 0.95
+
+[numpad_style.selected]
+color = "#7d9a72"
+opacity = 1.0
+
+[media_style]
+position = "top_center"
+scale = 1.0
+
+[media_style.background]
+color = "#111a14"
+opacity = 0.94
+
+[media_style.items]
+color = "#25332a"
+opacity = 0.95
+
+[media_style.selected]
+color = "#7d9a72"
+opacity = 1.0
+
+[menu_style]
+position = "center"
+scale = 1.0
+
+[menu_style.background]
+color = "#111a14"
+opacity = 0.94
+
+[menu_style.items]
+color = "#25332a"
+opacity = 0.95
+
+[menu_style.selected]
+color = "#7d9a72"
+opacity = 1.0
