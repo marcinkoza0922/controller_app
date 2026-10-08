@@ -157,6 +157,21 @@ pub fn game_launch_in(config: &Config, processes: &[WindowInfo]) -> Option<(Stri
 }
 
 /// Whether a rule matches any of these windows or processes.
+/// Rule for a window using its most specific identifier: Steam App ID, then a Windows `.exe`
+/// name, then the window class, then the native executable name.
+pub fn rule_for_window(w: &WindowInfo, profile: String) -> Rule {
+    let (kind, value) = if let Some(id) = &w.steam_app_id {
+        (RuleKind::SteamAppId, id.clone())
+    } else if w.exe.to_ascii_lowercase().ends_with(".exe") {
+        (RuleKind::Executable, w.exe.clone())
+    } else if !w.class.is_empty() {
+        (RuleKind::WindowClass, w.class.clone())
+    } else {
+        (RuleKind::Executable, w.exe.clone())
+    };
+    Rule::new(kind, value, profile)
+}
+
 pub fn rule_matches_any(rule: &Rule, seen: &[WindowInfo]) -> bool {
     seen.iter().any(|w| rule_matches(rule.kind, &rule.value, w))
 }

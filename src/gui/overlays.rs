@@ -71,6 +71,21 @@ impl App {
         )
     }
 
+    /// How menu previews are drawn: the colour-blind setting, and the controller the info
+    /// glyphs are drawn for when none is detected.
+    pub(super) fn menu_look(&self) -> crate::overlay::draw::MenuLook {
+        crate::overlay::draw::MenuLook { colourblind: self.config.colourblind_tones, family: self.config.info_glyphs }
+    }
+
+    /// The Settings page's colour card: the tints of added and removed rows.
+    pub(super) fn view_colour_card(&self) -> Element<'_, Message> {
+        section(
+            "Menu colours",
+            Some("Rows that add to a list are tinted, and rows that remove from one are tinted red. Colour-blind mode uses blue and orange instead, and puts a + or − in front of each row.".into()),
+            vec![iced::widget::toggler(self.config.colourblind_tones).label("Colour-blind mode").on_toggle(Message::SetColourblindTones).into()],
+        )
+    }
+
     fn view_game_font(&self) -> Element<'_, Message> {
         section(
             "Overlay font",

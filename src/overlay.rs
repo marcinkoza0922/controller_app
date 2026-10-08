@@ -64,6 +64,12 @@ pub struct OverlayFrame {
     /// The font everything here is drawn in; the system's when unset.
     #[serde(default)]
     pub font: Option<String>,
+    /// Whether menu rows are tinted in colours colour-blind people can tell apart.
+    #[serde(default)]
+    pub colourblind: bool,
+    /// The controller in use, whose button glyphs menus draw as the info overlays do.
+    #[serde(default)]
+    pub family: crate::info::PadFamily,
 }
 
 impl OverlayFrame {
@@ -502,7 +508,10 @@ mod ui {
         }
         match &state.frame.active {
             Some(OverlayView::Keyboard(k)) => layers.push(draw::place(draw::keyboard_panel(k, font), &k.style)),
-            Some(OverlayView::Menu(m)) => layers.push(draw::place(draw::menu_panel(m, font), &m.style)),
+            Some(OverlayView::Menu(m)) => {
+                let look = draw::MenuLook { colourblind: state.frame.colourblind, family: state.frame.family };
+                layers.push(draw::place(draw::menu_panel(m, font, look), &m.style));
+            }
             Some(OverlayView::Media(m)) => layers.push(draw::place(draw::media_panel(m, font), &m.style)),
             Some(OverlayView::Offer(o)) => layers.push(draw::place(draw::offer_panel(o, font), &o.style)),
             None => {}
@@ -543,9 +552,21 @@ pub mod draw {
     const EDGE_MARGIN: f32 = 40.0;
 
     /// Resolved colors and font for one overlay.
+    /// What a menu is drawn with besides its own style: the controller in use (for its button
+    /// glyphs) and the colour-blind tints.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct MenuLook {
+        pub colourblind: bool,
+        pub family: crate::info::PadFamily,
+    }
+
     #[derive(Clone, Copy)]
     pub struct Colors {
         font: Font,
+        /// The controller in use, for button glyphs.
+        family: crate::info::PadFamily,
+        /// Tints for added and removed rows in colours colour-blind people can tell apart.
+        colourblind: bool,
         background: Color,
         background_text: Color,
         muted: Color,
@@ -572,6 +593,8 @@ pub mod draw {
             let f = |c: Color| Color { a: c.a * opacity.clamp(0.0, 1.0), ..c };
             Colors {
                 font: self.font,
+                family: self.family,
+                colourblind: self.colourblind,
                 background: f(self.background),
                 background_text: f(self.background_text),
                 muted: f(self.muted),
@@ -590,6 +613,8 @@ pub mod draw {
         let background_text = text_on(background);
         Colors {
             font,
+            family: crate::info::PadFamily::default(),
+            colourblind: false,
             background,
             background_text,
             muted: Color { a: 0.75, ..background_text },
@@ -622,6 +647,22 @@ pub mod draw {
             shadow: Shadow { color: Color { a: 0.35 * c.background.a, ..Color::BLACK }, offset: Vector::new(0.0, 6.0), blur_radius: 18.0 },
             ..container::Style::default()
         }
+    }
+
+    /// The colours of a row of this kind: adding rows are tinted green and removing ones red, so
+    /// they stand out from the items they act on.
+    fn toned(c: Colors, tone: crate::menu::Tone) -> Colors {
+        // Lime with white text stays readable at this mix (about 4.7:1 on the default items).
+        let (tint, share) = match (tone, c.colourblind) {
+            (crate::menu::Tone::Normal, _) => return c,
+            (crate::menu::Tone::Add, false) => (Color::from_rgb8(0x5a, 0x9a, 0x1a), 0.75),
+            (crate::menu::Tone::Remove, false) => (Color::from_rgb8(0xd0, 0x64, 0x64), 0.4),
+            (crate::menu::Tone::Add, true) => (Color::from_rgb8(0x4a, 0x8f, 0xe0), 0.4),
+            (crate::menu::Tone::Remove, true) => (Color::from_rgb8(0xe8, 0x96, 0x2e), 0.4),
+        };
+        let mix = |a: f32, b: f32| a + (b - a) * share;
+        let item = Color { r: mix(c.item.r, tint.r), g: mix(c.item.g, tint.g), b: mix(c.item.b, tint.b), a: c.item.a };
+        Colors { item, item_text: text_on(item), ..c }
     }
 
     fn cell_style(c: Colors, selected: bool) -> impl Fn(&iced::Theme) -> container::Style {
@@ -668,16 +709,21 @@ pub mod draw {
 
     fn info_cell<'a, M: 'a>(segments: &[Segment], c: Colors, s: f32, opacity: f32) -> Element<'a, M> {
         let mut line = row![].spacing(2.0 * s).align_y(Alignment::Center);
-        for segment in segments {
-            line = line.push(match segment {
-                Segment::Text(t) => Element::from(text(t.clone()).font(c.font).size(16.0 * s).color(c.background_text)),
-                Segment::Glyph { label, fill, round } => glyph(label, *fill, *round, c, s, opacity),
-                Segment::Dpad(lit) => dpad_glyph(*lit, c, s),
-                Segment::StickClick { right } => stick_click_glyph(*right, c, s),
-                Segment::Icon(icon) => icon_glyph(icon, c, s),
-            });
+        for seg in segments {
+            line = line.push(segment_element(seg, c, s, opacity));
         }
         line.into()
+    }
+
+    /// One piece of an info overlay's line, or of a menu row's glyphs.
+    fn segment_element<'a, M: 'a>(seg: &Segment, c: Colors, s: f32, opacity: f32) -> Element<'a, M> {
+        match seg {
+            Segment::Text(t) => Element::from(text(t.clone()).font(c.font).size(16.0 * s).color(c.background_text)),
+            Segment::Glyph { label, fill, round } => glyph(label, *fill, *round, c, s, opacity),
+            Segment::Dpad(lit) => dpad_glyph(*lit, c, s),
+            Segment::StickClick { right } => stick_click_glyph(*right, c, s),
+            Segment::Icon(icon) => icon_glyph(icon, c, s),
+        }
     }
 
     /// A cross-shaped D-pad with the pressed arms (`[up, down, left, right]`) lit.
@@ -817,19 +863,16 @@ pub mod draw {
         container(body).padding(16.0 * s).style(panel_style(c)).into()
     }
 
-    /// How an item's text is set.
-    #[derive(Clone, Copy)]
-    struct Face {
-        size: f32,
-        fg: Color,
-        font: Font,
-    }
-
-    /// An item's label with its button badge and a ▸ for submenus.
-    fn item_text<'a, M: 'a>(label: &str, button: Option<&str>, submenu: bool, face: Face) -> Element<'a, M> {
-        let Face { size, fg, font } = face;
+    /// An item's glyphs (the same as the info overlays'), its label, and a ▸ for submenus. A
+    /// text badge (a stick's LS, say) is drawn as a small tag.
+    fn item_text<'a, M: 'a>(c: Colors, item: &crate::menu::ItemView, label: &str, size: f32, fg: Color) -> Element<'a, M> {
+        let font = c.font;
         let mut line = row![].spacing(size * 0.5).align_y(Alignment::Center);
-        if let Some(b) = button.filter(|b| !b.is_empty()) {
+        // The glyphs are sized from the label, which is 17 units when the scale is 1.
+        for b in &item.buttons {
+            line = line.push(segment_element(&crate::info::button_glyph(*b, c.family), c, size / 17.0, 1.0));
+        }
+        if let Some(b) = item.button.as_deref().filter(|b| !b.is_empty()) {
             line = line.push(
                 container(text(b.to_string()).font(font).size(size - 2.0).color(Color::BLACK))
                     .padding([1.0, size * 0.4])
@@ -841,7 +884,7 @@ pub mod draw {
             );
         }
         line = line.push(text(label.to_string()).font(font).size(size).color(fg));
-        if submenu {
+        if item.submenu {
             line = line.push(text("▸").font(font).size(size).color(Color { a: 0.7, ..fg }));
         }
         line.into()
@@ -1023,8 +1066,8 @@ pub mod draw {
         .into()
     }
 
-    pub fn menu_panel<'a, M: 'a>(m: &MenuView, font: Font) -> Element<'a, M> {
-        let c = colors(&m.style, font);
+    pub fn menu_panel<'a, M: 'a>(m: &MenuView, font: Font, look: MenuLook) -> Element<'a, M> {
+        let c = Colors { family: look.family, colourblind: look.colourblind, ..colors(&m.style, font) };
         let s = m.style.scale.clamp(0.5, 2.0);
         let body: Element<'a, M> = match m.kind {
             MenuKind::Radial { .. } => radial(m, c, s),
@@ -1033,10 +1076,17 @@ pub mod draw {
             MenuKind::Carousel { .. } => carousel(m, c, s),
             MenuKind::Grid { .. } => grid(m, c, s),
         };
-        let depth = if m.depth > 0 { format!("  ({} deep)", m.depth + 1) } else { String::new() };
+        // Where this page is in the menus, above its title: "Menu › Edit Controls › A button".
+        let title = text(m.title.clone()).font(c.font).size(20.0 * s).color(c.background_text);
+        let heading: Element<'a, M> = if m.crumbs.is_empty() {
+            title.into()
+        } else {
+            let crumbs = text(m.crumbs.join(" › ")).font(c.font).size(13.0 * s).color(c.muted);
+            column![crumbs, title].spacing(4.0 * s).align_x(Alignment::Center).into()
+        };
         container(
             column![
-                text(format!("{}{depth}", m.title)).font(c.font).size(20.0 * s).color(c.background_text),
+                heading,
                 body,
                 text(m.hint.clone()).font(c.font).size(13.0 * s).color(c.muted),
             ]
@@ -1052,7 +1102,7 @@ pub mod draw {
         let item = &m.items[i];
         let selected = m.selected == Some(i);
         let fg = if selected { c.selected_text } else { c.item_text };
-        (item_text(&item.label, item.button.as_deref(), item.submenu, Face { size, fg, font: c.font }), selected)
+        (item_text(c, item, &item.label, size, fg), selected)
     }
 
     fn radial<'a, M: 'a>(m: &MenuView, c: Colors, s: f32) -> Element<'a, M> {
@@ -1110,7 +1160,7 @@ pub mod draw {
         let (w, h) = (190.0 * s, 52.0 * s);
         let slot = |i: usize| -> Element<'a, M> {
             match m.items.get(i).filter(|item| !item.label.is_empty()) {
-                Some(item) => container(item_text(&item.label, item.button.as_deref(), item.submenu, Face { size: 16.0 * s, fg: c.item_text, font: c.font }))
+                Some(item) => container(item_text(c, item, &item.label, 16.0 * s, c.item_text))
                     .center_x(w)
                     .center_y(h)
                     .style(cell_style(c, false))
@@ -1144,13 +1194,44 @@ pub mod draw {
         rows.into()
     }
 
+    /// A list: one column while it is short, two once it is longer. Two columns fill top to
+    /// bottom, the left one first, and scroll together with the cursor.
     fn list<'a, M: 'a>(m: &MenuView, c: Colors, s: f32) -> Element<'a, M> {
-        let mut col = column![].spacing(6.0 * s).width(360.0 * s);
-        for i in 0..m.items.len() {
-            let (label, selected) = item_cell(m, i, c, 17.0 * s);
-            col = col.push(container(label).padding([10.0 * s, 14.0 * s]).width(Length::Fill).style(cell_style(c, selected)));
+        let len = m.items.len();
+        let cursor = m.selected.unwrap_or(0);
+        let cell = |i: usize| -> Element<'a, M> {
+            let item = &m.items[i];
+            let ci = toned(c, item.tone);
+            let selected = m.selected == Some(i);
+            let fg = if selected { ci.selected_text } else { ci.item_text };
+            let label = match (c.colourblind, item.tone) {
+                (true, crate::menu::Tone::Add) => format!("+ {}", item.label),
+                (true, crate::menu::Tone::Remove) => format!("− {}", item.label),
+                _ => item.label.clone(),
+            };
+            let content = item_text(ci, item, &label, 17.0 * s, fg);
+            container(content).padding([10.0 * s, 14.0 * s]).width(Length::Fill).style(cell_style(ci, selected)).into()
+        };
+        let marker = |t: &'static str| text(t).font(c.font).size(13.0 * s).color(c.muted);
+        let start = crate::menu::list_start(cursor, len);
+        let half = if crate::menu::list_columns(len) == 2 { len.div_ceil(2) } else { len };
+        let shown = |from: usize, to: usize| (from..to.min(from + crate::menu::VISIBLE_ROWS)).map(&cell).collect::<Vec<Element<'a, M>>>();
+        let column_of = |items: Vec<Element<'a, M>>, width: f32| items.into_iter().fold(column![].spacing(6.0 * s).width(width * s), iced::widget::Column::push);
+        let left = column_of(shown(start, half), 300.0);
+        let grid: Element<'a, M> = if half < len {
+            row![left, column_of(shown(half + start, len), 300.0)].spacing(14.0 * s).into()
+        } else {
+            left.into()
+        };
+        let mut body = column![].spacing(6.0 * s);
+        if start > 0 {
+            body = body.push(marker("▲"));
         }
-        col.into()
+        body = body.push(grid);
+        if start + crate::menu::VISIBLE_ROWS < half {
+            body = body.push(marker("▼"));
+        }
+        body.into()
     }
 
     fn carousel<'a, M: 'a>(m: &MenuView, c: Colors, s: f32) -> Element<'a, M> {
@@ -1166,7 +1247,7 @@ pub mod draw {
             let fg = if big { c.selected_text } else { c.item_text };
             let item = &m.items[i];
             line = line.push(
-                container(item_text(&item.label, None, item.submenu, Face { size: if big { 19.0 } else { 14.0 } * s, fg, font: c.font }))
+                container(item_text(c, item, &item.label, if big { 19.0 } else { 14.0 } * s, fg))
                     .center_x(if big { 170.0 } else { 120.0 } * s)
                     .center_y(if big { 80.0 } else { 60.0 } * s)
                     .style(cell_style(c, big)),

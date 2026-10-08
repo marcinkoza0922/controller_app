@@ -25,6 +25,8 @@ mod quit;
 mod record;
 mod rumble;
 mod style;
+mod layout_editor;
+mod system_menu;
 mod tray;
 
 use anyhow::{Result, bail};

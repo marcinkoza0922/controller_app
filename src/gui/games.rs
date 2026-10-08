@@ -42,21 +42,6 @@ pub(super) fn motion_rule_command() -> String {
     )
 }
 
-/// Rule for a window using its most specific identifier: Steam App ID, then a Windows `.exe`
-/// name, then the window class, then the native executable name.
-pub(super) fn rule_for_window(w: &WindowInfo, profile: String) -> Rule {
-    let (kind, value) = if let Some(id) = &w.steam_app_id {
-        (RuleKind::SteamAppId, id.clone())
-    } else if w.exe.to_ascii_lowercase().ends_with(".exe") {
-        (RuleKind::Executable, w.exe.clone())
-    } else if !w.class.is_empty() {
-        (RuleKind::WindowClass, w.class.clone())
-    } else {
-        (RuleKind::Executable, w.exe.clone())
-    };
-    Rule::new(kind, value, profile)
-}
-
 impl App {
     #[expect(clippy::too_many_lines, reason = "predates the size lints")]
     pub(super) fn update_games(&mut self, message: Message) -> Task<Message> {
@@ -118,7 +103,7 @@ impl App {
             Message::AddRule(window) => {
                 let profile = self.profile().map(|p| p.name.clone()).unwrap_or_default();
                 let rule = match window {
-                    Some(w) => rule_for_window(&w, profile),
+                    Some(w) => crate::focus::rule_for_window(&w, profile),
                     None => Rule::new(RuleKind::Executable, "", profile),
                 };
                 self.game_mut().rules.push(rule);
@@ -151,6 +136,7 @@ impl App {
             Message::SetInfoGlyphs(family) => self.config.info_glyphs = family,
             Message::SetKeyboardStyle(style) => self.config.keyboard_style = style,
             Message::SetOverlayFont(font) => self.config.overlay_font = font,
+            Message::SetColourblindTones(on) => self.config.colourblind_tones = on,
             Message::SetGameOverlayFont(font) => self.game_mut().overlay_font = font,
             Message::SetGameOverlayStyle(layout, style) => self.set_game_overlay_style(layout, style),
             Message::SetIgnored(name, ignored) => {
@@ -365,7 +351,7 @@ impl App {
                 .into(),
             )],
         );
-        column![self.view_auto_switch(), self.view_font_card(), self.view_keyboard_card(), self.view_numpad_card(), glyphs]
+        column![self.view_auto_switch(), self.view_font_card(), self.view_colour_card(), self.view_keyboard_card(), self.view_numpad_card(), glyphs]
             .spacing(16)
             .into()
     }
@@ -705,7 +691,7 @@ mod tests {
             ..Default::default()
         };
         let pick = |w: WindowInfo| {
-            let r = rule_for_window(&w, "P".into());
+            let r = crate::focus::rule_for_window(&w, "P".into());
             (r.kind, r.value)
         };
         assert_eq!(pick(w("steam_app_1", "game.exe", Some("1"))), (RuleKind::SteamAppId, "1".into()));

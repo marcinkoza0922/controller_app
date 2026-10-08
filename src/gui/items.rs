@@ -1169,7 +1169,7 @@ impl App {
             .and_then(|s| s.view(std::slice::from_ref(menu)))
         {
             let view = crate::menu::MenuView { style: preview_style(&menu.style), ..view };
-            rows.push(preview(crate::overlay::draw::menu_panel(&view, self.preview_font())));
+            rows.push(preview(crate::overlay::draw::menu_panel(&view, self.preview_font(), self.menu_look())));
         }
 
         // Items.

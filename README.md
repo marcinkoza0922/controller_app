@@ -159,6 +159,12 @@ An item can open another menu of the same kind (radial menus can't open menus). 
 
 Each menu is a collapsible card on the Menus tab, with a live preview; "Add a menu" adds another at the top. Under **Appearance**, each menu (and the keyboard) has its own screen position (a 3×3 grid of corners, edges and center, so it fits any monitor size or aspect ratio), size (50–200%), and color and opacity for the background, items and selected item. Text switches between light and dark to stay readable. Older configs with `cascade` menus still load.
 
+## In-game menu
+
+Guide + Start, pressed together, opens a menu over the game in front. **Quick Settings** changes a few values, such as stick and gyro sensitivity, Invert Y and the profile. **Edit Controls** changes that game's buttons, sticks, triggers, gyro, combos, layers, macros and zones. A change applies at once, and is saved when you choose Save. With no game in front, Edit Controls is refused, and quick settings make a game for the window in front instead.
+
+The wiki has the details: [the in-game menu](https://github.com/marcinkoza0922/padwight/wiki/In-Game-Menu) and [editing controls in game](https://github.com/marcinkoza0922/padwight/wiki/Editing-Controls-in-Game).
+
 ## Info overlays
 
 Info overlays put text on screen without taking the controller, mainly to show a game's controls. Each one is a grid of cells (rows of cells that line up in columns), with its own position, size and colors. Cells can hold tokens:
@@ -200,7 +206,7 @@ GNOME is not supported: Mutter has no layer-shell, so the on-screen keyboard, me
 ## GUI
 
 - **Overview**: a live controller drawing labelled with the active profile's mappings, and the controller list (Manage, Test rumble, Calibrate gyro).
-- **Settings**: automatic switching and its default profile, the on-screen keyboard and numpad, and fallback glyphs.
+- **Settings**: automatic switching and its default profile, the on-screen keyboard and numpad, fallback glyphs, and colour-blind mode for menu colours.
 - **A game's Profiles tab**: the profile being edited, with its own labelled drawing and sub-tabs for Buttons, Sticks & triggers, Combos and Gyro. Mappings collapse to one-line summaries ("A ▸ Left click"); click a name to edit it. **Find by pressing** jumps to whatever you press or push on the controller.
 - **A game's Layers tab**: the game's layers, edited like a profile (see Layers).
 - **A game's Macros tab**: step editor with exact millisecond fields.

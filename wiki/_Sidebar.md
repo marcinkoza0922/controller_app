@@ -18,6 +18,8 @@
 - [Gyro](Gyro)
 - [On-screen keyboard and numpad](On-Screen-Keyboard-and-Numpad)
 - [Info overlays](Info-Overlays)
+- [In-game menu](In-Game-Menu)
+- [Editing controls in game](Editing-Controls-in-Game)
 
 **Tutorial**
 - [Making a pack: Deus Ex](Tutorial-Deus-Ex-Pack)

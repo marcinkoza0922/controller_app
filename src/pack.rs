@@ -223,7 +223,8 @@ fn references(profiles: &[Profile], menus: &[Menu], macros: &[Macro], layers: &[
     refs
 }
 
-fn game_references(g: &Game) -> BTreeSet<(ItemKind, String)> {
+/// Every (kind, name) a game's own items refer to.
+pub(crate) fn game_references(g: &Game) -> BTreeSet<(ItemKind, String)> {
     references(&g.profiles, &g.menus, &g.macros, &g.layers)
 }
 

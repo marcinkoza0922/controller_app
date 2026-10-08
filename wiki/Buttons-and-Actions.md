@@ -51,6 +51,10 @@ A zone holds extra actions while a stick or trigger is within part of its travel
 
 Zones are hidden for triggers that are on/off only, such as those on Switch pads.
 
+## Changing buttons while you play
+
+Press Guide and Start together to open the [in-game menu](In-Game-Menu). **Edit Controls** there changes the buttons of the game in front, with every action on this page. See [Editing controls in game](Editing-Controls-in-Game).
+
 ## The Guide button
 
 Guide is special because Steam uses it. By default, Guide holds the **Guide layer**, so a plain press doesn't reach Steam or switch profiles. While it's held, the other buttons do system shortcuts:

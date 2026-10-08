@@ -31,8 +31,9 @@ pub struct MenuView {
     pub kind: MenuKind,
     pub items: Vec<ItemView>,
     pub selected: Option<usize>,
-    /// How many menus deep (submenus opened from items).
-    pub depth: usize,
+    /// The menus this one was opened from, outermost first. Shown above the title.
+    #[serde(default)]
+    pub crumbs: Vec<String>,
     /// Short reminder of the controls.
     pub hint: String,
     #[serde(default)]
@@ -46,6 +47,24 @@ pub struct ItemView {
     pub button: Option<String>,
     /// Opens another menu rather than acting.
     pub submenu: bool,
+    /// Buttons drawn as their controller glyphs, in front of the label.
+    #[serde(default)]
+    pub buttons: Vec<Button>,
+    /// What kind of row it is, for its background.
+    #[serde(default)]
+    pub tone: Tone,
+}
+
+/// What kind of row an item is. The overlay tints each kind differently, so a row that adds to
+/// something or removes it stands out from the things it acts on.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Tone {
+    #[default]
+    Normal,
+    /// Adds something: a new item, a new step.
+    Add,
+    /// Removes something, or deletes it.
+    Remove,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -255,6 +274,8 @@ impl MenuSession {
                     (None, None) => None,
                 },
                 submenu: matches!(item.action, ButtonAction::OpenMenu(_)),
+                buttons: Vec::new(),
+                tone: Tone::Normal,
             })
             .collect();
         let radial = matches!(menu.kind, MenuKind::Radial { .. });
@@ -286,7 +307,7 @@ impl MenuSession {
             kind: menu.kind,
             items,
             selected: frame.cursor,
-            depth: self.stack.len() - 1,
+            crumbs: self.stack[..self.stack.len() - 1].iter().filter_map(|f| menus.get(f.menu)).map(|m| m.name.clone()).collect(),
             hint,
             style: menu.style.clone(),
         })
@@ -495,7 +516,8 @@ impl MenuSession {
             let cursor = frame.cursor.unwrap_or(0).min(n - 1);
             frame.cursor = Some(match menu.kind.grid_columns() {
                 Some(columns) => grid_step(cursor, n, columns, (dx, dy)),
-                // Lists and carousels are one line, whichever way it runs.
+                None if matches!(menu.kind, MenuKind::List | MenuKind::Buttons) => list_step(cursor, n, (dx, dy)),
+                // Carousels are one line, whichever way it runs.
                 None => (cursor as i32 + dx + dy).rem_euclid(n as i32) as usize,
             });
         }
@@ -553,6 +575,46 @@ impl MenuSession {
     }
 }
 
+/// A list longer than this many rows is shown in two columns.
+pub const ONE_COLUMN_ROWS: usize = 8;
+/// Rows each column shows at once; a longer column scrolls with the cursor.
+pub const VISIBLE_ROWS: usize = 8;
+
+/// How many columns a list of `n` rows is shown in.
+pub fn list_columns(n: usize) -> usize {
+    if n > ONE_COLUMN_ROWS { 2 } else { 1 }
+}
+
+/// Moves the cursor through a list of `n` rows, as the overlay shows it. A two-column list
+/// fills the left column first, then the right. Up and down follow that order, wrapping round the
+/// whole list. Left and right move to the other column, on the same row or its last one.
+pub fn list_step(cursor: usize, n: usize, (dx, dy): Step) -> usize {
+    if n == 0 {
+        return 0;
+    }
+    if list_columns(n) == 1 || dx == 0 {
+        // Up and down go through the list in order, from the bottom of one column to the top of
+        // the next and round again.
+        return (cursor as i32 + dx + dy).rem_euclid(n as i32) as usize;
+    }
+    let half = n.div_ceil(2);
+    let col = usize::from(cursor >= half);
+    let row = cursor - col * half;
+    let other_len = if col == 0 { n - half } else { half };
+    (1 - col) * half + row.min(other_len - 1)
+}
+
+/// The first row a two-column list shows, so the cursor's row is on screen. Both columns share
+/// it, so their rows line up. A one-column list always starts at the top.
+pub fn list_start(cursor: usize, n: usize) -> usize {
+    if list_columns(n) == 1 {
+        return 0;
+    }
+    let half = n.div_ceil(2);
+    let row = cursor.min(n - 1) - usize::from(cursor >= half) * half;
+    if row >= VISIBLE_ROWS { row + 1 - VISIBLE_ROWS } else { 0 }
+}
+
 /// Moves through `n` items laid out `columns` wide, wrapping within the row or column (the
 /// last row may be short, so its columns are too).
 fn grid_step(cursor: usize, n: usize, columns: usize, (dx, dy): Step) -> usize {
@@ -586,6 +648,32 @@ fn trigger_axis(t: Trigger) -> Axis {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_two_column_list_moves_down_and_up_through_both_columns_and_left_and_right_switch() {
+        // Ten rows: left column 0..5, right column 5..10.
+        assert_eq!(list_step(4, 10, (0, 1)), 5, "down from the bottom of the left goes to the top of the right");
+        assert_eq!(list_step(5, 10, (0, -1)), 4, "up from the top of the right goes to the bottom of the left");
+        assert_eq!(list_step(9, 10, (0, 1)), 0, "down from the bottom of the right goes to the first option");
+        assert_eq!(list_step(0, 10, (0, -1)), 9, "up from the first option goes to the bottom of the right");
+        assert_eq!(list_step(2, 10, (1, 0)), 7, "right moves to the same row of the right column");
+        assert_eq!(list_step(9, 10, (-1, 0)), 4, "left from the bottom of the right lands on the left column's last row");
+        // A one-column list keeps its linear wrap.
+        assert_eq!(list_step(7, 8, (0, 1)), 0);
+        assert_eq!(list_step(0, 8, (0, -1)), 7);
+    }
+
+    #[test]
+    fn a_two_column_list_scrolls_only_once_the_cursor_leaves_the_visible_rows() {
+        // Twenty rows: 10 per column, 8 visible per column.
+        assert_eq!(list_start(7, 20), 0);
+        assert_eq!(list_start(8, 20), 1);
+        assert_eq!(list_start(9, 20), 2);
+        // The right column's rows scroll with the left's: its row 7 is on screen, row 9 scrolls.
+        assert_eq!(list_start(17, 20), 0);
+        assert_eq!(list_start(19, 20), 2);
+        assert_eq!(list_start(0, 8), 0);
+    }
+
     use super::*;
     use crate::config::{Cluster, GRID_MAX, MenuItem};
 

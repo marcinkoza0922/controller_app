@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 mod log;
 mod summary;
 mod touchpad;
+mod window_game;
 
 pub use log::*;
 pub use touchpad::*;
@@ -2527,6 +2528,10 @@ pub struct Config {
     /// Whose button glyphs info overlays use when the controller in use isn't recognized.
     #[serde(default)]
     pub info_glyphs: crate::info::PadFamily,
+    /// Draws the added and removed rows of menus in blue and orange, with a + or − in front, so
+    /// they can be told apart without red and green.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub colourblind_tones: bool,
     /// Font of every overlay, menu and keyboard (a bundled or installed family); the system's
     /// own when unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2553,6 +2558,7 @@ impl Default for Config {
             active: ProfileRef::new(None, "Gamepad"),
             ignored_devices: Vec::new(),
             auto_switch: AutoSwitch::default(),
+            colourblind_tones: false,
             gyro_calibration: BTreeMap::new(),
             keyboard_style: OverlayStyle::keyboard(),
             numpad_style: OverlayStyle::numpad(),
@@ -2688,6 +2694,7 @@ impl Config {
             enabled: old.enabled,
             active: ProfileRef::default(),
             ignored_devices: old.ignored_devices,
+            colourblind_tones: false,
             auto_switch: AutoSwitch { enabled: old.auto_switch.enabled, default_profile: None },
             gyro_calibration: old.gyro_calibration,
             keyboard_style: old.keyboard_style,

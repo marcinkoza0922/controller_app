@@ -364,6 +364,7 @@ enum Message {
     SetKeyboardStyle(OverlayStyle),
     /// The font of all overlays (`None`: the system's), or the shown game's own.
     SetOverlayFont(Option<String>),
+    SetColourblindTones(bool),
     SetGameOverlayFont(Option<String>),
     /// A game's own style for the keyboard or numpad, or back to the global one.
     SetGameOverlayStyle(crate::keyboard::Layout, Option<OverlayStyle>),
