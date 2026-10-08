@@ -12,6 +12,8 @@ A layer can override:
 - gyro,
 - combos (add combos, or switch the profile's combos off).
 
+![The Guide layer on the Layers tab, with its bindings and the controller drawing](https://raw.githubusercontent.com/marcinkoza0922/padwight/main/docs/images/layers-guide.png)
+
 ## Turning a layer on
 
 Map **Layer…** to any button, trigger, stick direction, zone, gesture or combo. The layer is on while that input is held.

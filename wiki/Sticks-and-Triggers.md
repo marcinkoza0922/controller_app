@@ -20,6 +20,8 @@ Each stick's **directions also act as buttons**: Left Stick Up, Left Stick Right
 
 Gamepad outputs include stick directions too. A button or the D-pad can push the virtual stick, and two directions make a diagonal.
 
+![The Sticks & triggers tab, with the left stick set to direction keys](https://raw.githubusercontent.com/marcinkoza0922/padwight/main/docs/images/profile-sticks.png)
+
 ## Button rings
 
 A stick can act as a ring of 4, 8 or 12 sectors instead. Pointing the stick into a sector holds that sector's action. Any action a button can have works here.

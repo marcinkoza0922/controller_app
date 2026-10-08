@@ -19,6 +19,9 @@
 - [On-screen keyboard and numpad](On-Screen-Keyboard-and-Numpad)
 - [Info overlays](Info-Overlays)
 
+**Tutorial**
+- [Making a pack: Deus Ex](Tutorial-Deus-Ex-Pack)
+
 **Sharing and reference**
 - [Packs and the library](Packs-and-the-Library)
 - [Desktop support](Desktop-Support)

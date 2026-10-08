@@ -2,6 +2,8 @@
 
 A game can be shared as a **pack**: a single `.padpack` file (TOML) holding the game's profiles, macros, menus, info overlays and layers, plus any shared items it uses.
 
+For a step-by-step walkthrough that builds a pack from scratch, see [Tutorial: making a pack](Tutorial-Deus-Ex-Pack).
+
 The format itself is documented in the repository: [pack format reference](https://github.com/marcinkoza0922/padwight/blob/main/docs/pack-format.md). A step-by-step example is in the [Deus Ex pack tutorial](https://github.com/marcinkoza0922/padwight/blob/main/docs/tutorial-deus-ex-pack.md).
 
 ## Exporting

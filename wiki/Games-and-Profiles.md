@@ -28,6 +28,8 @@ On the Macros, Menus and Info overlays tabs, **Copy from another game…** previ
 
 ## Auto-switch rules
 
+![The Details tab: the game's name, its auto-switch rules, and the on-screen keyboard settings](https://raw.githubusercontent.com/marcinkoza0922/padwight/main/docs/images/details-rules.png)
+
 A game's **Details** tab holds its rules. When the game's window gets focus, padwight switches to one of the game's profiles. When the window loses focus, the **default profile** (set on the Settings page) takes over. You can also keep the current profile.
 
 A rule matches on one of:

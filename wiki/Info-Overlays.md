@@ -4,6 +4,8 @@ Info overlays put text on screen without taking control of the controller. They'
 
 Each overlay is a grid of cells, with its own position, size and colours. Rows of cells line up in columns.
 
+![An info overlay expanded in the editor: its heading, the shown options, and a preview of the grid](https://raw.githubusercontent.com/marcinkoza0922/padwight/main/docs/images/info-overlays.png)
+
 ## Tokens
 
 Cells can contain tokens, written in braces.

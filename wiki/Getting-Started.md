@@ -6,6 +6,8 @@ This walks through the first mapping. Once [Installation](Installation) is done,
 
 The **Overview** page draws your controller and labels each input with the active profile's mapping. The controller list on the same page shows what padwight has found. Use **Test rumble** to check force feedback, and **Calibrate gyro** if the controller has motion sensors (keep it still while it runs).
 
+![The Overview page, with the controller drawing and the sidebar of games](https://raw.githubusercontent.com/marcinkoza0922/padwight/main/docs/images/overview.png)
+
 ## 2. Know what the defaults do
 
 **General** is the built-in game for the desktop and for plain gamepad use, and it has two profiles:
@@ -30,6 +32,8 @@ Click **+ Add game**. You can:
 - **import a file** (a `.padpack`). See [Packs and the library](Packs-and-the-Library).
 
 Templates include **PC action**, **Strategy** and **Retro / platformer**. Each one is a complete starting point for its kind of game.
+
+![The Add a game picker, with the library's built-in games and the template dropdown](https://raw.githubusercontent.com/marcinkoza0922/padwight/main/docs/images/add-game.png)
 
 ## 5. Save
 

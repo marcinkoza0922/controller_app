@@ -12,6 +12,8 @@ Choosing an item taps its action, as if the button had been pressed. Items can b
 
 A quick tap can't hold a menu up. A menu opened by a tap, such as on a double tap that isn't the button's last gesture, needs a Toggle.
 
+![The Belt menu on the Menus tab: a radial preview with ten slots and the items list below](https://raw.githubusercontent.com/marcinkoza0922/padwight/main/docs/images/menus-belt.png)
+
 ## Menu kinds
 
 - **Radial**: aim a stick at an item. Whatever is aimed at when you let go is chosen.

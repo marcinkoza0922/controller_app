@@ -25,11 +25,14 @@ padwight is a background service that remaps gamepad inputs, or turns them into 
 
 - [Packs and the library](Packs-and-the-Library): export a game as a `.padpack`, import one, and the built-in library.
 
+## Tutorial
+
+- [Tutorial: making a pack (Deus Ex, Xbox-style pad)](Tutorial-Deus-Ex-Pack): a step-by-step walkthrough that builds the shipped Deus Ex pack, with the reasons for the less obvious mappings.
+
 ## Reference
 
 - [Desktop support](Desktop-Support): which desktops can switch profiles automatically, and how.
 - [Pack format](https://github.com/marcinkoza0922/padwight/blob/main/docs/pack-format.md) (in the repository).
-- [Pack tutorial: Deus Ex](https://github.com/marcinkoza0922/padwight/blob/main/docs/tutorial-deus-ex-pack.md) (in the repository).
 
 ## For developers
 

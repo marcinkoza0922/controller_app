@@ -13,6 +13,8 @@ Each button in a profile has an **action**. An action can be:
 
 Triggers and stick directions can take actions too. See [Sticks and triggers](Sticks-and-Triggers).
 
+![The Buttons tab of a profile, with the controller drawing labelling each input with its action](https://raw.githubusercontent.com/marcinkoza0922/padwight/main/docs/images/profile-buttons.png)
+
 ## Toggle and Turbo
 
 Any action can be wrapped in one of two modifiers:
