@@ -37,6 +37,7 @@ mod logs;
 mod overlays;
 mod packs;
 mod profile;
+mod ring_preview;
 mod tracking;
 mod widgets;
 

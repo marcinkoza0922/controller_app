@@ -22,6 +22,8 @@ pub(super) struct Ui<'a> {
     pub(super) found: Option<Button>,
     pub(super) analog_triggers: bool,
     pub(super) any_gyro: bool,
+    /// Live stick positions (left, right) for previews, when a controller is connected.
+    pub(super) live_sticks: Option<[(f32, f32); 2]>,
     /// Set while editing a layer: the profile shown is the layer over `base`.
     pub(super) layer: Option<LayerMarks<'a>>,
 }
@@ -284,7 +286,7 @@ pub(super) fn view_profile<'a>(p: &'a Profile, ui: &Ui, tab: ProfileTab) -> Elem
             let mut sticks = Vec::new();
             for s in [Stick::Left, Stick::Right] {
                 let base = ui.layer.map_or(p.stick(s), |m| m.base.stick(s));
-                sticks.extend(layer_part(ui, LayerPart::Stick(s), s.to_string(), stick_summary(base), || vec![stick_editor(s, p.stick(s), names, ui.expanded)]));
+                sticks.extend(layer_part(ui, LayerPart::Stick(s), s.to_string(), stick_summary(base), || vec![stick_editor(s, p.stick(s), names, ui.expanded, ui.live_sticks.map(|l| l[usize::from(s == Stick::Right)]))]));
                 for b in Button::stick_directions(s) {
                     sticks.extend(button_row(p, b, ui));
                 }
@@ -853,6 +855,7 @@ pub(super) fn stick_editor<'a>(
     cfg: &'a StickConfig,
     names: &Names,
     expanded: &HashSet<Target>,
+    live: Option<(f32, f32)>,
 ) -> Element<'a, Message> {
     let kind = match cfg.action {
         StickAction::Disabled => StickKind::Disabled,
@@ -915,7 +918,10 @@ pub(super) fn stick_editor<'a>(
         StickAction::Mouse { .. } => {
             rows = mouse_rows(rows, s, cfg, expanded.contains(&Target::StickResponse(s)), with);
         }
-        StickAction::Ring { .. } => rows = ring_rows(rows, s, cfg, names, with),
+        StickAction::Ring { sectors, start_angle, inner_radius, .. } => {
+            rows = rows.push(super::ring_preview::view(*sectors, *start_angle, *inner_radius, live));
+            rows = ring_rows(rows, s, cfg, names, with);
+        }
         StickAction::Flick { .. } => {
             rows = flick_rows(rows, cfg, expanded.contains(&Target::StickResponse(s)), s, with);
         }
@@ -1616,6 +1622,7 @@ impl App {
             found: self.found,
             analog_triggers: self.analog_triggers(),
             any_gyro: self.any_gyro(),
+            live_sticks: self.live.as_ref().map(|l| [l.left_stick, l.right_stick]),
             layer,
         };
         col.push(view_profile(p, &ui, self.profile_tab)).into()
@@ -1804,7 +1811,7 @@ mod tests {
         assert!(!app.finding, "one press ends find mode");
         assert_eq!((app.game_tab, app.profile_tab, app.found), (GameTab::Profiles, ProfileTab::Buttons, Some(Button::West)));
         let names = Names::default();
-        let ui = Ui { names: &names, expanded: &app.expanded, found: app.found, analog_triggers: true, any_gyro: false, layer: None };
+        let ui = Ui { names: &names, expanded: &app.expanded, found: app.found, analog_triggers: true, any_gyro: false, live_sticks: None, layer: None };
         assert!(ui.is_open(Target::Button(Button::West)));
         // Presses while not finding don't move the editor.
         let _ = app.update(Message::LiveInput(Some(snapshot(&[Button::West, Button::North], (0.0, 0.0)))));

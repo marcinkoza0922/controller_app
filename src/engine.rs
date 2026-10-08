@@ -19,7 +19,7 @@ use crate::{
 };
 
 mod flick;
-mod stick;
+pub(crate) mod stick;
 
 /// A stick-direction button releases this far below its press threshold.
 const STICK_DIRECTION_HYSTERESIS: f32 = 0.05;

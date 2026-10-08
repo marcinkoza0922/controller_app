@@ -228,6 +228,11 @@ fn pick_sector(current: Option<usize>, (x, y): (f32, f32), ring: &RingShape) -> 
     Some(((angle - start_angle + width / 2.0).rem_euclid(360.0) / width) as usize % n)
 }
 
+/// The sector a stick at `pos` points into with no sector held yet, for the editor's preview.
+pub(crate) fn ring_sector_at(pos: (f32, f32), sectors: u8, start_angle: f32, inner_radius: f32) -> Option<usize> {
+    pick_sector(None, pos, &RingShape { sectors, start_angle, inner_radius, hysteresis: 0.0 })
+}
+
 impl Engine {
     /// Holds the action of the ring sector the stick points into, releasing the previous one.
     /// A stick no longer in ring mode (a layer changed it) lets go of its sector.

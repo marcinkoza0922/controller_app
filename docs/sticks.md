@@ -1,6 +1,6 @@
 # Stick behaviors: mouse response, rings and flick stick
 
-Status: implemented (2026-10-07), except the ring's radial preview and a guided calibration (see the open questions).
+Status: implemented (2026-10-07), except a guided calibration (see the open questions).
 
 ## Goal
 
@@ -156,7 +156,8 @@ flick not yet sent.
   slider, with ramp time and boost under **Advanced**, plus vertical scale and smoothing.
 - **Ring** ("Button ring" in the picker): a sector count picker, the first sector's angle, the
   inner radius and hysteresis, and one action editor per sector, labelled with its direction.
-  The radial preview that highlights the live sector is not built yet.
+  A radial preview above them draws the sectors and inner radius and highlights the sector the
+  live stick points into.
 - **Flick stick**: the settings above, with a short note on finding `full_turn_px` (see
   below).
 - One-line summaries ("mouse, 1600 px/s, accel 40%", "ring, 8 sectors", "flick, 8000 px/turn")
@@ -222,7 +223,6 @@ Engine tests, driven by synthetic axis events as the existing stick tests are:
 
 ## What was built differently
 
-- The ring's radial preview with a live highlight is not built; the editor lists the sectors.
 - Calibration is the **Test turn** button above, not a guided measurement.
 - Vertical look follows the stick's up/down deflection, so with it on, holding the stick up or
   down also keeps looking up or down. It is off by default and under *Advanced flick*.
