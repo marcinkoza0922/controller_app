@@ -20,6 +20,8 @@ padwight is a background service that remaps gamepad inputs, or turns them into 
 - [Gyro](Gyro): aiming and steering with motion sensors.
 - [On-screen keyboard and numpad](On-Screen-Keyboard-and-Numpad): typing with the controller.
 - [Info overlays](Info-Overlays): on-screen text, button glyphs and live values.
+- [In-game menu](In-Game-Menu): Guide + Start opens quick settings and the editor over the game you're playing.
+- [Editing controls in game](Editing-Controls-in-Game): every page of that editor, from buttons and gestures to zones, macros and gyro.
 
 ## Sharing
 

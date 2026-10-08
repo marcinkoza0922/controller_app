@@ -57,3 +57,7 @@ The Guide button is the usual way to move between profiles in a game. In the def
 ## Older configs
 
 A config from before games existed is converted on first load. The original is kept as `config.toml.old`. Each profile that an auto-switch rule pointed to becomes a game of its own with those rules. The other profiles go to General. Macros, menus and info overlays that a single game's profiles used move into that game. The rest become shared.
+
+## Games made from the in-game menu
+
+Changing a setting while no game is running, from [Quick Settings](In-Game-Menu#quick-settings), makes a game for the window in front. Editing controls with a window in front does the same. The game is named after the window's program, and gets a rule for that window. Its profile starts as a copy of General's. General itself is not changed.

@@ -34,3 +34,7 @@ Each profile says whether it needs gyro. Tick **Can't be played without gyro** o
 - The PC action template turns on gyro mouse aiming while LT is held.
 - StarCraft's Gameplay profile has a "+ Gyro" twin, which moves the cursor by tilting, as an extra to the left stick.
 - The library's shooters (Deus Ex, F.E.A.R., Max Payne and Max Payne 2) each have three profiles: one without gyro, one with gyro as an extra, and a flick stick profile that needs gyro. The rules point to the plain one first.
+
+## Gyro while you play
+
+The [in-game editor](Editing-Controls-in-Game) sets gyro's mode (Off or Mouse), sensitivity, Y and X inversion, noise threshold and activation. Stick and steering modes are set in the pack file.

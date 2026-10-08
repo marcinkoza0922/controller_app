@@ -31,6 +31,14 @@ While a menu is open, the controller drives it. Anything the mappings were holdi
 
 Menus opened from the command line (`padwight menu <name>`) or from an analog zone can't be held. They stay open until an item is chosen or B is pressed (Select, for face-button menus).
 
+## Long menus and colours
+
+A list with more than eight rows is shown in two columns. Down moves through the list in reading order, from the bottom of the left column to the top of the right and back round. Left and right move between the columns. Both columns scroll with the cursor.
+
+Each menu shows where it is above its title, such as `Menu › Edit Controls › A button`.
+
+Button rows show the controller's glyphs, the same as the [info overlays](Info-Overlays). In the editor, rows that add something are tinted lime and rows that remove something are tinted red. **Colour-blind mode** on the Settings page uses blue and orange, with a + or − in front.
+
 ## Appearance
 
 Each menu is a collapsible card on the Menus tab, with a live preview. Under **Appearance**, each menu and the on-screen keyboard have their own:

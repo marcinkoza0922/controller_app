@@ -34,3 +34,7 @@ To loop a macro without holding anything, wrap a repeating macro in **Toggle**.
 - Renaming a macro updates every mapping that uses it.
 - Switching profiles stops any macros that are running.
 - A macro that refers to a missing item is flagged, and it blocks saving until it's fixed.
+
+## Editing macros while you play
+
+The [in-game editor](Editing-Controls-in-Game) can add taps, presses, releases, waits and stick steps to a macro, and remove steps. It can't delete a macro that a button, layer or menu still uses; the macro's page says so. Motions and repeat settings are still set on the Macros tab.

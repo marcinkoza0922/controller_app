@@ -50,3 +50,7 @@ A trigger can output to:
 - any action a button can have (a gamepad button, key, mouse button, macro, …), pressed once the trigger is pulled past a threshold.
 
 Triggers can also have [zones](Buttons-and-Actions#zones).
+
+## Changing sticks and triggers while you play
+
+The [in-game editor](Editing-Controls-in-Game) sets a stick's action, speed, Y inversion and deadzone, and a trigger's action, press point and zones. Stick rings and the flick stick are set in the pack file.

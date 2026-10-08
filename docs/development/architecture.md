@@ -73,6 +73,8 @@ Line counts are approximate and change; `scripts/long-files.sh` lists the files 
 | `engine/touchpad.rs` | Touchpad click and finger-to-mouse movement. |
 | `menu.rs` | On-screen menus: all controller input while one is open. |
 | `offer.rs` | The "add this game from the library?" panel when Guide is tapped over an unknown game. |
+| `system_menu.rs` | The Guide + Start menu over the game: Quick Settings and Edit Controls. See [in-game-editor.md](in-game-editor.md). |
+| `layout_editor.rs` | The Edit Controls page of that menu: button actions of the active profile. |
 | `rumble.rs` | Forwards rumble from the virtual pad to the physical one. |
 | `output.rs` | The uinput devices. |
 | `quit.rs` | ForceQuit: ends the focused game's process tree, never the desktop. |

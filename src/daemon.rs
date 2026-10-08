@@ -26,7 +26,7 @@ use anyhow::{Context, Result, bail};
 use evdev::Device;
 
 use crate::{
-    config::{Config, Feature, Profile, ProfileRef, Refit, Scope},
+    config::{Config, Feature, Game, Profile, ProfileRef, Refit, Scope},
     engine::{Engine, Opener},
     focus::{self, FocusEvent},
     input::{self, InputEvent, MotionFrame, MotionNormalizer, MotionSample, Normalizer},
@@ -37,6 +37,7 @@ use crate::{
     media::{MediaOutcome, MediaSession, MediaState},
     offer::{OfferOutcome, OfferSession},
     menu::{MenuOutcome, MenuSession},
+    system_menu::{self, Outcome as SystemOutcome, SystemMenu},
     overlay::{OverlayAction, OverlayController, OverlayFrame, OverlayView},
     rumble,
     tray::{self, TrayIcon},
@@ -198,6 +199,8 @@ enum Active {
     Media(MediaSession),
     /// The offer to add a library game's profiles.
     Offer(OfferSession),
+    /// The menu Guide + Start opens: Quick Settings and Edit Controls.
+    Settings(SystemMenu),
 }
 
 /// A device node identity; the inode changes when a node is recreated for a new device.
@@ -455,7 +458,7 @@ impl Daemon {
             Some(Active::Menu { session, .. }) => session.next_deadline(),
             Some(Active::Media(m)) => m.next_deadline(),
             Some(Active::Offer(o)) => o.next_deadline(),
-            None => None,
+            Some(Active::Settings(_)) | None => None,
         };
         self.devices
             .values()
@@ -671,7 +674,7 @@ impl Daemon {
         match &self.active {
             Some(Active::Keyboard(k)) if k.layout() == layout => return self.close_overlay(),
             Some(Active::Keyboard(_)) => self.close_overlay(),
-            Some(Active::Menu { .. } | Active::Media(_) | Active::Offer(_)) => return,
+            Some(Active::Menu { .. } | Active::Media(_) | Active::Offer(_) | Active::Settings(_)) => return,
             None => {}
         }
         if !self.ensure_overlay_process() {
@@ -856,7 +859,7 @@ impl Daemon {
             }
             Some(Active::Menu { .. }) => {}
             Some(Active::Media(_)) => log!("media controls closed"),
-            Some(Active::Offer(_)) => {}
+            Some(Active::Offer(_) | Active::Settings(_)) => {}
             None => return,
         }
         // The overlay window goes back to idle (it stays running for next time).
@@ -937,6 +940,7 @@ impl Daemon {
             Some(Active::Menu { session, .. }) => session.view(&self.scope.menus).map(OverlayView::Menu),
             Some(Active::Media(m)) => Some(OverlayView::Media(m.view())),
             Some(Active::Offer(o)) => Some(OverlayView::Offer(o.view())),
+            Some(Active::Settings(m)) => Some(OverlayView::Menu(m.view(&self.config))),
             None => None,
         }
     }
@@ -991,7 +995,14 @@ impl Daemon {
             }
             None => self.toast = None,
         }
-        OverlayFrame { info, logs, active: self.overlay_view(), font: self.config.active_font().map(str::to_string) }
+        OverlayFrame {
+            info,
+            logs,
+            active: self.overlay_view(),
+            font: self.config.active_font().map(str::to_string),
+            colourblind: self.config.colourblind_tones,
+            family: values.family,
+        }
     }
 
     /// The info overlays to draw now and how visible each is: steady ones fully, and those
@@ -1447,6 +1458,7 @@ impl Daemon {
     fn input(&mut self, id: u64, events: Vec<InputEvent>) {
         let logged = self.log_input(id, &events, Instant::now());
         let tapped = self.guide_tapped(&events);
+        self.chord_opens_menu(id, &events);
         if self.active.is_some() {
             return self.overlay_input(id, events);
         }
@@ -1534,6 +1546,105 @@ impl Daemon {
             let gyro = self.devices.values().any(|d| d.motion.is_some()).then_some(Feature::Gyro);
             gyro.into_iter().collect()
         })
+    }
+
+    /// Opens the Guide + Start menu when these events press Guide and Start together.
+    fn chord_opens_menu(&mut self, id: u64, events: &[InputEvent]) {
+        if self.active.is_some() {
+            return;
+        }
+        let Some(dev) = self.devices.get(&id) else { return };
+        let held: HashSet<crate::config::Button> = dev.view.buttons().collect();
+        if system_menu::chord(&held, events) {
+            self.open_system_menu();
+        }
+    }
+
+    /// Opens the Guide + Start menu over the game. The controller drives it from now on.
+    fn open_system_menu(&mut self) {
+        if !self.ensure_overlay_process() {
+            return;
+        }
+        log!("opening the settings menu");
+        self.release_mappings();
+        self.active = Some(Active::Settings(SystemMenu::new(&self.config)));
+        self.broadcast_overlay();
+    }
+
+    /// Runs one event on the Guide + Start menu. `true` when the menu closed.
+    fn settings_input(&mut self, ev: InputEvent) -> bool {
+        // Outside any game, General is what a change would land in: keep a copy so the change
+        // can move into a new pack instead.
+        let general = self.config.active_ref().game.is_none().then(|| self.config.general.clone());
+        let outcome = match &mut self.active {
+            Some(Active::Settings(menu)) => menu.handle(ev, &mut self.config),
+            _ => None,
+        };
+        match outcome {
+            Some(SystemOutcome::Close) => {
+                self.close_overlay();
+                return true;
+            }
+            Some(SystemOutcome::Changed) => {
+                if let Some(general) = general {
+                    self.pack_from_general(general);
+                }
+                self.apply_settings_change();
+            }
+            Some(SystemOutcome::EditControls) => {
+                // Outside any game there is no game to edit, and no window to name a pack after.
+                // Refuse, and go back to the menu's main page.
+                if self.config.active_ref().game.is_none() && self.focused.is_none() {
+                    if let Some(Active::Settings(menu)) = &mut self.active {
+                        menu.back_to_main();
+                    }
+                    self.say(vec!["Edit Controls needs a game".into(), "Focus a game window first".into()]);
+                    return false;
+                }
+                let general = self.config.general.clone();
+                if self.config.active_ref().game.is_none() {
+                    self.pack_from_general(general);
+                }
+                self.apply_settings_change();
+            }
+            Some(SystemOutcome::Save) => {
+                if let Err(e) = self.config.save() {
+                    self.say(vec!["Couldn't save the changes".into(), format!("{e:#}")]);
+                    return false;
+                }
+                self.close_overlay();
+                return true;
+            }
+            Some(SystemOutcome::Discard(saved)) => {
+                self.config = *saved;
+                self.refresh_scope();
+                self.close_overlay();
+                return true;
+            }
+            Some(SystemOutcome::Switch(target)) => self.switch_profile(target),
+            None => {}
+        }
+        false
+    }
+
+    /// Moves what General's active profile is into a new pack for the window in front, and puts
+    /// General back as `general` was. Returns false, changing nothing, without a window: there is
+    /// nothing to name the pack after, so the change stays in General.
+    fn pack_from_general(&mut self, general: Game) -> bool {
+        let Some(window) = self.focused.clone() else { return false };
+        let Some(edited) = self.config.active().cloned() else { return false };
+        self.config.general = general;
+        let at = self.config.add_game_for_window(&window, edited);
+        log!("made a pack for {} from General", describe(&window));
+        self.say(vec![format!("Made a pack: {}", at.game.as_deref().unwrap_or_default())]);
+        self.set_profile(at);
+        true
+    }
+
+    /// Applies a Quick Settings or Edit Controls change to the running mappings. It reaches the
+    /// config file only when the menu's Save is chosen.
+    fn apply_settings_change(&mut self) {
+        self.resync_all();
     }
 
     /// Asks whether to add the focused game's profiles, when the library has some for it.
@@ -1633,6 +1744,11 @@ impl Daemon {
                         }
                         Some(MenuOutcome::Close) => return self.close_overlay(),
                         None => {}
+                    }
+                }
+                Some(Active::Settings(_)) => {
+                    if self.settings_input(ev) {
+                        return;
                     }
                 }
                 Some(Active::Media(m)) => {

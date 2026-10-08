@@ -39,6 +39,10 @@ Templates include **PC action**, **Strategy** and **Retro / platformer**. Each o
 
 Edits stay in memory until you click **Save & apply**. **Revert** drops them. Problems that would block saving (unknown keys, missing macros, incomplete combos) are flagged on the row and with ⚠ on its tab.
 
+## Changing controls while you play
+
+Press Guide and Start together to open the [in-game menu](In-Game-Menu). It has quick settings for the game you're playing, and the editor for its controls.
+
 ## Next
 
 - [Games and profiles](Games-and-Profiles): make a game switch profiles when it gets focus.

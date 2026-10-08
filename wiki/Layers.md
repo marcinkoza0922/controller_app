@@ -22,6 +22,8 @@ Wrap it in **Toggle** and it stays on until pressed again. A menu item can also 
 
 Layers can turn on further layers.
 
+In the [in-game editor](Editing-Controls-in-Game), **Add layer** makes a layer, and **Hold a layer…** on a button's action list makes that button hold it.
+
 ## Several layers at once
 
 Layers stack. Where two layers disagree, the one turned on most recently wins.

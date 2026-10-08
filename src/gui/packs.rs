@@ -636,7 +636,7 @@ impl App {
                         let m = &items.menus[i];
                         let view = MenuSession::open(std::slice::from_ref(m), &m.name, Opener { buttons: vec![Button::LeftBumper], ..Opener::default() })
                             .and_then(|s| s.view(std::slice::from_ref(m)))
-                            .map(|v| preview(crate::overlay::draw::menu_panel(&crate::menu::MenuView { style: preview_style(&m.style), ..v }, self.preview_font())));
+                            .map(|v| preview(crate::overlay::draw::menu_panel(&crate::menu::MenuView { style: preview_style(&m.style), ..v }, self.preview_font(), self.menu_look())));
                         (m.name.clone(), format!("{} · {} items", m.kind.tag().short(), m.items.len()), view)
                     }
                     ItemKind::Info => {
