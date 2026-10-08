@@ -26,7 +26,7 @@ Scripted checks live in `scripts/check-project.py`, and the Rust tests use the c
 | A-3 | Links and `#anchors` resolve; GitHub `blob/main` links point at real files and headings | Done | `check-project.py` |
 | A-4 | README and wiki don't contradict each other | Not automated: a review item. The wiki repeats README sections, so it's worth reading both when either changes. | Manual (section 3.6) |
 | A-5 | Every shipped pack survives a save and reload unchanged | Done | `library::tests::every_library_pack_survives_a_save_and_load` |
-| A-6 | Config migration: a converted config saves and reloads unchanged, and migration is a no-op on a saved file | Partly done. The round trip is tested; the on-disk `config.toml.old` backup is not, because `Config::load` reads the real user config directory. | `config::tests::a_converted_config_saves_and_loads_unchanged` |
+| A-6 | Config migration: the backup is written, the converted file reloads unchanged, and a second load changes nothing | Done. `Config::load_from` takes a path, so the tests use a temporary directory and never touch the real config. Covers the `config.toml.old` backup (a byte-for-byte copy), a second load (no new backup, same file), and a second conversion (keeps the earlier backup, writes `.old.2`). The `before-guide` backup is not tested. | `config::tests::a_legacy_config_*`, `a_later_conversion_*` |
 | A-7 | `cargo-sources.json` matches `Cargo.lock` | Done | `check-project.py` |
 | A-8 | Damaged pack and config text is refused or handled without panicking | Done, as a deterministic sweep (truncations, deleted and replaced characters). Not coverage-guided fuzzing; that would need `cargo-fuzz`. | `library::tests::damaged_packs_…`, `config::tests::damaged_configs_…` |
 | A-9 | Engine outputs stay in range | Partly done. Pad-axis outputs are checked to be finite and within -1..=1 over random input. Ring sector coverage is not checked. | `engine::release_tests` |
@@ -152,9 +152,8 @@ Automated checks can't judge these. Each needs a reviewer to decide what's accep
 1. Run the CI workflow on GitHub and fix whatever its first run finds (A-0).
 2. Check the tray's Quit on a desktop session, and check on libinput that a desktop releases keys when a virtual keyboard disappears (SIGKILL is the case where only that can help).
 3. Check the socket on a machine without `XDG_RUNTIME_DIR` (I-9, F2).
-4. Add the on-disk config backup test (A-6) with `dirs` pointed at a temporary directory, if `Config::load` can be made to take its path.
-5. Run the manual sections on the controllers and compositors you have, in this order: H, D, O, G, I, U, T.
-6. Do the security review (section 4) before the next release, and get a second reviewer for H-SEC-1 and H-SEC-2.
+4. Run the manual sections on the controllers and compositors you have, in this order: H, D, O, G, I, U, T.
+5. Do the security review (section 4) before the next release, and get a second reviewer for H-SEC-1 and H-SEC-2.
 
 ## Commands
 

@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use anyhow::{Context, Result};
@@ -2652,13 +2652,17 @@ impl Config {
     /// games existed is converted (see [`Config::from_legacy`]), keeping the original as
     /// `config.toml.old` (or `.old.2`, … if that's taken).
     pub fn load() -> Result<Self> {
-        let path = Self::path();
+        Self::load_from(&Self::path())
+    }
+
+    /// [`Config::load`] for the config at `path`.
+    pub fn load_from(path: &Path) -> Result<Self> {
         if !path.exists() {
             let config = Config::default();
-            config.save()?;
+            config.save_to(path)?;
             return Ok(config);
         }
-        let text = std::fs::read_to_string(&path)
+        let text = std::fs::read_to_string(path)
             .with_context(|| format!("reading {}", path.display()))?;
         let text = migrate_text(&text);
         match toml::from_str::<Config>(&text) {
@@ -2666,9 +2670,9 @@ impl Config {
                 if config.adopt_guide_layer() {
                     let backup = path.with_extension("toml.before-guide");
                     if !backup.exists() {
-                        std::fs::copy(&path, &backup).with_context(|| format!("keeping a copy at {}", backup.display()))?;
+                        std::fs::copy(path, &backup).with_context(|| format!("keeping a copy at {}", backup.display()))?;
                     }
-                    config.save()?;
+                    config.save_to(path)?;
                 }
                 Ok(config)
             }
@@ -2683,9 +2687,9 @@ impl Config {
                     .map(|i| if i == 1 { path.with_extension("toml.old") } else { path.with_extension(format!("toml.old.{i}")) })
                     .find(|p| !p.exists())
                     .unwrap();
-                std::fs::copy(&path, &backup).with_context(|| format!("keeping a copy at {}", backup.display()))?;
+                std::fs::copy(path, &backup).with_context(|| format!("keeping a copy at {}", backup.display()))?;
                 config.adopt_guide_layer();
-                config.save()?;
+                config.save_to(path)?;
                 Ok(config)
             }
         }
@@ -2823,14 +2827,18 @@ impl Config {
     }
 
     pub fn save(&self) -> Result<()> {
-        let path = Self::path();
+        self.save_to(&Self::path())
+    }
+
+    /// [`Config::save`] to `path`.
+    pub fn save_to(&self, path: &Path) -> Result<()> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
         // Write-then-rename so the daemon never reads a half-written file.
         let tmp = path.with_extension("toml.tmp");
         std::fs::write(&tmp, toml::to_string_pretty(self)?)?;
-        std::fs::rename(&tmp, &path)?;
+        std::fs::rename(&tmp, path)?;
         Ok(())
     }
 
@@ -3736,5 +3744,56 @@ steps = [{ wait = 10 }]
             let _ = Config::from_legacy(text);
             let _ = Config::from_legacy(&migrated);
         }
+    }
+
+    fn scratch_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("padwight-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_legacy_config_is_converted_once_and_its_original_is_kept() {
+        let dir = scratch_dir("legacy-backup");
+        let path = dir.join("config.toml");
+        let original = legacy_config();
+        std::fs::write(&path, &original).unwrap();
+
+        let config = Config::load_from(&path).unwrap();
+        let backup = dir.join("config.toml.old");
+        assert_eq!(std::fs::read_to_string(&backup).unwrap(), original, "the backup is the file as it was");
+        let converted = std::fs::read_to_string(&path).unwrap();
+        assert!(converted != original, "the file is rewritten in the new format");
+
+        // Loading again changes nothing: same config, same file, no second backup.
+        assert!(Config::load_from(&path).unwrap() == config);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), converted);
+        assert!(!dir.join("config.toml.old.2").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_later_conversion_keeps_the_earlier_backup() {
+        let dir = scratch_dir("legacy-backup-twice");
+        let path = dir.join("config.toml");
+        std::fs::write(dir.join("config.toml.old"), "from an earlier conversion").unwrap();
+        let original = legacy_config();
+        std::fs::write(&path, &original).unwrap();
+
+        Config::load_from(&path).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("config.toml.old")).unwrap(), "from an earlier conversion");
+        assert_eq!(std::fs::read_to_string(dir.join("config.toml.old.2")).unwrap(), original);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_missing_config_is_written_as_the_default() {
+        let dir = scratch_dir("missing-config");
+        let path = dir.join("nested").join("config.toml");
+        assert!(Config::load_from(&path).unwrap() == Config::default());
+        assert!(Config::load_from(&path).unwrap() == Config::default());
+        assert!(!dir.join("nested").join("config.toml.old").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
