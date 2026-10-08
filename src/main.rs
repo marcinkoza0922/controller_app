@@ -18,6 +18,7 @@ mod output;
 mod overlay;
 mod pack;
 mod pad_svg;
+mod quit;
 mod rumble;
 mod style;
 

@@ -189,6 +189,8 @@ pub struct Engine {
     overlay_toggled: Option<crate::keyboard::Layout>,
     /// Set when a Screenshot action fires; the daemon takes it.
     screenshot_requested: bool,
+    /// How many inputs hold a ForceQuit action down.
+    force_quit_holds: u32,
     /// Set when an OpenMenu action fires; the daemon takes it.
     menu_request: Option<(String, Opener)>,
     /// Set while a Toggle turns its inner action on.
@@ -317,6 +319,11 @@ impl Engine {
     /// Log overlays held up by ShowLog actions right now.
     pub fn shown_logs(&self) -> impl Iterator<Item = &String> {
         self.log_holds.keys()
+    }
+
+    /// Whether a ForceQuit action is being held down.
+    pub fn force_quit_held(&self) -> bool {
+        self.force_quit_holds > 0
     }
 
     /// Whether a Screenshot action fired since the last call.
@@ -801,6 +808,13 @@ impl Engine {
         ButtonAction::Screenshot => {
             if pressed {
                 self.screenshot_requested = true;
+            }
+        }
+        ButtonAction::ForceQuit => {
+            if pressed {
+                self.force_quit_holds += 1;
+            } else {
+                self.force_quit_holds = self.force_quit_holds.saturating_sub(1);
             }
         }
         ButtonAction::ShowInfo(name) => {
@@ -1436,6 +1450,21 @@ mod tests {
         assert!(e.take_screenshot() && !e.take_screenshot());
         e.handle(&p, InputEvent::Button(Button::RightBumper, false), Instant::now(), &mut out);
         assert!(!e.take_screenshot());
+    }
+
+    #[test]
+    fn force_quit_is_held_only_while_pressed() {
+        let mut p = Profile::passthrough("p");
+        p.set_button(Button::East, ButtonAction::ForceQuit);
+        let mut e = Engine::default();
+        let mut out = Vec::new();
+        e.handle(&p, InputEvent::Button(Button::East, true), Instant::now(), &mut out);
+        assert!(e.force_quit_held());
+        e.handle(&p, InputEvent::Button(Button::East, false), Instant::now(), &mut out);
+        assert!(!e.force_quit_held());
+        e.handle(&p, InputEvent::Button(Button::East, true), Instant::now(), &mut out);
+        e.release_all(false, &mut out);
+        assert!(!e.force_quit_held(), "letting everything go cancels it");
     }
 
     #[test]

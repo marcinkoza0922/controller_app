@@ -2,7 +2,7 @@
 
 Status: steps 1–2 implemented (2026-10-07): the `Shift` action, the swallow option, the default
 Guide layer without Screenshot, ForceQuit and ToggleRecording (L3, RB and B are unbound in it
-for now), and the migration. Step 3 (`Screenshot`, in `src/capture.rs`) is done too; the rest is still to do.
+for now), and the migration. Step 3 (`Screenshot`, in `src/capture.rs`) and `ForceQuit` (`src/quit.rs`, B held 2 s) are done too; recording and the packs are still to do.
 
 ## Goal
 
@@ -36,7 +36,7 @@ screenshot, mouse clicks and so on).
 | + RT | Left click |
 | + LT | Right click |
 | + Right stick | Move the mouse |
-| + B (held ~2 s) | Force quit the focused game |
+| + B (held ~2 s) | Force quit the focused window |
 | + D-pad Right / Down / Left | Enter / Tab / Escape |
 | + D-pad Up | Next profile |
 
@@ -56,10 +56,11 @@ screenshot, mouse clicks and so on).
   so a second start can't happen, and stops it on exit. A toast and the overlay show that
   recording is on. If the tool isn't installed, the action toasts that instead of failing
   silently.
-- **`ForceQuit`.** Acts on the PID of the focused window only when it matches a game's rules
-  (`focus/mod.rs`), so it can never kill the desktop or compositor. Sends SIGTERM to the
-  process tree, then SIGKILL after a short delay. Releasing Guide's layer or B before the hold
-  completes cancels it.
+- **`ForceQuit`.** Acts on the focused window's process: a game with a rule goes by the game's
+  name, any other window by its title. It never touches the desktop (shell, compositor, display
+  server, session services; see `quit::protected`), a window with no process, or this app.
+  Sends SIGTERM to the process tree, then SIGKILL after 3 s. Letting go before the 2 s hold
+  completes cancels it. Without focus tracking it can only end the active game's process.
 
 All three appear in the action picker with summaries, and pack validation knows them.
 `requires` on packs lists gpu-screen-recorder or the screenshot tool where they are used.

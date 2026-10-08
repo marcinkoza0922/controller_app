@@ -115,6 +115,7 @@ pub(super) enum ActionKind {
     Overlay,
     Numpad,
     Screenshot,
+    ForceQuit,
     Toggle,
     Turbo,
     Macro,
@@ -138,6 +139,7 @@ impl fmt::Display for ActionKind {
             ActionKind::Overlay => "On-screen keyboard",
             ActionKind::Numpad => "On-screen numpad",
             ActionKind::Screenshot => "Take screenshot",
+            ActionKind::ForceQuit => "Force quit focused window (hold)",
             ActionKind::Toggle => "Toggle (each press switches on / off)…",
             ActionKind::Macro => "Macro…",
             ActionKind::Menu => "Open menu…",
@@ -152,7 +154,7 @@ impl fmt::Display for ActionKind {
 }
 
 /// Every kind, for a top-level action.
-pub(super) const ACTION_KINDS: [ActionKind; 18] = [
+pub(super) const ACTION_KINDS: [ActionKind; 19] = [
     ActionKind::Disabled,
     ActionKind::Gamepad,
     ActionKind::Keys,
@@ -162,6 +164,7 @@ pub(super) const ACTION_KINDS: [ActionKind; 18] = [
     ActionKind::Overlay,
     ActionKind::Numpad,
     ActionKind::Screenshot,
+    ActionKind::ForceQuit,
     ActionKind::Toggle,
     ActionKind::Turbo,
     ActionKind::Macro,
@@ -289,6 +292,7 @@ pub(super) fn action_kind(action: &ButtonAction) -> ActionKind {
         ButtonAction::ToggleOverlay => ActionKind::Overlay,
         ButtonAction::ToggleNumpad => ActionKind::Numpad,
         ButtonAction::Screenshot => ActionKind::Screenshot,
+        ButtonAction::ForceQuit => ActionKind::ForceQuit,
         ButtonAction::Multi(_) => ActionKind::Multiple,
         ButtonAction::Toggle(_) => ActionKind::Toggle,
         ButtonAction::Turbo { .. } => ActionKind::Turbo,
@@ -320,6 +324,7 @@ pub(super) fn new_action(k: ActionKind, default_button: Button, current: &Button
         ActionKind::Overlay => ButtonAction::ToggleOverlay,
         ActionKind::Numpad => ButtonAction::ToggleNumpad,
         ActionKind::Screenshot => ButtonAction::Screenshot,
+        ActionKind::ForceQuit => ButtonAction::ForceQuit,
         // Keep what was there as the first entry.
         ActionKind::Multiple => ButtonAction::Multi(wrappable.into_iter().collect()),
         ActionKind::Toggle => ButtonAction::toggle(wrappable.unwrap_or(ButtonAction::Keys(Vec::new()))),
@@ -454,6 +459,12 @@ pub(super) fn action_value<'a>(
             line.into()
         }
         ButtonAction::Disabled | ButtonAction::NextProfile | ButtonAction::Screenshot => space().into(),
+        ButtonAction::ForceQuit => {
+            text("Hold for 2 seconds to end the focused window's process (never the desktop).")
+                .size(12)
+                .color(MUTED_COLOR)
+                .into()
+        }
         ButtonAction::ToggleOverlay | ButtonAction::ToggleNumpad => {
             text("Hold B on the controller to close it.").size(12).color(MUTED_COLOR).into()
         }

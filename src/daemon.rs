@@ -55,6 +55,9 @@ const GYRO_CALIBRATION: Duration = Duration::from_secs(2);
 /// How many recently focused windows the GUI can offer for new rules.
 const RECENT_WINDOWS: usize = 8;
 
+/// How long a ForceQuit action has to be held.
+const FORCE_QUIT_HOLD: Duration = Duration::from_secs(2);
+
 enum Msg {
     Input { id: u64, events: Vec<InputEvent> },
     Gone { id: u64 },
@@ -204,6 +207,8 @@ struct Daemon {
     /// Where the overlay keyboard's cursor was, for the next time it opens.
     /// Where each on-screen layout's cursor was left, to pick up there next time.
     overlay_cursors: HashMap<Layout, crate::keyboard::Cursor>,
+    /// When a held ForceQuit started counting, and whether it has already fired.
+    quit_hold: Option<(Instant, bool)>,
     overlay_watchers: Vec<Sender<OverlayFrame>>,
     /// The frame last sent to the overlay window, to skip sending it again unchanged.
     last_frame: Option<OverlayFrame>,
@@ -262,6 +267,7 @@ pub fn run() -> Result<()> {
         scan_target: None,
         active: None,
         overlay_cursors: HashMap::new(),
+        quit_hold: None,
         overlay_watchers: Vec::new(),
         last_frame: None,
         info_refresh: None,
@@ -359,6 +365,7 @@ impl Daemon {
             .chain(self.info_refresh)
             .chain(self.info_fade)
             .chain(self.log_redraw)
+            .chain(self.quit_hold.filter(|(_, done)| !done).map(|(since, _)| since + FORCE_QUIT_HOLD))
             .min()
     }
 
@@ -423,6 +430,7 @@ impl Daemon {
         if screenshot {
             self.take_screenshot();
         }
+        self.update_force_quit();
         if let Some((id, (name, opener))) = menu_request {
             self.open_menu(id, &name, opener);
         }
@@ -431,6 +439,58 @@ impl Daemon {
             self.log_changed();
         }
         self.check_info_changes();
+    }
+
+    /// What to force quit, by name, and its process: the focused window (a game with a rule
+    /// goes by the game's name), unless it is the desktop or this app. Without focus tracking,
+    /// only the active game's running process.
+    fn force_quit_target(&self) -> Option<(String, u32)> {
+        if self.focus_backend == FocusBackend::ProcessScan {
+            let active = &self.config.active_game().name;
+            return crate::focus::game_launch_in(&self.config, &crate::focus::running_processes()).filter(|(game, _)| game == active);
+        }
+        let window = self.focused.as_ref()?;
+        if let Some(game) = crate::focus::game_launch(&self.config, window) {
+            return Some(game);
+        }
+        if window.pid == 0 || crate::quit::protected(&window.exe) || crate::focus::is_own_window(window) {
+            return None;
+        }
+        let name = [&window.title, &window.exe, &window.class].into_iter().find(|n| !n.is_empty())?;
+        Some((name.clone(), window.pid))
+    }
+
+    /// Starts, cancels or completes the countdown of a ForceQuit action being held.
+    fn update_force_quit(&mut self) {
+        let held = self.devices.values().any(|d| d.engine.force_quit_held());
+        let now = Instant::now();
+        match (held, self.quit_hold) {
+            (false, _) => self.quit_hold = None,
+            (true, None) => {
+                self.quit_hold = Some((now, false));
+                let game = self.force_quit_target().map_or(String::new(), |(game, _)| format!(" {game}"));
+                self.say(vec![format!("Keep holding to force quit{game}…")]);
+            }
+            (true, Some((since, false))) if now.duration_since(since) >= FORCE_QUIT_HOLD => {
+                self.quit_hold = Some((since, true));
+                let lines = match self.force_quit_target() {
+                    Some((game, pid)) => {
+                        log!("force quitting {game} (pid {pid})");
+                        crate::quit::force_quit(pid);
+                        vec![format!("Force quit {game}")]
+                    }
+                    None => vec!["Nothing to force quit".into(), "The desktop and this app are never ended.".into()],
+                };
+                self.say(lines);
+            }
+            (true, Some(_)) => {}
+        }
+    }
+
+    /// Shows `lines` in a toast.
+    fn say(&mut self, lines: Vec<String>) {
+        self.toast = Some(crate::info::Toast::new(lines, Instant::now()));
+        self.broadcast_overlay();
     }
 
     /// Takes a screenshot in the background and says where it went (or why not) in a toast.
@@ -588,6 +648,7 @@ impl Daemon {
         if screenshot {
             self.take_screenshot();
         }
+        self.update_force_quit();
         if let Some((name, opener)) = menu_request {
             self.open_menu(device, &name, opener);
         }
@@ -820,10 +881,7 @@ impl Daemon {
                 self.scan_target = None;
             }
             Msg::Focus(FocusEvent::Focused(window)) => self.window_focused(&window),
-            Msg::Toast(lines) => {
-                self.toast = Some(crate::info::Toast::new(lines, Instant::now()));
-                self.broadcast_overlay();
-            }
+            Msg::Toast(lines) => self.say(lines),
             Msg::Motion { id, sample } => self.motion(id, sample),
             Msg::WatchOverlay(watcher) => {
                 if watcher.send(self.overlay_frame()).is_ok() {
@@ -1080,6 +1138,7 @@ impl Daemon {
         if screenshot {
             self.take_screenshot();
         }
+        self.update_force_quit();
         if let Some((name, opener)) = menu_request {
             self.open_menu(id, &name, opener);
         }
