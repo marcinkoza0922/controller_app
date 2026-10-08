@@ -169,8 +169,18 @@ pub struct InputSnapshot {
     pub gyro: Option<[f32; 3]>,
 }
 
+/// A runtime directory the host can see too, for files that the desktop or another instance
+/// must reach. In a Flatpak, `$XDG_RUNTIME_DIR` is private to each sandbox run, so the app's
+/// own directory under it is used instead: the host shares that one between runs.
+pub fn shared_runtime_dir() -> Option<PathBuf> {
+    match std::env::var_os("FLATPAK_ID") {
+        Some(id) => dirs::runtime_dir().map(|dir| dir.join("app").join(id)),
+        None => dirs::runtime_dir(),
+    }
+}
+
 pub fn socket_path() -> PathBuf {
-    match dirs::runtime_dir() {
+    match shared_runtime_dir() {
         Some(dir) => dir.join("padwight.sock"),
         None => std::env::temp_dir().join(format!("padwight-{}.sock", unsafe { libc::getuid() })),
     }

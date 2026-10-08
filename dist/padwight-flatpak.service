@@ -1,0 +1,11 @@
+[Unit]
+Description=Padwight gamepad remapper (Flatpak)
+After=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/flatpak run --command=padwight io.github.marcinkoza0922.Padwight daemon
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

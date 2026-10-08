@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.marcinkoza0922.Padwight</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <name>Padwight</name>
+  <summary>Gamepad remapper with per-game profiles</summary>
+  <description>
+    <p>
+      Padwight grabs your gamepads and turns them into keyboard, mouse and gamepad input, with
+      per-game profiles, layers, macros, on-screen menus and an on-screen keyboard.
+    </p>
+    <p>
+      A background daemon runs the active profile. The settings window edits profiles and
+      games, and can import and export packs of games.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.marcinkoza0922.Padwight.desktop</launchable>
+  <url type="homepage">https://github.com/marcinkoza0922/padwight</url>
+  <url type="bugtracker">https://github.com/marcinkoza0922/padwight/issues</url>
+  <categories>
+    <category>Settings</category>
+    <category>HardwareSettings</category>
+  </categories>
+  <releases>
+    <release version="0.1.0" date="2026-10-08"/>
+  </releases>
+  <content_rating type="oars-1.1"/>
+</component>

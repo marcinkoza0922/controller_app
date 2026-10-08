@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Padwight
+GenericName=Gamepad Remapper
+Comment=Remap gamepad buttons, sticks and gyro to keyboard, mouse and gamepad input
+Exec=padwight
+Icon=io.github.marcinkoza0922.Padwight
+Terminal=false
+Categories=Settings;HardwareSettings;
+Keywords=gamepad;controller;remap;joystick;
+StartupNotify=true
