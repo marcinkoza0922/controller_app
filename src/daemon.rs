@@ -69,6 +69,11 @@ enum Msg {
     WatchOverlay(Sender<OverlayFrame>),
     /// Something to say in a toast, from a background task (e.g. a screenshot finishing).
     Toast(Vec<String>),
+    /// The recorder is running as `pid`, or could not start.
+    RecordingStarted { pid: u32 },
+    RecordingFailed(String),
+    /// The recorder exited (finished its file, or died).
+    RecordingEnded { pid: u32, ok: bool, path: PathBuf },
 }
 
 struct Managed {
@@ -209,6 +214,9 @@ struct Daemon {
     overlay_cursors: HashMap<Layout, crate::keyboard::Cursor>,
     /// When a held ForceQuit started counting, and whether it has already fired.
     quit_hold: Option<(Instant, bool)>,
+    /// The screen recorder's process, once running, and whether one is being started.
+    recording: Option<u32>,
+    recording_starting: bool,
     overlay_watchers: Vec<Sender<OverlayFrame>>,
     /// The frame last sent to the overlay window, to skip sending it again unchanged.
     last_frame: Option<OverlayFrame>,
@@ -268,6 +276,8 @@ pub fn run() -> Result<()> {
         active: None,
         overlay_cursors: HashMap::new(),
         quit_hold: None,
+        recording: None,
+        recording_starting: false,
         overlay_watchers: Vec::new(),
         last_frame: None,
         info_refresh: None,
@@ -401,6 +411,7 @@ impl Daemon {
         let mut switch = false;
         let mut toggle_overlay = None;
         let mut screenshot = false;
+        let mut recording = false;
         let mut menu_request = None;
         let mut fired = Vec::new();
         for (id, dev) in self.devices.iter_mut() {
@@ -416,6 +427,7 @@ impl Daemon {
             dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
             toggle_overlay = dev.engine.take_overlay_toggle().or(toggle_overlay);
             screenshot |= dev.engine.take_screenshot();
+            recording |= dev.engine.take_recording_toggle();
             if let Some(request) = dev.engine.take_menu_request() {
                 menu_request = Some((*id, request));
             }
@@ -429,6 +441,9 @@ impl Daemon {
         }
         if screenshot {
             self.take_screenshot();
+        }
+        if recording {
+            self.toggle_recording();
         }
         self.update_force_quit();
         if let Some((id, (name, opener))) = menu_request {
@@ -491,6 +506,30 @@ impl Daemon {
     fn say(&mut self, lines: Vec<String>) {
         self.toast = Some(crate::info::Toast::new(lines, Instant::now()));
         self.broadcast_overlay();
+    }
+
+    /// Starts recording in the background, or asks a running recording to finish.
+    fn toggle_recording(&mut self) {
+        if let Some(pid) = self.recording {
+            crate::record::stop(pid);
+            self.say(vec!["Stopping recording…".into()]);
+            return;
+        }
+        if std::mem::replace(&mut self.recording_starting, true) {
+            return;
+        }
+        let (game, tx) = (self.config.active_game().name.clone(), self.tx.clone());
+        thread::spawn(move || match crate::record::start(&game) {
+            Ok((mut child, path)) => {
+                let pid = child.id();
+                let _ = tx.send(Msg::RecordingStarted { pid });
+                let ok = child.wait().is_ok_and(|s| s.success());
+                let _ = tx.send(Msg::RecordingEnded { pid, ok, path });
+            }
+            Err(e) => {
+                let _ = tx.send(Msg::RecordingFailed(format!("{e:#}")));
+            }
+        });
     }
 
     /// Takes a screenshot in the background and says where it went (or why not) in a toast.
@@ -633,6 +672,7 @@ impl Daemon {
         dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
         let toggle_overlay = dev.engine.take_overlay_toggle();
         let screenshot = dev.engine.take_screenshot();
+        let recording = dev.engine.take_recording_toggle();
         let menu_request = dev.engine.take_menu_request();
         // Switching profiles or opening the keyboard closes a menu that is still up.
         let menu_up = matches!(self.active, Some(Active::Menu { .. }));
@@ -647,6 +687,9 @@ impl Daemon {
         }
         if screenshot {
             self.take_screenshot();
+        }
+        if recording {
+            self.toggle_recording();
         }
         self.update_force_quit();
         if let Some((name, opener)) = menu_request {
@@ -882,6 +925,23 @@ impl Daemon {
             }
             Msg::Focus(FocusEvent::Focused(window)) => self.window_focused(&window),
             Msg::Toast(lines) => self.say(lines),
+            Msg::RecordingStarted { pid } => {
+                (self.recording, self.recording_starting) = (Some(pid), false);
+                self.say(vec!["Recording started".into()]);
+            }
+            Msg::RecordingFailed(reason) => {
+                self.recording_starting = false;
+                log!("recording failed: {reason}");
+                self.say(vec!["Recording failed".into(), reason]);
+            }
+            Msg::RecordingEnded { pid, ok, path } => {
+                if self.recording == Some(pid) {
+                    self.recording = None;
+                }
+                log!("recording ended ({}): {}", if ok { "saved" } else { "failed" }, path.display());
+                let head = if ok { "Recording saved" } else { "Recording ended unexpectedly" };
+                self.say(vec![head.into(), path.display().to_string()]);
+            }
             Msg::Motion { id, sample } => self.motion(id, sample),
             Msg::WatchOverlay(watcher) => {
                 if watcher.send(self.overlay_frame()).is_ok() {
@@ -1128,6 +1188,7 @@ impl Daemon {
         }
         let toggle_overlay = dev.engine.take_overlay_toggle();
         let screenshot = dev.engine.take_screenshot();
+        let recording = dev.engine.take_recording_toggle();
         let menu_request = dev.engine.take_menu_request();
         if switch && let Some(next) = self.config.next_profile() {
             self.switch_profile(next);
@@ -1137,6 +1198,9 @@ impl Daemon {
         }
         if screenshot {
             self.take_screenshot();
+        }
+        if recording {
+            self.toggle_recording();
         }
         self.update_force_quit();
         if let Some((name, opener)) = menu_request {

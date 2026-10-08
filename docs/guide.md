@@ -2,7 +2,7 @@
 
 Status: steps 1–2 implemented (2026-10-07): the `Shift` action, the swallow option, the default
 Guide layer without Screenshot, ForceQuit and ToggleRecording (L3, RB and B are unbound in it
-for now), and the migration. Step 3 (`Screenshot`, in `src/capture.rs`) and `ForceQuit` (`src/quit.rs`, B held 2 s) are done too; recording and the packs are still to do.
+for now), and the migration. Step 3 (`Screenshot`, in `src/capture.rs`) and `ForceQuit` (`src/quit.rs`, B held 2 s) are done too; `ToggleRecording` (`src/record.rs`, L3) is written but untried against a real gpu-screen-recorder; the packs are still to do.
 
 ## Goal
 
@@ -54,7 +54,7 @@ screenshot, mouse clicks and so on).
 - **`ToggleRecording`.** The first press spawns gpu-screen-recorder writing to
   `~/Videos/Recordings/<game>/`; the next stops it with SIGINT. The daemon tracks the child
   so a second start can't happen, and stops it on exit. A toast and the overlay show that
-  recording is on. If the tool isn't installed, the action toasts that instead of failing
+  recording is on (today only toasts say so; there is no lasting indicator). If the tool isn't installed, the action toasts that instead of failing
   silently.
 - **`ForceQuit`.** Acts on the focused window's process: a game with a rule goes by the game's
   name, any other window by its title. It never touches the desktop (shell, compositor, display

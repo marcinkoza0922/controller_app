@@ -189,6 +189,8 @@ pub struct Engine {
     overlay_toggled: Option<crate::keyboard::Layout>,
     /// Set when a Screenshot action fires; the daemon takes it.
     screenshot_requested: bool,
+    /// Set when a ToggleRecording action fires; the daemon takes it.
+    recording_toggled: bool,
     /// How many inputs hold a ForceQuit action down.
     force_quit_holds: u32,
     /// Set when an OpenMenu action fires; the daemon takes it.
@@ -319,6 +321,11 @@ impl Engine {
     /// Log overlays held up by ShowLog actions right now.
     pub fn shown_logs(&self) -> impl Iterator<Item = &String> {
         self.log_holds.keys()
+    }
+
+    /// Whether a ToggleRecording action fired since the last call.
+    pub fn take_recording_toggle(&mut self) -> bool {
+        std::mem::take(&mut self.recording_toggled)
     }
 
     /// Whether a ForceQuit action is being held down.
@@ -808,6 +815,11 @@ impl Engine {
         ButtonAction::Screenshot => {
             if pressed {
                 self.screenshot_requested = true;
+            }
+        }
+        ButtonAction::ToggleRecording => {
+            if pressed {
+                self.recording_toggled = true;
             }
         }
         ButtonAction::ForceQuit => {
@@ -1450,6 +1462,20 @@ mod tests {
         assert!(e.take_screenshot() && !e.take_screenshot());
         e.handle(&p, InputEvent::Button(Button::RightBumper, false), Instant::now(), &mut out);
         assert!(!e.take_screenshot());
+    }
+
+    #[test]
+    fn recording_is_toggled_on_each_press() {
+        let mut p = Profile::passthrough("p");
+        p.set_button(Button::LeftStick, ButtonAction::ToggleRecording);
+        let mut e = Engine::default();
+        let mut out = Vec::new();
+        for _ in 0..2 {
+            e.handle(&p, InputEvent::Button(Button::LeftStick, true), Instant::now(), &mut out);
+            assert!(e.take_recording_toggle() && !e.take_recording_toggle());
+            e.handle(&p, InputEvent::Button(Button::LeftStick, false), Instant::now(), &mut out);
+            assert!(!e.take_recording_toggle());
+        }
     }
 
     #[test]

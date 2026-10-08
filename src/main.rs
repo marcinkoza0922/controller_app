@@ -19,6 +19,7 @@ mod overlay;
 mod pack;
 mod pad_svg;
 mod quit;
+mod record;
 mod rumble;
 mod style;
 

@@ -1,5 +1,5 @@
 //! Screenshots: picks the screenshot tool for the desktop and saves to
-//! `~/Pictures/Screenshots/<game>/`.
+//! `~/Pictures/Screenshots/<game>/`. Also the file naming recordings share.
 
 use std::{
     path::{Path, PathBuf},
@@ -54,7 +54,7 @@ fn pick_tool(desktop: &str, installed: impl Fn(&str) -> bool) -> Option<Tool> {
         .find(|t| installed(t.program()))
 }
 
-fn on_path(program: &str) -> bool {
+pub fn on_path(program: &str) -> bool {
     std::env::var_os("PATH").is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(program).is_file()))
 }
 
@@ -65,12 +65,13 @@ fn folder_name(game: &str) -> String {
     if name.is_empty() { "Screenshots".into() } else { name.into() }
 }
 
-fn screenshot_path(pictures: &Path, game: &str, stamp: &str) -> PathBuf {
-    pictures.join("Screenshots").join(folder_name(game)).join(format!("{stamp}.png"))
+/// `<base>/<kind>/<game>/<stamp>.<ext>`, e.g. `~/Pictures/Screenshots/Doom/<time>.png`.
+pub fn media_path(base: &Path, kind: &str, game: &str, stamp: &str, ext: &str) -> PathBuf {
+    base.join(kind).join(folder_name(game)).join(format!("{stamp}.{ext}"))
 }
 
 /// The local time as `2026-10-07_19-58-03`.
-fn timestamp() -> String {
+pub fn timestamp() -> String {
     // SAFETY: `localtime_r` and `strftime` only write into the buffers passed to them.
     unsafe {
         let now = libc::time(std::ptr::null_mut());
@@ -88,7 +89,7 @@ pub fn screenshot(game: &str) -> Result<PathBuf> {
     let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
     let tool = pick_tool(&desktop, on_path).context("no screenshot tool found (install spectacle, grim or gnome-screenshot)")?;
     let pictures = dirs::picture_dir().or_else(|| dirs::home_dir().map(|h| h.join("Pictures"))).context("no Pictures folder")?;
-    let path = screenshot_path(&pictures, game, &timestamp());
+    let path = media_path(&pictures, "Screenshots", game, &timestamp(), "png");
     std::fs::create_dir_all(path.parent().context("no folder")?).with_context(|| format!("creating {}", path.display()))?;
     let status = Command::new(tool.program()).args(tool.args(&path)).status().with_context(|| format!("running {}", tool.program()))?;
     if !status.success() || !path.exists() {
@@ -115,7 +116,7 @@ mod tests {
     fn files_go_in_a_folder_named_after_the_game() {
         let pictures = Path::new("/home/me/Pictures");
         assert_eq!(
-            screenshot_path(pictures, "Max Payne 2", "2026-10-07_19-58-03"),
+            media_path(pictures, "Screenshots", "Max Payne 2", "2026-10-07_19-58-03", "png"),
             Path::new("/home/me/Pictures/Screenshots/Max Payne 2/2026-10-07_19-58-03.png")
         );
         assert_eq!(folder_name("../etc/passwd"), "_etc_passwd");

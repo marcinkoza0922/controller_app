@@ -226,6 +226,8 @@ pub enum ButtonAction {
     ToggleNumpad,
     /// Saves a screenshot to `~/Pictures/Screenshots/<game>/`.
     Screenshot,
+    /// Starts screen recording to `~/Videos/Recordings/<game>/`, or stops it if on.
+    ToggleRecording,
     /// While held for a couple of seconds, ends the focused window's process (a game or any
     /// other app, but never the desktop).
     ForceQuit,
@@ -1205,6 +1207,7 @@ impl Layer {
         layer.swallow_unbound = true;
         layer.buttons = BTreeMap::from([
             (Button::East, ForceQuit),
+            (Button::LeftStick, ToggleRecording),
             (Button::RightBumper, Screenshot),
             (Button::West, ToggleOverlay),
             (Button::North, ToggleNumpad),
