@@ -64,6 +64,10 @@ pub fn layer_sheet(layer: &Layer) -> InfoOverlay {
         };
         entries.push((format!("{{{token}}}"), label.into()));
     }
+    // The in-game menu isn't a binding of the Guide layer, but holding Guide is how you reach it.
+    if layer.name == crate::config::GUIDE_LAYER {
+        entries.push(("{guide} + {start}".into(), "Edit controls".into()));
+    }
     let rows = entries.chunks(2).map(|pair| pair.iter().flat_map(|(t, l)| [t.clone(), l.clone()]).collect()).collect();
     InfoOverlay {
         name: format!("layer {}", layer.name),
@@ -916,6 +920,7 @@ mod tests {
         pair("{rt}", "Left click");
         pair("{rs}", "Move the mouse");
         pair("{down}", "Tab");
+        pair("{guide} + {start}", "Edit controls");
         assert!(sheet.rows.iter().all(|r| r.len() % 2 == 0 && r.len() <= 4));
         assert!(!cells.iter().any(|c| c.as_str() == "{south}"), "swallowed buttons aren't listed");
         // Every cell parses into glyphs and text.

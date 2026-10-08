@@ -26,6 +26,10 @@ With no game running, Quick Settings doesn't change General. It makes a game ins
 
 Without a window in front, the change goes to General.
 
+## Appearance
+
+The menu has its own position, size and colours, set in the **In-game menu** card on the **Settings** page, or per game on its Details tab. Edit Controls uses the same look. The media controls have their own look the same way.
+
 ## Saving
 
 Changes take effect straight away, but they aren't written to the config file until you save.

@@ -38,4 +38,4 @@ The numpad types the top-row number keys, so it works whatever the Num Lock stat
 
 ## Appearance
 
-Both pads have their own position, size and colours on the **Settings** page.
+Both pads have their own position, size and colours on the **Settings** page. A game can use its own look for either one, from its Details tab. The [media controls](Buttons-and-Actions) and the [in-game menu](In-Game-Menu) have the same kind of Appearance section, on the same pages.

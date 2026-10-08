@@ -6,7 +6,7 @@ use std::collections::HashSet;
 
 use crate::{
     layout_editor::{EditStep, LayoutEditor},
-    config::{Button, Config, GyroMode, OverlayStyle, Profile, ProfileRef, ScreenPosition, Stick, StickAction},
+    config::{Button, Config, GyroMode, OverlayStyle, Profile, ProfileRef, Stick, StickAction},
     input::{Axis, InputEvent},
     menu::{ItemView, MenuView, Tone},
 };
@@ -226,20 +226,9 @@ impl SystemMenu {
 
     /// What the overlay draws now.
     pub fn view(&self, config: &Config) -> MenuView {
-        let style = OverlayStyle { position: ScreenPosition::Center, ..OverlayStyle::default() };
+        let style = config.active_menu_style().clone();
         match &self.screen {
-            Screen::Main => MenuView {
-                title: "Menu".into(),
-                kind: crate::config::MenuKind::List,
-                items: vec![
-                    ItemView { label: "Quick Settings".into(), button: None, submenu: true, buttons: Vec::new(), tone: Tone::Normal },
-                    ItemView { label: "Edit Controls".into(), button: None, submenu: false, buttons: Vec::new(), tone: Tone::Normal },
-                ],
-                selected: Some(self.cursor),
-                crumbs: Vec::new(),
-                hint: "A choose · B close".into(),
-                style,
-            },
+            Screen::Main => main_page(style, self.cursor),
             Screen::Editor(editor) => editor.view(config, &["Menu".to_string()]),
             Screen::Confirm => MenuView {
                 title: "Unsaved changes".into(),
@@ -424,6 +413,22 @@ fn next_profile(dir: i32, config: &Config) -> Option<ProfileRef> {
 pub(crate) fn active_profile_mut(config: &mut Config) -> Option<&mut Profile> {
     let at = config.active_ref();
     config.game_mut(at.game.as_deref())?.profiles.iter_mut().find(|p| p.name == at.profile)
+}
+
+/// The menu's first page, drawn with `style`; the settings previews show it too.
+pub fn main_page(style: OverlayStyle, cursor: usize) -> MenuView {
+    MenuView {
+        title: "Menu".into(),
+        kind: crate::config::MenuKind::List,
+        items: vec![
+            ItemView { label: "Quick Settings".into(), button: None, submenu: true, buttons: Vec::new(), tone: Tone::Normal },
+            ItemView { label: "Edit Controls".into(), button: None, submenu: false, buttons: Vec::new(), tone: Tone::Normal },
+        ],
+        selected: Some(cursor),
+        crumbs: Vec::new(),
+        hint: "A choose · B close".into(),
+        style,
+    }
 }
 
 #[cfg(test)]

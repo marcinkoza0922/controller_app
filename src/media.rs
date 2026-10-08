@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use zbus::{blocking::Connection, zvariant::{OwnedValue, Value}};
 
 use crate::{
-    config::{Button, OverlayStyle, ScreenPosition},
+    config::{Button, OverlayStyle},
     input::InputEvent,
     monitor::log,
 };
@@ -74,6 +74,27 @@ pub struct MediaView {
     pub style: OverlayStyle,
 }
 
+/// The controls, as the overlay reminds you.
+const HINT: &str = "D-pad ◀ ▶ seek   ▲ ▼ volume   LB RB track   A play / pause   Y player   B close";
+
+impl MediaView {
+    /// A made-up track, drawn with `style`, for the settings previews.
+    pub fn sample(style: OverlayStyle) -> Self {
+        MediaView {
+            player: Some("Music".into()),
+            title: "Track title".into(),
+            artist: "Artist".into(),
+            state: PlayState::Playing,
+            position_ms: 62_000,
+            length_ms: 215_000,
+            volume: Some(0.7),
+            players: 1,
+            hint: HINT.into(),
+            style,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Command {
     PlayPause,
@@ -131,8 +152,8 @@ impl MediaSession {
             length_ms: s.length_us / 1000,
             volume: s.volume.map(|v| v as f32),
             players: s.players,
-            hint: "D-pad ◀ ▶ seek   ▲ ▼ volume   LB RB track   A play / pause   Y player   B close".into(),
-            style: OverlayStyle { position: ScreenPosition::TopCenter, ..OverlayStyle::default() },
+            hint: HINT.into(),
+            style: OverlayStyle::media(),
         }
     }
 

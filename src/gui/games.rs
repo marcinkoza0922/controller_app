@@ -55,6 +55,10 @@ impl App {
             Message::ToggleNumpad => return call_ok(Request::ToggleNumpad),
             Message::ToggleNumpadAppearance => self.numpad_appearance = !self.numpad_appearance,
             Message::SetNumpadStyle(style) => self.config.numpad_style = style,
+            Message::ToggleMediaAppearance => self.media_appearance = !self.media_appearance,
+            Message::SetMediaStyle(style) => self.config.media_style = style,
+            Message::ToggleInGameMenuAppearance => self.menu_appearance = !self.menu_appearance,
+            Message::SetInGameMenuStyle(style) => self.config.menu_style = style,
             Message::CalibrateGyro(path) => {
                 self.message = Some(("Calibrating gyro: keep the controller still for 2 seconds.".into(), false));
                 return call_ok(Request::CalibrateGyro(path));
@@ -139,6 +143,8 @@ impl App {
             Message::SetColourblindTones(on) => self.config.colourblind_tones = on,
             Message::SetGameOverlayFont(font) => self.game_mut().overlay_font = font,
             Message::SetGameOverlayStyle(layout, style) => self.set_game_overlay_style(layout, style),
+            Message::SetGameMediaStyle(style) => self.game_mut().media_style = style,
+            Message::SetGameMenuStyle(style) => self.game_mut().menu_style = style,
             Message::SetIgnored(name, ignored) => {
                 // Applies immediately, independent of unsaved profile edits.
                 for c in [&mut self.config, &mut self.saved] {
@@ -351,7 +357,16 @@ impl App {
                 .into(),
             )],
         );
-        column![self.view_auto_switch(), self.view_font_card(), self.view_colour_card(), self.view_keyboard_card(), self.view_numpad_card(), glyphs]
+        column![
+            self.view_auto_switch(),
+            self.view_font_card(),
+            self.view_colour_card(),
+            self.view_keyboard_card(),
+            self.view_numpad_card(),
+            self.view_media_card(),
+            self.view_in_game_menu_card(),
+            glyphs,
+        ]
             .spacing(16)
             .into()
     }
@@ -631,6 +646,45 @@ impl App {
                 "A keyboard over everything, typed with the controller: D-pad or stick to move, A to \
                  press, X backspace, Y space, Start enter, hold LT for Shift, hold B to close. Map \"On-screen keyboard\" \
                  to a button or gesture to open it from the controller."
+                    .into(),
+            ),
+            rows,
+        )
+    }
+
+    pub(super) fn view_media_card(&self) -> Element<'_, Message> {
+        let mut rows: Vec<Element<'_, Message>> = vec![labeled("", disclosure("Appearance", self.media_appearance, Message::ToggleMediaAppearance))];
+        if self.media_appearance {
+            let style = &self.config.media_style;
+            rows.push(style_editor(style, Rc::new(Message::SetMediaStyle)));
+            let sample = crate::media::MediaView::sample(preview_style(style));
+            rows.push(preview(crate::overlay::draw::media_panel(&sample, self.preview_font())));
+        }
+        section(
+            "Media controls",
+            Some(
+                "The panel for the player you're listening to, shown over the game with Guide + LB. \
+                 Pick where it sits and how it looks."
+                    .into(),
+            ),
+            rows,
+        )
+    }
+
+    pub(super) fn view_in_game_menu_card(&self) -> Element<'_, Message> {
+        let mut rows: Vec<Element<'_, Message>> =
+            vec![labeled("", disclosure("Appearance", self.menu_appearance, Message::ToggleInGameMenuAppearance))];
+        if self.menu_appearance {
+            let style = &self.config.menu_style;
+            rows.push(style_editor(style, Rc::new(Message::SetInGameMenuStyle)));
+            let sample = crate::system_menu::main_page(preview_style(style), 0);
+            rows.push(preview(crate::overlay::draw::menu_panel(&sample, self.preview_font(), self.menu_look())));
+        }
+        section(
+            "In-game menu",
+            Some(
+                "The menu Guide + Start opens over a game, with Quick Settings and Edit Controls. Edit \
+                 Controls uses this look too. Pick where it sits and how it looks."
                     .into(),
             ),
             rows,

@@ -1,13 +1,13 @@
 # `.padpack` format reference
 
-A pack is one game in one file: TOML, in the same shapes the app writes to `config.toml`. This page describes **format 8**, the format the current app writes. For a walkthrough of building one, see [tutorial-deus-ex-pack.md](tutorial-deus-ex-pack.md). The shipped examples are in `packs/`.
+A pack is one game in one file: TOML, in the same shapes the app writes to `config.toml`. This page describes **format 9**, the format the current app writes. For a walkthrough of building one, see [tutorial-deus-ex-pack.md](tutorial-deus-ex-pack.md). The shipped examples are in `packs/`.
 
 The easiest way to write a pack is in the app, then **Details → Export…**. Read this page when you want to edit the file by hand, check a value, or understand what the export produced.
 
 ## Top level
 
 ```toml
-format = 8                       # pack format version (required)
+format = 9                       # pack format version (required)
 macros = []                      # optional, see Macros
 overlay_font = "Rajdhani"        # optional, font for overlays, menus and keyboards
 
@@ -27,6 +27,8 @@ made_with = "Xbox controller"
 [[layers]]                       # optional
 [keyboard_style]                 # optional, on-screen keyboard look
 [numpad_style]                   # optional, on-screen numpad look
+[media_style]                    # optional, media controls look
+[menu_style]                     # optional, in-game menu and Edit Controls look
 ```
 
 Unknown top-level keys are an error, so a typo fails the import rather than being ignored. `log_overlays` is also accepted.
@@ -315,11 +317,11 @@ color = "#080c0d"
 opacity = 0.94
 ```
 
-`keyboard_style` and `numpad_style` use the same shape as an overlay's `style`. `overlay_font` names a bundled font (`assets/fonts`) or an installed family.
+`keyboard_style`, `numpad_style`, `media_style` and `menu_style` use the same shape as an overlay's `style`. `overlay_font` names a bundled font (`assets/fonts`) or an installed family.
 
 ## Versioning
 
-- `format` is an integer. The app writes `8` and reads up to `8`. A pack with a newer `format` is refused with "update the app to import it". Older formats are upgraded when read.
+- `format` is an integer. The app writes `9` and reads up to `9`. A pack with a newer `format` is refused with "update the app to import it". Older formats are upgraded when read.
 - Format history:
   - 2 added layers.
   - 3 added toggles that start on.
@@ -328,6 +330,7 @@ opacity = 0.94
   - 6 added grid menus.
   - 7 added the Guide actions (`screenshot`, `toggle_recording`, `force_quit`), layer indicators with generated bindings, extra info overlays and a delay.
   - 8 moved controller needs from the pack to each profile (`requires`).
+  - 9 added the media controls and in-game menu looks (`media_style`, `menu_style`).
 - Bump `format` only for a breaking change to the shape. Adding an optional key with a default doesn't need it.
 
 ## Checks

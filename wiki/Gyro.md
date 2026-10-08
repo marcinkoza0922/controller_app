@@ -32,6 +32,7 @@ Each profile says whether it needs gyro. Tick **Can't be played without gyro** o
 ## Examples in the library
 
 - The PC action template turns on gyro mouse aiming while LT is held.
+- The gyro aim template turns gyro aiming on all the time, and the flick stick template adds a flick stick for turning. Hold LB to reposition the controller without turning.
 - StarCraft's Gameplay profile has a "+ Gyro" twin, which moves the cursor by tilting, as an extra to the left stick.
 - The library's shooters (Deus Ex, F.E.A.R., Max Payne and Max Payne 2) each have three profiles: one without gyro, one with gyro as an extra, and a flick stick profile that needs gyro. The rules point to the plain one first.
 
