@@ -1629,7 +1629,7 @@ impl App {
         } else {
             row![
                 button(text("Find by pressing")).style(style::secondary).on_press_maybe(self.status.is_some().then_some(Message::StartFind)),
-                help("Press a button or push a stick on your controller to jump to its mapping (needs the daemon).".into()),
+                help("Press a button or push a stick on your controller to jump to its mapping.".into()),
             ]
             .spacing(8)
             .align_y(Alignment::Center)

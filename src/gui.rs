@@ -741,10 +741,6 @@ impl App {
     }
 
     fn view_header(&self) -> Element<'_, Message> {
-        let (status_text, color) = match &self.status {
-            Some(_) => ("● Daemon running".to_string(), Color::from_rgb(0.3, 0.8, 0.4)),
-            None => ("○ Daemon not running".to_string(), ERROR_COLOR),
-        };
         let profiles: Vec<ProfileRef> = self
             .saved
             .all_games()
@@ -752,13 +748,13 @@ impl App {
             .collect();
         let running = self.status.is_some();
 
+        let mut title = row![text("Padwight").size(26), space::horizontal()].align_y(Alignment::Center);
+        if !running {
+            title = title.push(text("○ Daemon not running").color(ERROR_COLOR));
+        }
+
         let mut header = column![
-            row![
-                text("Padwight").size(26),
-                space::horizontal(),
-                text(status_text).color(color),
-            ]
-            .align_y(Alignment::Center),
+            title,
             row![
                 toggler(self.config.enabled)
                     .label("Remapping enabled")
