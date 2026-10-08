@@ -542,25 +542,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "controller_app"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "dirs",
- "evdev",
- "iced",
- "iced_layershell",
- "libc",
- "rfd",
- "serde",
- "serde_json",
- "tokio",
- "toml",
- "winit-core",
- "zbus",
-]
-
-[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2522,6 +2503,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "36820e9051aca1014ddc75770aab4d68bc1e9e632f0f5627c4086bc216fb583b"
 dependencies = [
  "ttf-parser",
+]
+
+[[package]]
+name = "padwight"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dirs",
+ "evdev",
+ "iced",
+ "iced_layershell",
+ "libc",
+ "rfd",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml",
+ "winit-core",
+ "zbus",
 ]
 
 [[package]]

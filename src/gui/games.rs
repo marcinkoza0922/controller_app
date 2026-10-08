@@ -26,7 +26,7 @@ impl fmt::Display for DefaultChoice {
 }
 
 /// The motion-sensor udev rule shipped in dist/, built in so the command works from anywhere.
-pub(super) const MOTION_RULE_FILE: &str = include_str!("../../dist/70-controller-app-motion.rules");
+pub(super) const MOTION_RULE_FILE: &str = include_str!("../../dist/70-padwight-motion.rules");
 
 /// Shell command (bash or fish) that installs the motion-sensor udev rule and applies it.
 pub(super) fn motion_rule_command() -> String {
@@ -36,7 +36,7 @@ pub(super) fn motion_rule_command() -> String {
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .collect();
     format!(
-        "echo '{}' | sudo tee /etc/udev/rules.d/70-controller-app-motion.rules >/dev/null \
+        "echo '{}' | sudo tee /etc/udev/rules.d/70-padwight-motion.rules >/dev/null \
          && sudo udevadm control --reload && sudo udevadm trigger",
         rules.join("\n")
     )

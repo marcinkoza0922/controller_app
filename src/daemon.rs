@@ -336,7 +336,7 @@ pub fn run() -> Result<()> {
         overlay_process: None,
         tx,
     };
-    log!("controller_app daemon started, socket at {}", ipc::socket_path().display());
+    log!("padwight daemon started, socket at {}", ipc::socket_path().display());
     {
         let tx = daemon.tx.clone();
         focus::spawn(move |ev| {
@@ -1784,7 +1784,7 @@ impl Daemon {
                 if !self.motion_denied.contains_key(&key)
                     && let Some(name) = input::inaccessible_motion_sensor(&path)
                 {
-                    log!("gyro: no permission to read {name}; install dist/70-controller-app-motion.rules");
+                    log!("gyro: no permission to read {name}; install dist/70-padwight-motion.rules");
                     self.motion_denied.insert(key, name);
                 }
                 continue;

@@ -7,7 +7,7 @@ use zbus::blocking::Connection;
 
 use super::dbus::{BUS_NAME, INTERFACE, OBJECT_PATH, call};
 
-const SCRIPT_NAME: &str = "controller_app_focus";
+const SCRIPT_NAME: &str = "padwight_focus";
 const KWIN: &str = "org.kde.KWin";
 
 /// KWin script: reports every focus change to our D-Bus service. Everything is sent as a
@@ -68,7 +68,7 @@ pub fn unload_script(conn: &Connection) -> Result<()> {
 fn script_path() -> PathBuf {
     dirs::runtime_dir()
         .unwrap_or_else(std::env::temp_dir)
-        .join("controller_app")
+        .join("padwight")
         .join("kwin_focus.js")
 }
 
