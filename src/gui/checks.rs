@@ -341,6 +341,9 @@ pub(super) fn layers_problem(g: &Game, names: &Names) -> Option<String> {
                 format!("{label}: missing info overlay {info:?} to show.")
             });
         }
+        if let Some(info) = l.also_info.iter().find(|i| !names.infos.contains(i)) {
+            return Some(format!("{label}: missing info overlay {info:?} to show."));
+        }
         if let Some(problem) = l.actions().into_iter().find_map(|a| action_problem(a, names)) {
             return Some(format!("{label}: {problem}."));
         }

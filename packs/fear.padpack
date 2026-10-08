@@ -1,13 +1,13 @@
-format = 6
+format = 7
 macros = []
 overlay_font = "Rajdhani"
 
 [pack]
 id = "440bc3de-a490-4318-b4d5-b11e53597dfe"
 name = "F.E.A.R."
-version = "1.1"
+version = "1.2"
 author = "controller_app"
-description = "F.E.A.R. (2005) and its expansions on an Xbox-style pad, for the game's default keys. Hold LB for a radial menu of weapons, grenade types, holster and drop (aim with the right stick); RB triggers slow-mo, LT zooms, R3 is melee, L3 toggles crouch. Start + Select shows every control."
+description = "F.E.A.R. (2005) and its expansions on an Xbox-style pad, for the game's default keys. Hold LB for a radial menu of weapons, grenade types, holster and drop (aim with the right stick); RB triggers slow-mo, LT zooms, R3 is melee, L3 toggles crouch. Hold Guide to see every control and the system shortcuts."
 made_with = "Xbox controller"
 requires = []
 
@@ -33,12 +33,10 @@ profile = "F.E.A.R."
 
 [[profiles]]
 name = "F.E.A.R."
+combos = []
 combo_window_ms = 120
 tap_window_ms = 250
 long_press_ms = 500
-
-[profiles.buttons]
-Guide = "next_profile"
 
 [profiles.buttons.South]
 keys = ["KEY_SPACE"]
@@ -63,6 +61,12 @@ keys = ["KEY_TAB"]
 
 [profiles.buttons.Start]
 keys = ["KEY_ESC"]
+
+[profiles.buttons.Guide.shift]
+layer = "Guide"
+
+[profiles.buttons.Guide.shift.tap]
+gamepad = "Guide"
 
 [profiles.buttons.LeftStick.toggle]
 keys = ["KEY_C"]
@@ -113,23 +117,14 @@ threshold = 0.3
 [profiles.right_trigger.action.button.action]
 mouse = "Left"
 
-[[profiles.combos]]
-buttons = [
-    "Start",
-    "Select",
-]
-
-[profiles.combos.action]
-show_info = "Controls"
+[profiles.gestures.Select.long_press]
+keys = ["KEY_M"]
 
 [profiles.gestures.Start.double_tap]
 keys = ["KEY_F5"]
 
 [profiles.gestures.Start.long_press]
 keys = ["KEY_F9"]
-
-[profiles.gestures.Select.long_press]
-keys = ["KEY_M"]
 
 [profiles.gyro]
 mode = "off"
@@ -211,6 +206,7 @@ opacity = 1.0
 
 [[info_overlays]]
 name = "Controls"
+title = "This game's controls"
 always = false
 rows = [
     [
@@ -284,3 +280,64 @@ opacity = 0.95
 [info_overlays.style.selected]
 color = "#b02f2f"
 opacity = 1.0
+
+[[layers]]
+name = "Guide"
+indicator = "bindings"
+also_info = ["Controls"]
+indicator_title = "Hold {guide} and press"
+indicator_delay_ms = 250
+swallow_unbound = true
+
+[layers.indicator_style]
+position = "bottom_left"
+scale = 0.8
+
+[layers.indicator_style.background]
+color = "#16181c"
+opacity = 0.85
+
+[layers.indicator_style.items]
+color = "#30343c"
+opacity = 0.95
+
+[layers.indicator_style.selected]
+color = "#2f5db0"
+opacity = 1.0
+
+[layers.buttons]
+East = "force_quit"
+North = "toggle_numpad"
+West = "toggle_overlay"
+RightBumper = "screenshot"
+LeftStick = "toggle_recording"
+DpadUp = "next_profile"
+
+[layers.buttons.DpadDown]
+keys = ["KEY_TAB"]
+
+[layers.buttons.DpadLeft]
+keys = ["KEY_ESC"]
+
+[layers.buttons.DpadRight]
+keys = ["KEY_ENTER"]
+
+[layers.right_stick]
+deadzone = 0.1
+curve = 2.0
+key_threshold = 0.5
+
+[layers.right_stick.action.mouse]
+speed = 1600.0
+
+[layers.left_trigger.action.button]
+threshold = 0.3
+
+[layers.left_trigger.action.button.action]
+mouse = "Right"
+
+[layers.right_trigger.action.button]
+threshold = 0.3
+
+[layers.right_trigger.action.button.action]
+mouse = "Left"

@@ -10,7 +10,71 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::{Button, CurrentInput, InfoOverlay, OverlayStyle, Stick, Trigger};
+use crate::config::{Button, CurrentInput, InfoOverlay, Layer, OverlayStyle, Stick, Trigger};
+
+/// The `{token}` that draws `b`'s glyph, for buttons the pad has.
+fn button_token(b: Button) -> Option<&'static str> {
+    Some(match b {
+        Button::South => "south",
+        Button::East => "east",
+        Button::West => "west",
+        Button::North => "north",
+        Button::LeftBumper => "lb",
+        Button::RightBumper => "rb",
+        Button::Select => "select",
+        Button::Start => "start",
+        Button::Guide => "guide",
+        Button::LeftStick => "l3",
+        Button::RightStick => "r3",
+        Button::DpadUp => "up",
+        Button::DpadDown => "down",
+        Button::DpadLeft => "left",
+        Button::DpadRight => "right",
+        _ => return None,
+    })
+}
+
+/// A cheat sheet of what `layer` changes: each input it sets, as a glyph and a short
+/// description, two pairs to a row. Buttons set to do nothing are left out.
+pub fn layer_sheet(layer: &Layer) -> InfoOverlay {
+    use crate::config::{ButtonAction, StickAction, TriggerAction};
+    let mut entries: Vec<(String, String)> = Vec::new();
+    for b in Button::ALL {
+        let Some(action) = layer.buttons.get(&b).filter(|a| **a != ButtonAction::Disabled) else { continue };
+        let Some(token) = button_token(b) else { continue };
+        entries.push((format!("{{{token}}}"), action.summary()));
+    }
+    for (token, trigger) in [("lt", &layer.left_trigger), ("rt", &layer.right_trigger)] {
+        let Some(trigger) = trigger else { continue };
+        let label = match &trigger.action {
+            TriggerAction::Button { action, .. } => action.summary(),
+            TriggerAction::Gamepad(_) => "Pad trigger".into(),
+            TriggerAction::Disabled => continue,
+        };
+        entries.push((format!("{{{token}}}"), label));
+    }
+    for (token, stick) in [("ls", &layer.left_stick), ("rs", &layer.right_stick)] {
+        let Some(stick) = stick else { continue };
+        let label = match &stick.action {
+            StickAction::Mouse { .. } => "Move the mouse",
+            StickAction::Scroll { .. } => "Scroll",
+            StickAction::Keys { .. } => "Arrow keys",
+            _ => "Remapped",
+        };
+        entries.push((format!("{{{token}}}"), label.into()));
+    }
+    let rows = entries.chunks(2).map(|pair| pair.iter().flat_map(|(t, l)| [t.clone(), l.clone()]).collect()).collect();
+    InfoOverlay {
+        name: format!("layer {}", layer.name),
+        always: true,
+        on_start: None,
+        linger: None,
+        current_input: Default::default(),
+        style: layer.indicator_style.clone(),
+        title: layer.indicator_title.clone(),
+        rows,
+    }
+}
 
 /// Whose button names and symbols to show.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -203,6 +267,9 @@ pub enum Segment {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InfoView {
     pub style: OverlayStyle,
+    /// A heading above the grid.
+    #[serde(default)]
+    pub title: Option<Vec<Segment>>,
     pub rows: Vec<Vec<Vec<Segment>>>,
     /// 1 normally, falling to 0 as it fades out (see [`fade`]).
     #[serde(default = "opaque")]
@@ -317,7 +384,7 @@ impl Toast {
     pub fn view(&self, now: Instant) -> Option<InfoView> {
         let opacity = fade(now, self.end)?;
         let rows = self.lines.iter().map(|l| vec![vec![Segment::Text(l.clone())]]).collect();
-        Some(InfoView { style: OverlayStyle::toast(), rows, opacity })
+        Some(InfoView { style: OverlayStyle::toast(), title: None, rows, opacity })
     }
 
     pub fn next_redraw(&self, now: Instant, frame: Duration) -> Instant {
@@ -505,40 +572,36 @@ fn stat(s: Stat, live: &Live) -> String {
 
 /// Turns an overlay's cells into text and glyphs, with live values filled in.
 pub fn resolve(overlay: &InfoOverlay, live: &Live) -> InfoView {
-    let rows = overlay
-        .rows
-        .iter()
-        .map(|row| {
-            row.iter()
-                .map(|cell| {
-                    let mut segments: Vec<Segment> = Vec::new();
-                    for part in parse(cell) {
-                        let segment = match part {
-                            Err(Token::CurrentInput { device, gap_ms, stay_ms }) => {
-                                let settings = token_settings(&overlay.current_input, device, gap_ms, stay_ms);
-                                segments.extend(live.inputs.current(&settings, live.family));
-                                continue;
-                            }
-                            Ok(text) => Segment::Text(text),
-                            Err(Token::Button(b)) => button_glyph(b, live.family),
-                            Err(Token::Trigger(t)) => trigger_glyph(t, live.family),
-                            Err(Token::Stick(Stick::Left)) => glyph("LS", None, true),
-                            Err(Token::Stick(Stick::Right)) => glyph("RS", None, true),
-                            Err(Token::Dpad) => glyph("✚", None, false),
-                            Err(Token::Stat(s)) => Segment::Text(stat(s, live)),
-                        };
-                        // Live values join the text around them.
-                        match (segments.last_mut(), segment) {
-                            (Some(Segment::Text(prev)), Segment::Text(t)) => prev.push_str(&t),
-                            (_, segment) => segments.push(segment),
-                        }
-                    }
-                    segments
-                })
-                .collect()
-        })
-        .collect();
-    InfoView { style: overlay.style.clone(), rows, opacity: 1.0 }
+    let rows = overlay.rows.iter().map(|row| row.iter().map(|cell| cell_segments(overlay, cell, live)).collect()).collect();
+    let title = overlay.title.as_ref().filter(|t| !t.trim().is_empty()).map(|t| cell_segments(overlay, t, live));
+    InfoView { style: overlay.style.clone(), title, rows, opacity: 1.0 }
+}
+
+/// One cell's text and glyphs.
+fn cell_segments(overlay: &InfoOverlay, cell: &str, live: &Live) -> Vec<Segment> {
+    let mut segments: Vec<Segment> = Vec::new();
+    for part in parse(cell) {
+        let segment = match part {
+            Err(Token::CurrentInput { device, gap_ms, stay_ms }) => {
+                let settings = token_settings(&overlay.current_input, device, gap_ms, stay_ms);
+                segments.extend(live.inputs.current(&settings, live.family));
+                continue;
+            }
+            Ok(text) => Segment::Text(text),
+            Err(Token::Button(b)) => button_glyph(b, live.family),
+            Err(Token::Trigger(t)) => trigger_glyph(t, live.family),
+            Err(Token::Stick(Stick::Left)) => glyph("LS", None, true),
+            Err(Token::Stick(Stick::Right)) => glyph("RS", None, true),
+            Err(Token::Dpad) => glyph("✚", None, false),
+            Err(Token::Stat(s)) => Segment::Text(stat(s, live)),
+        };
+        // Live values join the text around them.
+        match (segments.last_mut(), segment) {
+            (Some(Segment::Text(prev)), Segment::Text(t)) => prev.push_str(&t),
+            (_, segment) => segments.push(segment),
+        }
+    }
+    segments
 }
 
 /// Formats the local time with a `strftime` pattern.
@@ -626,6 +689,27 @@ fn gpu_busy() -> Option<f32> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_guide_layer_sheet_lists_what_it_binds() {
+        let sheet = layer_sheet(&Layer::guide());
+        let cells: Vec<&String> = sheet.rows.iter().flatten().collect();
+        let pair = |token: &str, label: &str| {
+            let at = cells.iter().position(|c| c.as_str() == token).unwrap_or_else(|| panic!("{token} missing"));
+            assert_eq!(cells[at + 1], label, "{token}");
+        };
+        pair("{west}", "On-screen keyboard");
+        pair("{north}", "On-screen numpad");
+        pair("{rb}", "Screenshot");
+        pair("{rt}", "Left click");
+        pair("{rs}", "Move the mouse");
+        pair("{down}", "Tab");
+        assert!(sheet.rows.iter().all(|r| r.len() % 2 == 0 && r.len() <= 4));
+        assert!(!cells.iter().any(|c| c.as_str() == "{south}"), "swallowed buttons aren't listed");
+        // Every cell parses into glyphs and text.
+        let live = Live::sample(PadFamily::Xbox);
+        assert!(!resolve(&sheet, &live).rows.is_empty());
+    }
+
     use super::*;
 
     #[test]
@@ -669,7 +753,7 @@ mod tests {
     fn overlay(rows: &[&[&str]]) -> InfoOverlay {
         InfoOverlay {
             name: "Keys".into(),
-            always: true, on_start: None, linger: None, current_input: Default::default(),
+            always: true, on_start: None, linger: None, title: None, current_input: Default::default(),
             style: OverlayStyle::info(),
             rows: rows.iter().map(|r| r.iter().map(std::string::ToString::to_string).collect()).collect(),
         }

@@ -60,6 +60,12 @@ fn signal(pids: &[u32], sig: libc::c_int) {
     }
 }
 
+/// Whether the process `pid` is still running (a zombie, waiting to be reaped, is not).
+pub fn is_running(pid: u32) -> bool {
+    let Ok(stat) = fs::read_to_string(format!("/proc/{pid}/stat")) else { return false };
+    stat.rfind(')').and_then(|i| stat[i + 1..].split_whitespace().next()).is_some_and(|state| state != "Z" && state != "X")
+}
+
 fn alive(pid: u32) -> bool {
     // SAFETY: signal 0 only checks that the process exists.
     unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
@@ -110,6 +116,16 @@ mod tests {
             assert!(protected(exe), "{exe}");
         }
         assert!(!protected("eldenring.exe") && !protected("firefox"));
+    }
+
+    #[test]
+    fn running_processes_are_told_from_gone_ones() {
+        assert!(is_running(std::process::id()));
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        assert!(!is_running(pid), "reaped");
+        assert!(!is_running(u32::MAX - 1));
     }
 
     #[test]

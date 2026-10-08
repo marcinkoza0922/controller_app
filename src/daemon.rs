@@ -217,6 +217,11 @@ struct Daemon {
     /// The screen recorder's process, once running, and whether one is being started.
     recording: Option<u32>,
     recording_starting: bool,
+    /// The game (or other program) that was in front when recording started, and its process:
+    /// the recording ends when it does.
+    recording_target: Option<(String, u32)>,
+    /// When each active layer came on, to delay its indicator.
+    layer_started: HashMap<String, Instant>,
     overlay_watchers: Vec<Sender<OverlayFrame>>,
     /// The frame last sent to the overlay window, to skip sending it again unchanged.
     last_frame: Option<OverlayFrame>,
@@ -278,6 +283,8 @@ pub fn run() -> Result<()> {
         quit_hold: None,
         recording: None,
         recording_starting: false,
+        recording_target: None,
+        layer_started: HashMap::new(),
         overlay_watchers: Vec::new(),
         last_frame: None,
         info_refresh: None,
@@ -459,7 +466,7 @@ impl Daemon {
     /// What to force quit, by name, and its process: the focused window (a game with a rule
     /// goes by the game's name), unless it is the desktop or this app. Without focus tracking,
     /// only the active game's running process.
-    fn force_quit_target(&self) -> Option<(String, u32)> {
+    fn focused_target(&self) -> Option<(String, u32)> {
         if self.focus_backend == FocusBackend::ProcessScan {
             let active = &self.config.active_game().name;
             return crate::focus::game_launch_in(&self.config, &crate::focus::running_processes()).filter(|(game, _)| game == active);
@@ -483,12 +490,12 @@ impl Daemon {
             (false, _) => self.quit_hold = None,
             (true, None) => {
                 self.quit_hold = Some((now, false));
-                let game = self.force_quit_target().map_or(String::new(), |(game, _)| format!(" {game}"));
+                let game = self.focused_target().map_or(String::new(), |(game, _)| format!(" {game}"));
                 self.say(vec![format!("Keep holding to force quit{game}…")]);
             }
             (true, Some((since, false))) if now.duration_since(since) >= FORCE_QUIT_HOLD => {
                 self.quit_hold = Some((since, true));
-                let lines = match self.force_quit_target() {
+                let lines = match self.focused_target() {
                     Some((game, pid)) => {
                         log!("force quitting {game} (pid {pid})");
                         crate::quit::force_quit(pid);
@@ -508,6 +515,20 @@ impl Daemon {
         self.broadcast_overlay();
     }
 
+    /// Ends a recording (saving it) once the program that was in front when it started is gone,
+    /// so closing the game doesn't leave the screen being recorded.
+    fn check_recorded_game(&mut self) {
+        let (Some(pid), Some((name, target))) = (self.recording, &self.recording_target) else { return };
+        if crate::quit::is_running(*target) {
+            return;
+        }
+        let lines = vec![format!("{name} closed"), "Saving the recording…".into()];
+        log!("{name} (pid {target}) exited, ending the recording");
+        self.recording_target = None;
+        crate::record::stop(pid);
+        self.say(lines);
+    }
+
     /// Starts recording in the background, or asks a running recording to finish.
     fn toggle_recording(&mut self) {
         if let Some(pid) = self.recording {
@@ -518,6 +539,7 @@ impl Daemon {
         if std::mem::replace(&mut self.recording_starting, true) {
             return;
         }
+        self.recording_target = self.focused_target();
         let (game, tx) = (self.config.active_game().name.clone(), self.tx.clone());
         thread::spawn(move || match crate::record::start(&game) {
             Ok((mut child, path)) => {
@@ -769,8 +791,12 @@ impl Daemon {
     fn timed_info(&mut self, now: Instant) -> Vec<(crate::config::InfoOverlay, f32)> {
         let held: HashSet<String> = self.devices.values().flat_map(|d| d.engine.shown_info()).cloned().collect();
         self.info_timers.update(held, &self.scope.info, now);
-        self.info_fade = self.info_timers.next_redraw(now, FADE_FRAME);
-        self.visible_info()
+        self.layer_started.retain(|name, _| self.devices.values().any(|d| d.engine.layers().contains(name)));
+        for name in self.active_layers() {
+            self.layer_started.entry(name).or_insert(now);
+        }
+        self.info_fade = [self.info_timers.next_redraw(now, FADE_FRAME), self.layer_indicator_due(now)].into_iter().flatten().min();
+        self.visible_info(now)
             .into_iter()
             .map(|(o, steady)| {
                 let opacity = if steady { 1.0 } else { self.info_timers.opacity(&o.name, now) };
@@ -783,7 +809,7 @@ impl Daemon {
     /// Info overlays to show now, and whether each is up steadily: those of the active game set
     /// to always show, any an action holds up, those shown for a while (at the game's start,
     /// or lingering), and active layers' indicators.
-    fn visible_info(&self) -> Vec<(crate::config::InfoOverlay, bool)> {
+    fn visible_info(&self, now: Instant) -> Vec<(crate::config::InfoOverlay, bool)> {
         use crate::config::{Indicator, InfoOverlay};
         let mut shown: Vec<(InfoOverlay, bool)> = self
             .scope
@@ -798,13 +824,24 @@ impl Daemon {
         // Each active layer's indicator: its name, or an info overlay of the game's.
         for name in self.active_layers() {
             let Some(layer) = self.scope.layers.iter().find(|l| l.name == name) else { continue };
+            if self.layer_indicator_due_at(layer).is_some_and(|due| due > now) {
+                continue;
+            }
+            for extra in &layer.also_info {
+                if shown.iter().all(|(o, _)| &o.name != extra)
+                    && let Some(o) = self.scope.info.iter().find(|o| &o.name == extra)
+                {
+                    shown.push((o.clone(), true));
+                }
+            }
             match &layer.indicator {
+                Indicator::Bindings => shown.push((crate::info::layer_sheet(layer), true)),
                 Indicator::Name => shown.push((
                     InfoOverlay {
                         name: format!("layer {name}"),
                         always: true,
                         on_start: None,
-                        linger: None,
+                        linger: None, title: None,
                         current_input: Default::default(),
                         style: layer.indicator_style.clone(),
                         rows: vec![vec![name.clone()]],
@@ -823,6 +860,22 @@ impl Daemon {
             }
         }
         shown
+    }
+
+    /// When `layer`'s indicator is due to appear, if it has been on and has a delay.
+    fn layer_indicator_due_at(&self, layer: &crate::config::Layer) -> Option<Instant> {
+        let started = self.layer_started.get(&layer.name)?;
+        (layer.indicator_delay_ms > 0).then(|| *started + Duration::from_millis(layer.indicator_delay_ms.into()))
+    }
+
+    /// The soonest moment a delayed layer indicator should appear, if one is waiting.
+    fn layer_indicator_due(&self, now: Instant) -> Option<Instant> {
+        self.active_layers()
+            .iter()
+            .filter_map(|name| self.scope.layers.iter().find(|l| &l.name == name))
+            .filter_map(|l| self.layer_indicator_due_at(l))
+            .filter(|due| *due > now)
+            .min()
     }
 
     /// Layers active on any controller (the last one used first), oldest first, that the
@@ -931,12 +984,14 @@ impl Daemon {
             }
             Msg::RecordingFailed(reason) => {
                 self.recording_starting = false;
+                self.recording_target = None;
                 log!("recording failed: {reason}");
                 self.say(vec!["Recording failed".into(), reason]);
             }
             Msg::RecordingEnded { pid, ok, path } => {
                 if self.recording == Some(pid) {
                     self.recording = None;
+                    self.recording_target = None;
                 }
                 log!("recording ended ({}): {}", if ok { "saved" } else { "failed" }, path.display());
                 let head = if ok { "Recording saved" } else { "Recording ended unexpectedly" };
@@ -1546,6 +1601,7 @@ impl Daemon {
         self.motion_nodes.retain(|k, _| present.contains(k));
         self.motion_denied.retain(|k, _| present.contains(k));
         self.check_overlay_process();
+        self.check_recorded_game();
         self.attach_motion();
         self.scan_processes();
         self.gamepads.retain(|k, _| present.contains(k));

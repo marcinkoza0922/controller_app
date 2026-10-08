@@ -69,6 +69,13 @@ pub fn problems(pack: &Pack) -> Vec<String> {
             problems.push(format!("presses unknown key {k:?}"));
         }
     }
+    // Guide opens the Guide layer in every profile, which the pack has.
+    if game.profiles.iter().any(|p| !p.holds_guide_layer()) {
+        problems.push("a profile's Guide button doesn't hold the Guide layer".into());
+    }
+    if !game.layers.iter().any(|l| l.name == crate::config::GUIDE_LAYER) {
+        problems.push("has no Guide layer".into());
+    }
     let used: BTreeSet<_> = out.features.iter().map(|f| f.feature).collect();
     let declared: BTreeSet<_> = pack.pack.requires.iter().copied().collect();
     if used != declared {

@@ -648,7 +648,16 @@ pub mod draw {
             }
             grid = grid.push(col);
         }
-        container(grid).padding([12.0 * s, 16.0 * s]).style(panel_style(c)).into()
+        let body: Element<'a, M> = match &v.title {
+            Some(title) => column![
+                container(info_cell(title, c, s, v.opacity)).padding([0.0, 0.0]).height(line).align_y(Vertical::Center),
+                grid,
+            ]
+            .spacing(8.0 * s)
+            .into(),
+            None => grid.into(),
+        };
+        container(body).padding([12.0 * s, 16.0 * s]).style(panel_style(c)).into()
     }
 
     fn info_cell<'a, M: 'a>(segments: &[Segment], c: Colors, s: f32, opacity: f32) -> Element<'a, M> {

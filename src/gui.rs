@@ -290,6 +290,8 @@ enum Message {
     SetInfoOnStart(usize, Option<f32>),
     /// Seconds info overlay `.0` stays after being let go, or `None` to go at once.
     SetInfoLinger(usize, Option<f32>),
+    SetInfoTitle(usize, String),
+    SetIndicatorTitle(String),
     SetInfoStyle(usize, OverlayStyle),
     ToggleInfoAppearance(usize),
     AddInfoRow(usize),
@@ -380,6 +382,9 @@ enum Message {
     SetCompare(String),
     SetIndicator(IndicatorChoice),
     SetSwallowUnbound(bool),
+    SetIndicatorDelay(u64),
+    AddAlsoInfo(String),
+    RemoveAlsoInfo(usize),
     SetIndicatorStyle(OverlayStyle),
     ToggleIndicatorAppearance,
     /// Make the layer set this (a copy of the profile's, to edit).
@@ -877,7 +882,7 @@ mod tests {
     fn every_page_tab_and_dialog_builds() {
         let mut app = with_game();
         app.config.shared.menus.push(Menu { name: "Wheel".into(), kind: MenuKind::List, items: vec![], cancel: None, style: OverlayStyle::default() });
-        app.config.games[0].info.push(InfoOverlay { name: "Controls".into(), always: true, on_start: None, linger: None, current_input: Default::default(), style: OverlayStyle::info(), rows: vec![vec!["{south}".into()]] });
+        app.config.games[0].info.push(InfoOverlay { name: "Controls".into(), always: true, on_start: None, linger: None, title: None, current_input: Default::default(), style: OverlayStyle::info(), rows: vec![vec!["{south}".into()]] });
         app.config.games[0].macros.push(Macro { name: "Dodge".into(), steps: vec![MacroStep::Wait(5)] });
         app.config.games[0].layers.push(crate::config::Layer::new("Hotkeys"));
         app.status = Some(Status { devices: vec![device("Pad", true, false)], active_layers: vec!["Hotkeys".into()], ..Default::default() });

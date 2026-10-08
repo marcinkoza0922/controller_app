@@ -590,6 +590,16 @@ impl OverlayStyle {
         }
     }
 
+    /// A layer's generated cheat sheet: bottom left, see-through enough to play behind.
+    pub fn sheet() -> Self {
+        OverlayStyle {
+            position: ScreenPosition::BottomLeft,
+            scale: 0.8,
+            background: Paint::new("#16181c", 0.85),
+            ..OverlayStyle::default()
+        }
+    }
+
     /// Notices such as the profile just switched to.
     pub fn toast() -> Self {
         OverlayStyle { position: ScreenPosition::TopCenter, background: Paint::new("#16181c", 0.85), ..OverlayStyle::default() }
@@ -684,6 +694,9 @@ pub struct InfoOverlay {
     /// fading out at the end.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub linger: Option<f32>,
+    /// A heading above the grid (may hold `{tokens}` too), to say what the cells are.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     #[serde(default = "OverlayStyle::info")]
     pub style: OverlayStyle,
     /// Rows of cells; cells line up in columns.
@@ -1152,6 +1165,8 @@ pub enum Indicator {
     Name,
     /// One of the game's (or the shared) info overlays.
     Info(String),
+    /// A cheat sheet built from the layer's own bindings, with button glyphs.
+    Bindings,
     Off,
 }
 
@@ -1166,6 +1181,16 @@ pub struct Layer {
     /// How the name label looks, for `Indicator::Name`.
     #[serde(default = "OverlayStyle::indicator")]
     pub indicator_style: OverlayStyle,
+    /// More of the game's info overlays shown with the indicator while the layer is on.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub also_info: Vec<String>,
+    /// The heading of the generated bindings sheet (may hold `{tokens}`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub indicator_title: Option<String>,
+    /// How long the layer must be on before its indicator and `also_info` appear, so a quick
+    /// tap of the input holding it doesn't flash them.
+    #[serde(default, skip_serializing_if = "is_zero_ms")]
+    pub indicator_delay_ms: u32,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub buttons: BTreeMap<Button, ButtonAction>,
     /// Per button, its gestures replace the profile's (empty: none while the layer is on).
@@ -1203,7 +1228,10 @@ impl Layer {
         use ButtonAction::*;
         let key = |k: &str| Keys(vec![k.into()]);
         let mut layer = Self::new(GUIDE_LAYER);
-        layer.indicator = Indicator::Off;
+        layer.indicator = Indicator::Bindings;
+        layer.indicator_style = OverlayStyle::sheet();
+        layer.indicator_title = Some("Hold {guide} and press".into());
+        layer.indicator_delay_ms = 250;
         layer.swallow_unbound = true;
         layer.buttons = BTreeMap::from([
             (Button::East, ForceQuit),
@@ -1237,6 +1265,9 @@ impl Layer {
             name: name.into(),
             indicator: Indicator::Name,
             indicator_style: OverlayStyle::indicator(),
+            also_info: Vec::new(),
+            indicator_title: None,
+            indicator_delay_ms: 0,
             buttons: BTreeMap::new(),
             gestures: BTreeMap::new(),
             combos: Vec::new(),
@@ -2281,6 +2312,7 @@ fn rename_in(
             {
                 *name = new.to_string();
             }
+            l.also_info.iter_mut().filter(|n| *n == old).for_each(|n| *n = new.to_string());
         }
     }
 }

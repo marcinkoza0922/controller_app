@@ -1,13 +1,13 @@
-format = 6
+format = 7
 macros = []
 overlay_font = "Rajdhani"
 
 [pack]
 id = "744efa38-f5b0-4a49-bc95-126809ef6fc2"
 name = "Deus Ex"
-version = "1.0"
+version = "1.1"
 author = "controller_app"
-description = "The original Deus Ex (2000) on an Xbox-style pad, for the game's default keys. Belt slots and augmentations on radial menus (hold LB / RB, aim with the right stick), crouch toggle on L3, quick save and load on Start. Start + Select shows every control; a small hint at launch shows how to reach the numpad (keypads) and keyboard."
+description = "The original Deus Ex (2000) on an Xbox-style pad, for the game's default keys. Belt slots and augmentations on radial menus (hold LB / RB, aim with the right stick), crouch toggle on L3, quick save and load on Start. Hold Guide to see every control and the system shortcuts (Guide + Y opens the numpad for keypads, Guide + X the keyboard)."
 made_with = "Xbox controller"
 requires = []
 
@@ -23,12 +23,12 @@ profile = "Deus Ex"
 
 [[profiles]]
 name = "Deus Ex"
+combos = []
 combo_window_ms = 120
 tap_window_ms = 250
 long_press_ms = 500
 
 [profiles.buttons]
-Guide = "next_profile"
 DpadUp = "disabled"
 
 [profiles.buttons.South]
@@ -54,6 +54,12 @@ keys = ["KEY_F2"]
 
 [profiles.buttons.Start]
 keys = ["KEY_ESC"]
+
+[profiles.buttons.Guide.shift]
+layer = "Guide"
+
+[profiles.buttons.Guide.shift.tap]
+gamepad = "Guide"
 
 [profiles.buttons.LeftStick.toggle]
 keys = ["KEY_X"]
@@ -108,36 +114,17 @@ threshold = 0.3
 [profiles.right_trigger.action.button.action]
 mouse = "Left"
 
-[[profiles.combos]]
-buttons = [
-    "Start",
-    "Select",
-]
-
-[profiles.combos.action]
-show_info = "Controls"
-
 [profiles.gestures.West.long_press]
 keys = ["KEY_APOSTROPHE"]
 
 [profiles.gestures.LeftBumper.double_tap]
 keys = ["KEY_BACKSPACE"]
 
-[profiles.gestures.Select.double_tap.toggle]
-start_on = true
-
-[profiles.gestures.Select.double_tap.toggle.action]
-show_info = "Hints"
-
 [profiles.gestures.Start.double_tap]
 keys = ["KEY_KPPLUS"]
 
 [profiles.gestures.Start.long_press]
 keys = ["KEY_KPSLASH"]
-
-[profiles.gestures.DpadUp]
-double_tap = "toggle_numpad"
-long_press = "toggle_overlay"
 
 [profiles.gyro]
 mode = "off"
@@ -313,6 +300,7 @@ opacity = 1.0
 
 [[info_overlays]]
 name = "Controls"
+title = "This game's controls"
 always = false
 rows = [
     [
@@ -358,10 +346,10 @@ rows = [
     "Drop / throw",
 ],
     [
-    "{up}{up}",
-    "Numpad · hold {up}: keyboard",
+    "{guide}",
+    "Hold: system shortcuts",
     "{select}",
-    "Goals · double tap: hints",
+    "Goals",
 ],
     [
     "{start}",
@@ -387,32 +375,66 @@ opacity = 0.95
 color = "#2f5db0"
 opacity = 1.0
 
-[[info_overlays]]
-name = "Hints"
-always = false
-rows = [[
-    "{up}{up} Numpad",
-    "hold {up} Keyboard",
-    "{start}+{select} All controls",
-    "{select}{select} Hide",
-]]
+[[layers]]
+name = "Guide"
+indicator = "bindings"
+also_info = ["Controls"]
+indicator_title = "Hold {guide} and press"
+indicator_delay_ms = 250
+swallow_unbound = true
 
-[info_overlays.style]
-position = "top_center"
-scale = 0.65
+[layers.indicator_style]
+position = "bottom_left"
+scale = 0.8
 
-[info_overlays.style.background]
+[layers.indicator_style.background]
 color = "#16181c"
-opacity = 0.35
+opacity = 0.85
 
-[info_overlays.style.items]
+[layers.indicator_style.items]
 color = "#30343c"
-opacity = 0.6
+opacity = 0.95
 
-[info_overlays.style.selected]
+[layers.indicator_style.selected]
 color = "#2f5db0"
 opacity = 1.0
 
+[layers.buttons]
+East = "force_quit"
+North = "toggle_numpad"
+West = "toggle_overlay"
+RightBumper = "screenshot"
+LeftStick = "toggle_recording"
+DpadUp = "next_profile"
+
+[layers.buttons.DpadDown]
+keys = ["KEY_TAB"]
+
+[layers.buttons.DpadLeft]
+keys = ["KEY_ESC"]
+
+[layers.buttons.DpadRight]
+keys = ["KEY_ENTER"]
+
+[layers.right_stick]
+deadzone = 0.1
+curve = 2.0
+key_threshold = 0.5
+
+[layers.right_stick.action.mouse]
+speed = 1600.0
+
+[layers.left_trigger.action.button]
+threshold = 0.3
+
+[layers.left_trigger.action.button.action]
+mouse = "Right"
+
+[layers.right_trigger.action.button]
+threshold = 0.3
+
+[layers.right_trigger.action.button.action]
+mouse = "Left"
 
 [keyboard_style]
 position = "bottom_center"

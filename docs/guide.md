@@ -54,7 +54,7 @@ screenshot, mouse clicks and so on).
 - **`ToggleRecording`.** The first press spawns gpu-screen-recorder writing to
   `~/Videos/Recordings/<game>/`; the next stops it with SIGINT. The daemon tracks the child
   so a second start can't happen, and stops it on exit. A toast and the overlay show that
-  recording is on (today only toasts say so; there is no lasting indicator). If the tool isn't installed, the action toasts that instead of failing
+  recording is on (today only toasts say so; there is no lasting indicator). If the program that was in front when it started (a game, or any non-desktop window; the same target as ForceQuit) exits, the recording is ended and saved. If the tool isn't installed, the action toasts that instead of failing
   silently.
 - **`ForceQuit`.** Acts on the focused window's process: a game with a rule goes by the game's
   name, any other window by its title. It never touches the desktop (shell, compositor, display
@@ -64,6 +64,26 @@ screenshot, mouse clicks and so on).
 
 All three appear in the action picker with summaries, and pack validation knows them.
 `requires` on packs lists gpu-screen-recorder or the screenshot tool where they are used.
+
+## Info overlays
+
+Holding Guide shows what it does, and games add to it.
+
+- **Layer indicators.** A layer's indicator can now be `bindings`: a cheat sheet generated
+  from the layer's own buttons, triggers and sticks (`info::layer_sheet`), so it can't drift
+  from the real bindings. A layer can also list more info overlays of its game to show with it
+  (`also_info`), and wait `indicator_delay_ms` before showing any of it, so a quick Guide tap
+  (which reaches Steam) doesn't flash them. The layer itself is active immediately.
+- **Headings.** The generated sheet is headed "Hold {guide} and press" (a layer's
+  `indicator_title`), and each pack's Controls overlay "This game's controls" (an info overlay's
+  new `title`), so it is clear that the shortcuts need Guide held and the centre panel is the
+  game's own mapping.
+- **Defaults.** The Guide layer uses `bindings`, bottom left, after 250 ms. In the library
+  packs it also shows the game's `Controls` overlay, so two overlays are up while Guide is held.
+- **Removed from the packs.** The Start + Select combo that showed Controls, Deus Ex's startup
+  `Hints` overlay, and the pack shortcuts for the on-screen keyboard and numpad (D-pad Up
+  gestures in Deus Ex, Select hold in StarCraft's Gameplay profile). Guide + X / Guide + Y
+  replace them. Pack descriptions and Controls rows are updated.
 
 ## Rollout
 

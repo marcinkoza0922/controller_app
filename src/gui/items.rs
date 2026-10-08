@@ -369,7 +369,7 @@ impl App {
                 let cells = |a: &str, b: &str| vec![a.to_string(), b.to_string()];
                 let overlay = InfoOverlay {
                     name,
-                    always: true, on_start: None, linger: None, current_input: Default::default(),
+                    always: true, on_start: None, linger: None, title: None, current_input: Default::default(),
                     style: OverlayStyle::info(),
                     rows: vec![cells("{south}", "Jump"), cells("{west}", "Reload")],
                 };
@@ -408,6 +408,11 @@ impl App {
             Message::SetInfoOnStart(i, on) => {
                 if let Some(o) = self.infos_mut().get_mut(i) {
                     o.on_start = on;
+                }
+            }
+            Message::SetInfoTitle(i, title) => {
+                if let Some(o) = self.infos_mut().get_mut(i) {
+                    o.title = Some(title).filter(|t| !t.is_empty());
                 }
             }
             Message::SetInfoLinger(i, seconds) => {
@@ -953,6 +958,13 @@ impl App {
     pub(super) fn view_info_editor<'a>(&'a self, i: usize, o: &'a InfoOverlay) -> Element<'a, Message> {
         let mut rows: Vec<Element<'a, Message>> = vec![
             labeled("Name", field("Info overlay name", &o.name).on_input(move |n| Message::RenameInfo(i, n)).width(240).into()),
+            labeled(
+                "Heading",
+                field("Optional, e.g. This game's controls", o.title.as_deref().unwrap_or(""))
+                    .on_input(move |t| Message::SetInfoTitle(i, t))
+                    .width(320)
+                    .into(),
+            ),
             labeled(
                 "Shown",
                 column![

@@ -12,8 +12,10 @@ use crate::config::{
 };
 
 /// The pack format this app writes, and the newest it reads. 2 added layers; 3, toggles
-/// that start on; 4, the keyboard and numpad styles; 5, the overlay font; 6, grid menus.
-pub const FORMAT: u32 = 6;
+/// that start on; 4, the keyboard and numpad styles; 5, the overlay font; 6, grid menus; 7,
+/// the Guide shift, screenshot, recording and force-quit actions and layer indicators
+/// with generated bindings, extra info overlays and a delay.
+pub const FORMAT: u32 = 7;
 pub const EXTENSION: &str = "padpack";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -226,6 +228,7 @@ fn references(profiles: &[Profile], menus: &[Menu], macros: &[Macro], layers: &[
         if let Indicator::Info(name) = &l.indicator {
             refs.insert((ItemKind::Info, name.clone()));
         }
+        refs.extend(l.also_info.iter().map(|name| (ItemKind::Info, name.clone())));
     }
     refs
 }
@@ -814,7 +817,7 @@ mod tests {
         let mut deeper = Layer::new("Deeper");
         deeper.gyro = Some(crate::config::GyroConfig { mode: crate::config::GyroMode::Mouse { sensitivity: 10.0 }, ..Default::default() });
         config.games[0].layers = vec![layer.clone(), deeper];
-        config.shared.info.push(InfoOverlay { name: "Cheat sheet".into(), always: false, on_start: None, linger: None, current_input: Default::default(), style: Default::default(), rows: vec![] });
+        config.shared.info.push(InfoOverlay { name: "Cheat sheet".into(), always: false, on_start: None, linger: None, title: None, current_input: Default::default(), style: Default::default(), rows: vec![] });
 
         let out = export(&config.games[0], &config.shared, &draft(&config.games[0], false));
         assert!(out.pulled_in.contains(&(ItemKind::Info, "Cheat sheet".into())), "an indicator's info overlay comes along");
