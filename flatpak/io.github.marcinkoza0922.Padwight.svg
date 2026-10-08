@@ -1,10 +1,27 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <rect width="128" height="128" rx="24" fill="#1d2430"/>
-  <path d="M34 42h60c12 0 20 10 20 22v10c0 12-8 20-18 20-7 0-10-5-14-9H46c-4 4-7 9-14 9-10 0-18-8-18-20V64c0-12 8-22 20-22z" fill="#e6edf7"/>
-  <rect x="34" y="58" width="6" height="18" rx="2" fill="#1d2430"/>
-  <rect x="25" y="65" width="18" height="6" rx="2" fill="#1d2430"/>
-  <circle cx="90" cy="62" r="4.5" fill="#4fb3ff"/>
-  <circle cx="98" cy="72" r="4.5" fill="#ff8a65"/>
-  <circle cx="82" cy="72" r="4.5" fill="#81c784"/>
-  <circle cx="90" cy="82" r="4.5" fill="#ffd54f"/>
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2b3850"/>
+      <stop offset="1" stop-color="#121822"/>
+    </linearGradient>
+    <linearGradient id="pad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f7faff"/>
+      <stop offset="1" stop-color="#c3d1e8"/>
+    </linearGradient>
+    <linearGradient id="remap" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#4fb3ff"/>
+      <stop offset="1" stop-color="#8fe3ff"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="26" fill="url(#tile)"/>
+  <rect x="0.75" y="0.75" width="126.5" height="126.5" rx="25.5" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="1.5"/>
+  <path d="M40 40 C48 22 80 22 88 40" fill="none" stroke="url(#remap)" stroke-width="5" stroke-linecap="round"/>
+  <path d="M84 33 L93 35 L89 44 Z" fill="#8fe3ff"/>
+  <path d="M34 46h60c12 0 20 10 20 22v10c0 12-8 20-18 20-7 0-10-5-14-9H46c-4 4-7 9-14 9-10 0-18-8-18-20V68c0-12 8-22 20-22z" fill="url(#pad)"/>
+  <rect x="34" y="62" width="6" height="18" rx="2" fill="#1d2430"/>
+  <rect x="25" y="69" width="18" height="6" rx="2" fill="#1d2430"/>
+  <circle cx="90" cy="66" r="4.5" fill="#4fb3ff"/>
+  <circle cx="98" cy="76" r="4.5" fill="#ff8a65"/>
+  <circle cx="82" cy="76" r="4.5" fill="#81c784"/>
+  <circle cx="90" cy="86" r="4.5" fill="#ffd54f"/>
 </svg>
