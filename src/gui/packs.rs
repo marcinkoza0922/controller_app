@@ -20,6 +20,8 @@ pub(super) enum Dialog {
     DeleteGame(String),
     /// Copy a macro, menu or info overlay from another game into the shown list.
     Browse { kind: ItemKind, from: Option<BrowseSource>, open: Option<usize> },
+    /// The window is closing with edits that aren't saved.
+    ConfirmQuit,
 }
 
 /// Where "Copy from another game…" takes items from.
@@ -337,6 +339,7 @@ impl App {
             Dialog::Export { game, info, library, preview } => self.view_export(game, info, *library, preview),
             Dialog::DeleteGame(name) => self.view_delete(name),
             Dialog::Browse { kind, from, open } => self.view_browse(*kind, from.as_ref(), *open),
+            Dialog::ConfirmQuit => self.view_confirm_quit(),
         };
         modal(body)
     }
@@ -532,6 +535,35 @@ impl App {
         ]
         .spacing(8))
         .width(620)
+        .into()
+    }
+
+    /// A narrow prompt: its text wraps, and the error and its jump button stack, so it fits
+    /// small windows as well as the default one.
+    fn view_confirm_quit(&self) -> Element<'_, Message> {
+        let mut error = column![].spacing(8);
+        if let Some((m, true)) = &self.message {
+            error = error.push(text(m).color(ERROR_COLOR));
+        }
+        if self.problem_at.is_some() {
+            error = error.push(button(text("Go to problem")).style(style::secondary).on_press(Message::ShowProblem));
+        }
+        container(
+            column![
+                text("Save your changes?").size(22),
+                text("Your edits haven't been saved yet. Save them and apply them before closing, or discard them.").width(Length::Fill),
+                error,
+                row![
+                    space::horizontal(),
+                    button(text("Cancel")).style(style::secondary).on_press(Message::CloseDialog),
+                    button(text("Discard")).style(button::danger).on_press(Message::DiscardAndQuit),
+                    button(text("Save & quit")).on_press(Message::SaveAndQuit),
+                ]
+                .spacing(8),
+            ]
+            .spacing(16),
+        )
+        .max_width(420)
         .into()
     }
 

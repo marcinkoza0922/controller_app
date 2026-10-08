@@ -7,8 +7,8 @@ Each stick can output to one of:
 - a gamepad stick (the virtual pad's stick, so games see a normal analog stick),
 - the mouse pointer,
 - the scroll wheel,
-- direction keys (WASD or the arrows),
-- a [button ring](#button-rings) or a [flick stick](#flick-stick).
+- a [button ring](#button-rings) (use its WASD or Arrows preset for direction keys),
+- a [flick stick](#flick-stick).
 
 Stick settings:
 

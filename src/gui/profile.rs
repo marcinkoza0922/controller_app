@@ -104,9 +104,6 @@ pub(super) fn stick_summary(cfg: &StickConfig) -> String {
         StickAction::Scroll { speed } => format!("scroll, {speed:.0} notches/s"),
         StickAction::Ring { sectors, .. } => format!("button ring, {sectors} sectors"),
         StickAction::Flick { full_turn_px, .. } => format!("flick stick, {full_turn_px:.0} px/turn"),
-        StickAction::Keys { up, down, left, right } => {
-            [up, left, down, right].map(|k| keyboard::label(k)).join("/")
-        }
     };
     format!("{mode}{}", zones_note(cfg.zones.len()))
 }
@@ -863,7 +860,6 @@ pub(super) enum StickKind {
     Scroll,
     Ring,
     Flick,
-    Keys,
 }
 
 impl fmt::Display for StickKind {
@@ -875,7 +871,6 @@ impl fmt::Display for StickKind {
             StickKind::Scroll => "Scroll wheel",
             StickKind::Ring => "Button ring",
             StickKind::Flick => "Flick stick",
-            StickKind::Keys => "Direction keys",
         })
     }
 }
@@ -895,7 +890,6 @@ pub(super) fn stick_editor<'a>(
         StickAction::Scroll { .. } => StickKind::Scroll,
         StickAction::Ring { .. } => StickKind::Ring,
         StickAction::Flick { .. } => StickKind::Flick,
-        StickAction::Keys { .. } => StickKind::Keys,
     };
     let with = move |action: StickAction| {
         let mut c = cfg.clone();
@@ -909,7 +903,6 @@ pub(super) fn stick_editor<'a>(
         StickKind::Scroll,
         StickKind::Ring,
         StickKind::Flick,
-        StickKind::Keys,
     ];
     let picker = dropdown(kinds, Some(kind), move |k| {
         with(match k {
@@ -919,7 +912,6 @@ pub(super) fn stick_editor<'a>(
             StickKind::Scroll => StickAction::Scroll { speed: 15.0 },
             StickKind::Ring => StickAction::ring(8),
             StickKind::Flick => StickAction::flick(),
-            StickKind::Keys => wasd(),
         })
     })
     .width(170);
@@ -961,37 +953,6 @@ pub(super) fn stick_editor<'a>(
                 with(StickAction::Scroll { speed: v })
             }));
         }
-        StickAction::Keys { up, down, left, right } => {
-            let full = [up, down, left, right].map(std::clone::Clone::clone);
-            let keys = full.clone().map(|k| short_key(&k).to_string());
-            let current = keys.clone();
-            let set = move |i: usize, v: String| {
-                let mut k = current.clone().map(|k| format!("KEY_{k}"));
-                k[i] = single_key(&v);
-                let [up, down, left, right] = k;
-                with(StickAction::Keys { up, down, left, right })
-            };
-            let field = |i: usize, label: &'static str| {
-                let set = set.clone();
-                let open = Message::OpenKeyPicker(KeyField::StickDir { stick: s, dir: i }, vec![full[i].clone()], true);
-                column![text(label).size(12).color(MUTED_COLOR), key_input(&keys[i], label, move |v| set(i, v), open)]
-                    .spacing(2)
-            };
-            rows = rows.push(labeled(
-                "    Keys",
-                column![
-                    row![field(0, "Up"), field(1, "Down")].spacing(8),
-                    row![field(2, "Left"), field(3, "Right")].spacing(8),
-                    row![
-                        button(text("WASD").size(13)).style(style::secondary).on_press(with(wasd())),
-                        button(text("Arrows").size(13)).style(style::secondary).on_press(with(arrows())),
-                    ]
-                    .spacing(8),
-                ]
-                .spacing(6)
-                .into(),
-            ));
-        }
         StickAction::Disabled => {}
     }
 
@@ -1009,7 +970,7 @@ pub(super) fn stick_editor<'a>(
             Message::SetStick(s, c)
         }));
     }
-    // Used by direction keys and by the stick's direction buttons below.
+    // Used by the stick's direction buttons.
     rows = rows.push(value_slider("    Directions press at", 0.05..=0.95, cfg.key_threshold, 0.05, "", move |v| {
         let mut c = cfg.clone();
         c.key_threshold = v;
@@ -1056,7 +1017,16 @@ fn ring_rows<'a>(
         }))
         .push(value_slider("    Stickiness", 0.0..=0.4, hysteresis, 0.05, "of a sector", move |v| {
             set(sectors, start_angle, inner_radius, v)
-        }));
+        }))
+        .push(labeled(
+            "    Presets",
+            row![
+                button(text("WASD").size(13)).style(style::secondary).on_press(with(StickAction::wasd())),
+                button(text("Arrows").size(13)).style(style::secondary).on_press(with(StickAction::arrows())),
+            ]
+            .spacing(8)
+            .into(),
+        ));
     let width = 360.0 / f32::from(sectors.max(1));
     for i in 0..usize::from(sectors) {
         let angle = start_angle + i as f32 * width;
@@ -1228,24 +1198,6 @@ pub(super) fn zone_editor<'a>(analog: Analog, zones: &'a [Zone], names: &Names) 
         );
     }
     labeled("    Zones", col.push(buttons.push(zones_help)).into())
-}
-
-pub(super) fn wasd() -> StickAction {
-    StickAction::Keys {
-        up: "KEY_W".into(),
-        down: "KEY_S".into(),
-        left: "KEY_A".into(),
-        right: "KEY_D".into(),
-    }
-}
-
-pub(super) fn arrows() -> StickAction {
-    StickAction::Keys {
-        up: "KEY_UP".into(),
-        down: "KEY_DOWN".into(),
-        left: "KEY_LEFT".into(),
-        right: "KEY_RIGHT".into(),
-    }
 }
 
 /// What a trigger does, in one list: pass through as an analog trigger, or act as a button

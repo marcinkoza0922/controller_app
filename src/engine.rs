@@ -122,9 +122,6 @@ pub struct Engine {
     held: HashMap<Source, ButtonAction>,
     members: HashMap<Button, ComboMember>,
     gestures: HashMap<Button, GestureState>,
-    /// Keys held by sticks in direction-keys mode: (direction 0 up, 1 down, 2 left, 3 right;
-    /// key). A direction keeps its key until let go, even if a layer changed the stick.
-    stick_keys: HashMap<Stick, Vec<(usize, KeyCode)>>,
     /// Virtual-pad stick each physical stick feeds in gamepad mode, so it can be recentered
     /// when a layer gives the stick another mode.
     pad_feeds: HashMap<Stick, Stick>,
@@ -164,6 +161,8 @@ pub struct Engine {
     pad_sticks: HashMap<Stick, (f32, f32)>,
     /// Macro definitions by name, compiled to operations (see [`Engine::set_macros`]).
     macro_defs: HashMap<String, Arc<Vec<MacroOp>>>,
+    /// How long each macro takes to play, in milliseconds, by name.
+    macro_ms: HashMap<String, u64>,
     macros_running: HashMap<StateId, MacroRun>,
     /// Virtual-pad stick positions set by macro steps, added to physical and gyro input.
     macro_sticks: HashMap<Stick, (f32, f32)>,
@@ -340,6 +339,7 @@ impl Engine {
     /// Replaces the macro definitions `ButtonAction::Macro` refers to (from the config).
     pub fn set_macros(&mut self, macros: &[Macro]) {
         self.macro_defs = macros.iter().map(|m| (m.name.clone(), Arc::new(compile_macro(m)))).collect();
+        self.macro_ms = macros.iter().map(|m| (m.name.clone(), m.duration_ms())).collect();
     }
 
     /// Runs a macro's operations until it has to wait or it ends. Each pass ends by releasing
@@ -857,15 +857,15 @@ impl Engine {
                 }
                 return self.toggle_on(src, inner, slot, out);
             }
-            ButtonAction::Turbo { action: inner, rate } => {
+            ButtonAction::Turbo { action: inner, rate, every_ms } => {
                 let id = (src.clone(), slot);
                 if pressed {
                     if self.turbo.contains_key(&id) {
                         return false;
                     }
-                    let half_period = 0.5 / rate.clamp(0.5, 60.0);
-                    self.turbo.insert(id, TurboState { action: (**inner).clone(), half_period, elapsed: 0.0, down: true });
-                    return self.emit(src, inner, true, slot + 1, out);
+                    let (inner, half_period) = self.turbo_pace(inner, *rate, *every_ms);
+                    self.turbo.insert(id, TurboState { action: inner.clone(), half_period, elapsed: 0.0, down: true });
+                    return self.emit(src, &inner, true, slot + 1, out);
                 }
                 if let Some(state) = self.turbo.remove(&id)
                     && state.down
@@ -944,6 +944,20 @@ impl Engine {
             }
         }
         switch
+    }
+
+    /// What a turbo repeats, and the seconds between its flips (half a turbo cycle). A macro is
+    /// played once, never looping, and flipping it on and off every half period starts it once
+    /// per cycle: pressing starts it and releasing does nothing.
+    fn turbo_pace(&self, inner: &ButtonAction, rate: f32, every_ms: u64) -> (ButtonAction, f32) {
+        match inner {
+            ButtonAction::Macro { name, .. } => {
+                let macro_ms = self.macro_ms.get(name).copied().unwrap_or(0);
+                let cycle_ms = crate::config::macro_turbo_ms(every_ms, macro_ms);
+                (ButtonAction::Macro { name: name.clone(), repeat: false }, cycle_ms as f32 / 2000.0)
+            }
+            _ => (inner.clone(), 0.5 / rate.clamp(0.5, 60.0)),
+        }
     }
 
     /// Advances turbo actions: each flips between pressed and released every half period.
@@ -1225,9 +1239,6 @@ impl Engine {
         }
         // Unfinished tap sequences are dropped.
         self.gestures.clear();
-        for (_, keys) in self.stick_keys.drain() {
-            out.extend(keys.into_iter().map(|(_, k)| OutEvent::Key(k, false)));
-        }
         self.pad_feeds.clear();
         self.trigger_feeds.clear();
         self.trigger_release.clear();
@@ -1538,7 +1549,7 @@ mod tests {
     #[test]
     fn stick_to_keys() {
         let mut p = Profile::passthrough("p");
-        p.left_stick = StickConfig::new(wasd(), 0.1, 1.0);
+        p.left_stick = StickConfig::new(StickAction::wasd(), 0.1, 1.0);
         let mut e = Engine::default();
         assert_eq!(
             run(&mut e, &p, InputEvent::Axis(Axis::LeftY, -1.0)),
@@ -1852,15 +1863,6 @@ mod tests {
         assert_eq!(press(&mut e, &p, Button::LeftBumper, false, ms(t0, 130)), key_tap(KeyCode::KEY_D));
     }
 
-    fn wasd() -> StickAction {
-        StickAction::Keys {
-            up: "KEY_W".into(),
-            down: "KEY_S".into(),
-            left: "KEY_A".into(),
-            right: "KEY_D".into(),
-        }
-    }
-
     fn axis(e: &mut Engine, p: &Profile, axis: Axis, v: f32) -> Vec<OutEvent> {
         run(e, p, InputEvent::Axis(axis, v))
     }
@@ -1868,7 +1870,7 @@ mod tests {
     #[test]
     fn partial_push_walks_full_push_runs() {
         let mut p = Profile::passthrough("p");
-        p.left_stick = StickConfig::new(wasd(), 0.0, 1.0);
+        p.left_stick = StickConfig::new(StickAction::wasd().starting_at(0.2), 0.0, 1.0);
         p.left_stick.key_threshold = 0.2;
         p.left_stick.zones.push(crate::config::Zone {
             min: 0.0,
@@ -2014,7 +2016,7 @@ mod tests {
     }
 
     fn turbo(inner: ButtonAction, rate: f32) -> ButtonAction {
-        ButtonAction::Turbo { action: Box::new(inner), rate }
+        ButtonAction::Turbo { action: Box::new(inner), rate, every_ms: 0 }
     }
 
     fn c_key() -> ButtonAction {
@@ -2060,6 +2062,28 @@ mod tests {
         assert_eq!(all.last(), Some(&false));
         assert!(!e.needs_tick(&p));
         assert!(clicks(&hold_for(&mut e, &p, 0.5)).is_empty());
+    }
+
+    #[test]
+    fn turbo_of_a_macro_plays_it_every_gap_but_never_faster_than_it_takes() {
+        // A macro that takes 100 ms, so a turbo of it can't press more often than every 100 ms.
+        let mut e = macro_engine(vec![MacroStep::Tap { action: ButtonAction::Mouse(MouseButton::Left), hold_ms: 100 }]);
+        let looping = ButtonAction::Macro { name: "m".into(), repeat: true };
+        let presses = |out: &[OutEvent]| clicks(out).into_iter().filter(|down| *down).count();
+
+        let mut p = Profile::passthrough("p");
+        p.set_button(Button::West, ButtonAction::Turbo { action: Box::new(looping.clone()), rate: 10.0, every_ms: 300 });
+        let mut pressed = presses(&run(&mut e, &p, InputEvent::Button(Button::West, true)));
+        pressed += presses(&hold_for(&mut e, &p, 1.0));
+        assert!((3..=4).contains(&pressed), "300 ms gap: {pressed} presses in a second");
+        run(&mut e, &p, InputEvent::Button(Button::West, false));
+
+        // Asked for 50 ms, but the macro takes 100: about ten presses a second.
+        let mut e = macro_engine(vec![MacroStep::Tap { action: ButtonAction::Mouse(MouseButton::Left), hold_ms: 100 }]);
+        p.set_button(Button::West, ButtonAction::Turbo { action: Box::new(looping), rate: 10.0, every_ms: 50 });
+        let mut pressed = presses(&run(&mut e, &p, InputEvent::Button(Button::West, true)));
+        pressed += presses(&hold_for(&mut e, &p, 1.0));
+        assert!((9..=11).contains(&pressed), "50 ms gap under a 100 ms macro: {pressed} presses in a second");
     }
 
     #[test]
@@ -2577,7 +2601,7 @@ mod tests {
         p.set_button(
             Button::West,
             ButtonAction::Multi(vec![
-                ButtonAction::Turbo { action: Box::new(ButtonAction::Mouse(MouseButton::Left)), rate: 5.0 },
+                ButtonAction::Turbo { action: Box::new(ButtonAction::Mouse(MouseButton::Left)), rate: 5.0, every_ms: 0 },
                 starting(ButtonAction::Keys(vec!["KEY_C".into()])),
             ]),
         );
@@ -2679,7 +2703,7 @@ mod tests {
     fn analog_inputs_switch_modes_without_getting_stuck() {
         let base = Profile::passthrough("p");
         let mut layer = crate::config::Layer::new("L");
-        layer.left_stick = Some(StickConfig::new(wasd(), 0.1, 1.0));
+        layer.left_stick = Some(StickConfig::new(StickAction::wasd(), 0.1, 1.0));
         layer.right_stick = Some(StickConfig::new(StickAction::mouse(1000.0), 0.1, 1.0));
         layer.right_trigger = Some(TriggerAction::Gamepad(Trigger::Right).into());
         let on = layered(&base, &layer);
@@ -2691,14 +2715,14 @@ mod tests {
         e.resync(&on, &mut out);
         assert!(out.contains(&OutEvent::PadAxis(Axis::RightX, 0.0)), "{out:?}");
 
-        // Left stick: keys in the layer. W pressed under the layer stays down after it ends,
-        // until the stick lets go of that direction.
+        // Left stick: a ring in the layer sends W while the stick points up. Leaving the layer
+        // releases it, and letting go of the stick afterwards doesn't release it again.
         let held = axis(&mut e, &on, Axis::LeftY, -0.9);
         assert!(held.contains(&OutEvent::Key(KeyCode::KEY_W, true)));
         let mut out = Vec::new();
         e.resync(&base, &mut out);
-        assert!(!out.contains(&OutEvent::Key(KeyCode::KEY_W, false)), "still pushed up: {out:?}");
-        assert!(axis(&mut e, &base, Axis::LeftY, 0.0).contains(&OutEvent::Key(KeyCode::KEY_W, false)));
+        assert!(out.contains(&OutEvent::Key(KeyCode::KEY_W, false)), "still pushed up: {out:?}");
+        assert!(!axis(&mut e, &base, Axis::LeftY, 0.0).contains(&OutEvent::Key(KeyCode::KEY_W, false)));
 
         // A trigger pull pressed as a button releases by its own threshold after the layer
         // made the trigger analog, and the analog trigger doesn't stay pulled afterwards.

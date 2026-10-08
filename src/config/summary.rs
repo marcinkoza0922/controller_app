@@ -57,7 +57,10 @@ impl ButtonAction {
             ButtonAction::Multi(list) => list.iter().map(ButtonAction::summary).collect::<Vec<_>>().join(" & "),
             ButtonAction::Toggle(t) if t.start_on => format!("Toggle {} (starts on)", t.action.summary()),
             ButtonAction::Toggle(t) => format!("Toggle {}", t.action.summary()),
-            ButtonAction::Turbo { action, rate } => format!("Turbo {} ({rate:.0}/s)", action.summary()),
+            ButtonAction::Turbo { action, every_ms, .. } if matches!(**action, ButtonAction::Macro { .. }) => {
+                format!("Turbo {} (every {every_ms} ms)", action.summary())
+            }
+            ButtonAction::Turbo { action, rate, .. } => format!("Turbo {} ({rate:.0}/s)", action.summary()),
             ButtonAction::Macro { name, repeat: true } => format!("Macro “{name}” (repeat)"),
             ButtonAction::Macro { name, .. } => format!("Macro “{name}”"),
             ButtonAction::Layer(name) => format!("Layer “{name}”"),

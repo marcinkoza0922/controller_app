@@ -123,6 +123,8 @@ impl Pack {
 
 /// Reads a pack, refusing one from a newer app and anything malformed (whole or nothing).
 pub fn parse(text: &str) -> Result<Pack> {
+    let text = crate::config::migrate_text(text);
+    let text = text.as_str();
     let table: toml::Table = toml::from_str(text).context("not a valid pack file")?;
     let format = table.get("format").and_then(toml::Value::as_integer).context("not a pack file (no format number)")?;
     if format > FORMAT as i64 {

@@ -55,6 +55,10 @@ pub(super) struct Names {
     pub(super) layers: Vec<String>,
     /// False for shared items, which can't use layers (they're always a game's own).
     pub(super) layers_allowed: bool,
+    /// How long each macro takes to play, in milliseconds, by name.
+    pub(super) macro_ms: std::collections::HashMap<String, u64>,
+    /// Inside a turbo, where a macro plays once per press and never loops.
+    pub(super) in_turbo: bool,
 }
 
 impl Names {
@@ -63,6 +67,7 @@ impl Names {
         let infos = |always: bool| scope.info.iter().filter(|o| o.always == always).map(|o| o.name.clone()).collect();
         let logs = |always: bool| scope.logs.iter().filter(|o| o.always == always).map(|o| o.name.clone()).collect();
         Names {
+            macro_ms: scope.macros.iter().map(|m| (m.name.clone(), m.duration_ms())).collect(),
             macros: list(ItemKind::Macro),
             menus: list(ItemKind::Menu),
             infos: infos(false),
@@ -71,6 +76,7 @@ impl Names {
             always_logs: logs(true),
             layers: list(ItemKind::Layer),
             layers_allowed,
+            in_turbo: false,
         }
     }
 
@@ -121,6 +127,17 @@ pub(super) fn action_problem(action: &ButtonAction, names: &Names) -> Option<Str
             ButtonAction::Macro { name, .. } if !names.macros.contains(name) => {
                 problem = Some(format!("missing macro {name:?}"));
             }
+            // A macro that grew longer than the turbo's gap would overlap its own presses.
+            ButtonAction::Turbo { action, every_ms, .. } => {
+                if let ButtonAction::Macro { name, .. } = &**action
+                    && let Some(&macro_ms) = names.macro_ms.get(name)
+                    && macro_ms > *every_ms
+                {
+                    problem = Some(format!(
+                        "turbo of macro {name:?} presses every {every_ms} ms, but the macro takes {macro_ms} ms: raise the turbo's gap"
+                    ));
+                }
+            }
             ButtonAction::OpenMenu(name) if !names.menus.contains(name) => {
                 problem = Some(format!("missing menu {name:?}"));
             }
@@ -164,13 +181,9 @@ pub(super) fn section_has_problem(p: &Profile, tab: ProfileTab, names: &Names) -
             let triggers = [Trigger::Left, Trigger::Right]
                 .into_iter()
                 .any(|t| matches!(p.trigger(t), TriggerAction::Button { action, .. } if bad(action)));
-            let keys = [Stick::Left, Stick::Right].into_iter().any(|s| match &p.stick(s).action {
-                StickAction::Keys { up, down, left, right } => [up, down, left, right].iter().any(|k| KeyCode::from_str(k).is_err()),
-                _ => false,
-            });
             let rings = [Stick::Left, Stick::Right].into_iter().any(|s| p.stick(s).action.ring_actions().iter().any(bad));
             let two_flicks = [Stick::Left, Stick::Right].into_iter().all(|s| matches!(p.stick(s).action, StickAction::Flick { .. }));
-            dirs || zones || triggers || keys || rings || two_flicks
+            dirs || zones || triggers || rings || two_flicks
         }
         ProfileTab::Combos => p.combos.iter().any(|c| c.buttons.len() < 2 || bad(&c.action)),
         ProfileTab::Gyro => false,
@@ -269,6 +282,50 @@ pub(super) fn logs_problem(logs: &[LogOverlay], shared: Option<&Names>) -> Optio
 }
 
 /// The first thing saving would reject in a game (or General).
+/// Where a saving problem is: a profile of a game, and the assignment in it.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct Place {
+    /// The game (`None`: General).
+    pub(super) game: Option<String>,
+    pub(super) profile: usize,
+    pub(super) target: Target,
+}
+
+/// The first assignment in a profile that saving rejects.
+fn bad_target(p: &Profile, names: &Names) -> Option<Target> {
+    let mut all: Vec<(Target, &ButtonAction)> = Button::ALL.into_iter().map(|b| (Target::Button(b), p.button(b))).collect();
+    for (b, gestures) in &p.gestures {
+        all.extend(GestureKind::ALL.into_iter().filter_map(|k| gestures.get(k).map(|a| (Target::Gesture(*b, k), a))));
+    }
+    for t in [Trigger::Left, Trigger::Right] {
+        if let TriggerAction::Button { action, .. } = p.trigger(t) {
+            all.push((Target::Trigger(t), action));
+        }
+    }
+    all.extend(p.combos.iter().enumerate().map(|(i, c)| (Target::Combo(i), &c.action)));
+    for a in [Analog::Stick(Stick::Left), Analog::Stick(Stick::Right), Analog::Trigger(Trigger::Left), Analog::Trigger(Trigger::Right)] {
+        all.extend(p.zones(a).iter().enumerate().map(|(i, z)| (Target::Zone(a, i), &z.action)));
+    }
+    for s in [Stick::Left, Stick::Right] {
+        all.extend(p.stick(s).action.ring_actions().iter().enumerate().map(|(i, a)| (Target::RingSector(s, i), a)));
+    }
+    all.into_iter().find(|(_, a)| action_problem(a, names).is_some()).map(|(t, _)| t)
+}
+
+impl App {
+    /// Where the first saving problem is, when it's an assignment in a profile.
+    pub(super) fn problem_place(&self) -> Option<Place> {
+        let config = &self.config;
+        config.all_games().find_map(|(key, g)| {
+            game_problem(config, g)?;
+            let names = Names::for_game(config, g);
+            g.profiles.iter().enumerate().find_map(|(i, p)| {
+                bad_target(p, &names).map(|target| Place { game: key.map(str::to_string), profile: i, target })
+            })
+        })
+    }
+}
+
 pub(super) fn game_problem(config: &Config, g: &Game) -> Option<String> {
     if g.profiles.is_empty() {
         return Some("needs at least one profile.".into());
@@ -310,9 +367,7 @@ pub(super) fn game_problem(config: &Config, g: &Game) -> Option<String> {
         }
         let mut keys: Vec<&String> = p.actions().into_iter().flat_map(|a| a.key_names()).collect();
         for s in [Stick::Left, Stick::Right] {
-            if let StickAction::Keys { up, down, left, right } = &p.stick(s).action {
-                keys.extend([up, down, left, right]);
-            }
+            keys.extend(p.stick(s).action.ring_actions().iter().flat_map(|a| a.key_names()));
         }
         if let Some(bad) = keys.iter().find(|k| KeyCode::from_str(k).is_err()) {
             return Some(format!("Profile {:?}: unknown key {:?}", p.name, short_key(bad)));
@@ -355,10 +410,10 @@ pub(super) fn layers_problem(g: &Game, names: &Names) -> Option<String> {
         if [&l.left_stick, &l.right_stick].into_iter().all(|s| s.as_ref().is_some_and(|s| matches!(s.action, StickAction::Flick { .. }))) {
             return Some(format!("{label}: only one stick can be a flick stick."));
         }
-        let stick_keys = [&l.left_stick, &l.right_stick].into_iter().flatten().flat_map(|s| match &s.action {
-            StickAction::Keys { up, down, left, right } => vec![up, down, left, right],
-            _ => Vec::new(),
-        });
+        let stick_keys = [&l.left_stick, &l.right_stick]
+            .into_iter()
+            .flatten()
+            .flat_map(|s| s.action.ring_actions().iter().flat_map(|a| a.key_names()));
         if let Some(bad) = stick_keys.into_iter().find(|k| KeyCode::from_str(k).is_err()) {
             return Some(format!("{label}: unknown key {:?}", short_key(bad)));
         }
@@ -425,6 +480,15 @@ mod tests {
         let missing = ButtonAction::Macro { name: "Gone".into(), repeat: false };
         assert_eq!(action_problem(&missing, &names).as_deref(), Some("missing macro \"Gone\""));
         assert_eq!(action_problem(&ButtonAction::Macro { name: "Known".into(), repeat: false }, &names), None);
+        // A turbo's gap must cover its macro's length; a longer macro is caught here.
+        let turbo = |every_ms| ButtonAction::Turbo {
+            action: Box::new(ButtonAction::Macro { name: "Long".into(), repeat: false }),
+            rate: 10.0,
+            every_ms,
+        };
+        let long = Names { macros: vec!["Long".into()], macro_ms: [("Long".to_string(), 300)].into(), ..Names::default() };
+        assert!(action_problem(&turbo(200), &long).is_some_and(|p| p.contains("raise the turbo's gap")));
+        assert_eq!(action_problem(&turbo(300), &long), None);
 
         let mut p = Profile::passthrough("p");
         assert!(ProfileTab::ALL.iter().all(|t| !section_has_problem(&p, *t, &names)));

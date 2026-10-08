@@ -60,7 +60,6 @@ pub fn layer_sheet(layer: &Layer) -> InfoOverlay {
         let label = match &stick.action {
             StickAction::Mouse { .. } => "Move the mouse",
             StickAction::Scroll { .. } => "Scroll",
-            StickAction::Keys { .. } => "Arrow keys",
             _ => "Remapped",
         };
         entries.push((format!("{{{token}}}"), label.into()));

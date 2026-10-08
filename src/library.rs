@@ -59,9 +59,7 @@ pub fn problems(pack: &Pack) -> Vec<String> {
     actions.extend(game.macros.iter().flat_map(|m| m.steps.iter().filter_map(crate::config::MacroStep::action)));
     let mut keys: Vec<&String> = actions.into_iter().flat_map(|a| a.key_names()).collect();
     for s in game.profiles.iter().flat_map(|p| [&p.left_stick, &p.right_stick]) {
-        if let crate::config::StickAction::Keys { up, down, left, right } = &s.action {
-            keys.extend([up, down, left, right]);
-        }
+        keys.extend(s.action.ring_actions().iter().flat_map(|a| a.key_names()));
     }
     for k in keys {
         if <evdev::KeyCode as std::str::FromStr>::from_str(k).is_err() {
