@@ -224,6 +224,8 @@ pub enum ButtonAction {
     ToggleOverlay,
     /// Opens or closes the on-screen numpad (works like the keyboard).
     ToggleNumpad,
+    /// Saves a screenshot to `~/Pictures/Screenshots/<game>/`.
+    Screenshot,
     /// Shows the info overlay named here while held (wrap in Toggle to keep it up).
     ShowInfo(String),
     /// Shows the log overlay named here while held (wrap in Toggle to keep it up).
@@ -1199,6 +1201,7 @@ impl Layer {
         layer.indicator = Indicator::Off;
         layer.swallow_unbound = true;
         layer.buttons = BTreeMap::from([
+            (Button::RightBumper, Screenshot),
             (Button::West, ToggleOverlay),
             (Button::North, ToggleNumpad),
             (Button::DpadUp, NextProfile),

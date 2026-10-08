@@ -64,6 +64,8 @@ enum Msg {
     Motion { id: u64, sample: MotionSample },
     MotionGone { id: u64 },
     WatchOverlay(Sender<OverlayFrame>),
+    /// Something to say in a toast, from a background task (e.g. a screenshot finishing).
+    Toast(Vec<String>),
 }
 
 struct Managed {
@@ -360,9 +362,8 @@ impl Daemon {
             .min()
     }
 
-    /// Fires combo members whose combo window has expired.
-    fn run_timers(&mut self) {
-        let now = Instant::now();
+    /// Redraws info overlays and advances the keyboard or menu that is up.
+    fn tick_overlays(&mut self, now: Instant) {
         if self.info_refresh.is_some_and(|t| t <= now) {
             self.sampler.sample();
             self.broadcast_overlay();
@@ -383,9 +384,16 @@ impl Daemon {
         if changed {
             self.broadcast_overlay();
         }
+    }
+
+    /// Fires combo members whose combo window has expired.
+    fn run_timers(&mut self) {
+        let now = Instant::now();
+        self.tick_overlays(now);
         let Some(base) = self.config.active() else { return };
         let mut switch = false;
         let mut toggle_overlay = None;
+        let mut screenshot = false;
         let mut menu_request = None;
         let mut fired = Vec::new();
         for (id, dev) in self.devices.iter_mut() {
@@ -400,6 +408,7 @@ impl Daemon {
             }
             dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
             toggle_overlay = dev.engine.take_overlay_toggle().or(toggle_overlay);
+            screenshot |= dev.engine.take_screenshot();
             if let Some(request) = dev.engine.take_menu_request() {
                 menu_request = Some((*id, request));
             }
@@ -411,6 +420,9 @@ impl Daemon {
         if let Some(layout) = toggle_overlay {
             self.toggle_overlay(layout);
         }
+        if screenshot {
+            self.take_screenshot();
+        }
         if let Some((id, (name, opener))) = menu_request {
             self.open_menu(id, &name, opener);
         }
@@ -419,6 +431,24 @@ impl Daemon {
             self.log_changed();
         }
         self.check_info_changes();
+    }
+
+    /// Takes a screenshot in the background and says where it went (or why not) in a toast.
+    fn take_screenshot(&self) {
+        let (game, tx) = (self.config.active_game().name.clone(), self.tx.clone());
+        thread::spawn(move || {
+            let lines = match crate::capture::screenshot(&game) {
+                Ok(path) => {
+                    log!("screenshot saved to {}", path.display());
+                    vec!["Screenshot saved".to_string(), path.display().to_string()]
+                }
+                Err(e) => {
+                    log!("screenshot failed: {e:#}");
+                    vec!["Screenshot failed".to_string(), format!("{e:#}")]
+                }
+            };
+            let _ = tx.send(Msg::Toast(lines));
+        });
     }
 
     /// Opens or closes the on-screen keyboard or numpad (one replaces the other).
@@ -542,6 +572,7 @@ impl Daemon {
         }
         dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
         let toggle_overlay = dev.engine.take_overlay_toggle();
+        let screenshot = dev.engine.take_screenshot();
         let menu_request = dev.engine.take_menu_request();
         // Switching profiles or opening the keyboard closes a menu that is still up.
         let menu_up = matches!(self.active, Some(Active::Menu { .. }));
@@ -553,6 +584,9 @@ impl Daemon {
         }
         if let Some(layout) = toggle_overlay {
             self.toggle_overlay(layout);
+        }
+        if screenshot {
+            self.take_screenshot();
         }
         if let Some((name, opener)) = menu_request {
             self.open_menu(device, &name, opener);
@@ -786,6 +820,10 @@ impl Daemon {
                 self.scan_target = None;
             }
             Msg::Focus(FocusEvent::Focused(window)) => self.window_focused(&window),
+            Msg::Toast(lines) => {
+                self.toast = Some(crate::info::Toast::new(lines, Instant::now()));
+                self.broadcast_overlay();
+            }
             Msg::Motion { id, sample } => self.motion(id, sample),
             Msg::WatchOverlay(watcher) => {
                 if watcher.send(self.overlay_frame()).is_ok() {
@@ -1031,12 +1069,16 @@ impl Daemon {
             self.watchers.retain(|w| w.send(Some(snapshot.clone())).is_ok());
         }
         let toggle_overlay = dev.engine.take_overlay_toggle();
+        let screenshot = dev.engine.take_screenshot();
         let menu_request = dev.engine.take_menu_request();
         if switch && let Some(next) = self.config.next_profile() {
             self.switch_profile(next);
         }
         if let Some(layout) = toggle_overlay {
             self.toggle_overlay(layout);
+        }
+        if screenshot {
+            self.take_screenshot();
         }
         if let Some((name, opener)) = menu_request {
             self.open_menu(id, &name, opener);

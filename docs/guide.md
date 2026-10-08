@@ -2,7 +2,7 @@
 
 Status: steps 1–2 implemented (2026-10-07): the `Shift` action, the swallow option, the default
 Guide layer without Screenshot, ForceQuit and ToggleRecording (L3, RB and B are unbound in it
-for now), and the migration. Steps 3–6 are still to do.
+for now), and the migration. Step 3 (`Screenshot`, in `src/capture.rs`) is done too; the rest is still to do.
 
 ## Goal
 

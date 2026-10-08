@@ -1,3 +1,4 @@
+mod capture;
 mod config;
 mod daemon;
 mod engine;

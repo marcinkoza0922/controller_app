@@ -187,6 +187,8 @@ pub struct Engine {
     pushed_directions: HashMap<Button, u32>,
     /// Set when a ToggleOverlay/ToggleNumpad action fires; the daemon takes it.
     overlay_toggled: Option<crate::keyboard::Layout>,
+    /// Set when a Screenshot action fires; the daemon takes it.
+    screenshot_requested: bool,
     /// Set when an OpenMenu action fires; the daemon takes it.
     menu_request: Option<(String, Opener)>,
     /// Set while a Toggle turns its inner action on.
@@ -315,6 +317,11 @@ impl Engine {
     /// Log overlays held up by ShowLog actions right now.
     pub fn shown_logs(&self) -> impl Iterator<Item = &String> {
         self.log_holds.keys()
+    }
+
+    /// Whether a Screenshot action fired since the last call.
+    pub fn take_screenshot(&mut self) -> bool {
+        std::mem::take(&mut self.screenshot_requested)
     }
 
     /// Which on-screen keyboard (or numpad) a toggle action asked for since the last call.
@@ -789,6 +796,11 @@ impl Engine {
         ButtonAction::ToggleNumpad => {
             if pressed {
                 self.overlay_toggled = Some(crate::keyboard::Layout::Numpad);
+            }
+        }
+        ButtonAction::Screenshot => {
+            if pressed {
+                self.screenshot_requested = true;
             }
         }
         ButtonAction::ShowInfo(name) => {
@@ -1412,6 +1424,18 @@ mod tests {
 
     fn pad_guide_events(out: &[OutEvent]) -> Vec<OutEvent> {
         out.iter().filter(|o| matches!(o, OutEvent::PadButton(Button::Guide, _))).cloned().collect()
+    }
+
+    #[test]
+    fn screenshot_is_requested_on_press_only_once() {
+        let mut p = Profile::passthrough("p");
+        p.set_button(Button::RightBumper, ButtonAction::Screenshot);
+        let mut e = Engine::default();
+        let mut out = Vec::new();
+        e.handle(&p, InputEvent::Button(Button::RightBumper, true), Instant::now(), &mut out);
+        assert!(e.take_screenshot() && !e.take_screenshot());
+        e.handle(&p, InputEvent::Button(Button::RightBumper, false), Instant::now(), &mut out);
+        assert!(!e.take_screenshot());
     }
 
     #[test]

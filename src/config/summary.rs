@@ -46,6 +46,7 @@ impl ButtonAction {
             ButtonAction::NextProfile => "Next profile".into(),
             ButtonAction::ToggleOverlay => "On-screen keyboard".into(),
             ButtonAction::ToggleNumpad => "On-screen numpad".into(),
+            ButtonAction::Screenshot => "Screenshot".into(),
             ButtonAction::OpenMenu(name) => format!("Menu “{name}”"),
             ButtonAction::ShowInfo(name) => format!("Info “{name}”"),
             ButtonAction::ShowLog(name) => format!("Log “{name}”"),

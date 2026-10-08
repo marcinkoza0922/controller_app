@@ -114,6 +114,7 @@ pub(super) enum ActionKind {
     NextProfile,
     Overlay,
     Numpad,
+    Screenshot,
     Toggle,
     Turbo,
     Macro,
@@ -136,6 +137,7 @@ impl fmt::Display for ActionKind {
             ActionKind::NextProfile => "Next profile",
             ActionKind::Overlay => "On-screen keyboard",
             ActionKind::Numpad => "On-screen numpad",
+            ActionKind::Screenshot => "Take screenshot",
             ActionKind::Toggle => "Toggle (each press switches on / off)…",
             ActionKind::Macro => "Macro…",
             ActionKind::Menu => "Open menu…",
@@ -150,7 +152,7 @@ impl fmt::Display for ActionKind {
 }
 
 /// Every kind, for a top-level action.
-pub(super) const ACTION_KINDS: [ActionKind; 17] = [
+pub(super) const ACTION_KINDS: [ActionKind; 18] = [
     ActionKind::Disabled,
     ActionKind::Gamepad,
     ActionKind::Keys,
@@ -159,6 +161,7 @@ pub(super) const ACTION_KINDS: [ActionKind; 17] = [
     ActionKind::NextProfile,
     ActionKind::Overlay,
     ActionKind::Numpad,
+    ActionKind::Screenshot,
     ActionKind::Toggle,
     ActionKind::Turbo,
     ActionKind::Macro,
@@ -195,6 +198,7 @@ pub(super) const MENU_ITEM_KINDS: &[ActionKind] = &[
     ActionKind::NextProfile,
     ActionKind::Overlay,
     ActionKind::Numpad,
+    ActionKind::Screenshot,
     ActionKind::Toggle,
     ActionKind::Macro,
     ActionKind::Menu,
@@ -284,6 +288,7 @@ pub(super) fn action_kind(action: &ButtonAction) -> ActionKind {
         ButtonAction::NextProfile => ActionKind::NextProfile,
         ButtonAction::ToggleOverlay => ActionKind::Overlay,
         ButtonAction::ToggleNumpad => ActionKind::Numpad,
+        ButtonAction::Screenshot => ActionKind::Screenshot,
         ButtonAction::Multi(_) => ActionKind::Multiple,
         ButtonAction::Toggle(_) => ActionKind::Toggle,
         ButtonAction::Turbo { .. } => ActionKind::Turbo,
@@ -314,6 +319,7 @@ pub(super) fn new_action(k: ActionKind, default_button: Button, current: &Button
         ActionKind::NextProfile => ButtonAction::NextProfile,
         ActionKind::Overlay => ButtonAction::ToggleOverlay,
         ActionKind::Numpad => ButtonAction::ToggleNumpad,
+        ActionKind::Screenshot => ButtonAction::Screenshot,
         // Keep what was there as the first entry.
         ActionKind::Multiple => ButtonAction::Multi(wrappable.into_iter().collect()),
         ActionKind::Toggle => ButtonAction::toggle(wrappable.unwrap_or(ButtonAction::Keys(Vec::new()))),
@@ -447,7 +453,7 @@ pub(super) fn action_value<'a>(
             }
             line.into()
         }
-        ButtonAction::Disabled | ButtonAction::NextProfile => space().into(),
+        ButtonAction::Disabled | ButtonAction::NextProfile | ButtonAction::Screenshot => space().into(),
         ButtonAction::ToggleOverlay | ButtonAction::ToggleNumpad => {
             text("Hold B on the controller to close it.").size(12).color(MUTED_COLOR).into()
         }
