@@ -827,13 +827,6 @@ impl Daemon {
             if self.layer_indicator_due_at(layer).is_some_and(|due| due > now) {
                 continue;
             }
-            for extra in &layer.also_info {
-                if shown.iter().all(|(o, _)| &o.name != extra)
-                    && let Some(o) = self.scope.info.iter().find(|o| &o.name == extra)
-                {
-                    shown.push((o.clone(), true));
-                }
-            }
             match &layer.indicator {
                 Indicator::Bindings => shown.push((crate::info::layer_sheet(layer), true)),
                 Indicator::Name => shown.push((

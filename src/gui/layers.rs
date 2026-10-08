@@ -95,11 +95,11 @@ impl App {
     pub(super) fn new_layer_for(&mut self, message: Message) -> Message {
         let Message::SetAction(target, mut action) = message else { return message };
         let mut wants = false;
-        action.walk(&mut |a| wants |= matches!(a, ButtonAction::Layer(n) | ButtonAction::Shift { layer: n, .. } if n == NEW_LAYER));
+        action.walk(&mut |a| wants |= matches!(a, ButtonAction::Layer(n) if n == NEW_LAYER));
         if wants {
             let name = self.add_layer();
             action.walk_mut(&mut |a| {
-                if let ButtonAction::Layer(n) | ButtonAction::Shift { layer: n, .. } = a
+                if let ButtonAction::Layer(n) = a
                     && n == NEW_LAYER
                 {
                     *n = name.clone();
@@ -116,16 +116,6 @@ impl App {
         match message {
             Message::SetIndicatorTitle(title) => l.indicator_title = Some(title).filter(|t| !t.is_empty()),
             Message::SetIndicatorDelay(ms) => l.indicator_delay_ms = ms.min(10_000) as u32,
-            Message::AddAlsoInfo(name) => {
-                if !l.also_info.contains(&name) {
-                    l.also_info.push(name);
-                }
-            }
-            Message::RemoveAlsoInfo(at) => {
-                if at < l.also_info.len() {
-                    l.also_info.remove(at);
-                }
-            }
             Message::SetSwallowUnbound(on) => l.swallow_unbound = on,
             _ => {}
         }
@@ -177,8 +167,6 @@ impl App {
             }
             Message::SetIndicatorTitle(_)
             | Message::SetIndicatorDelay(_)
-            | Message::AddAlsoInfo(_)
-            | Message::RemoveAlsoInfo(_)
             | Message::SetSwallowUnbound(_) => self.set_layer_option(message),
             Message::SetIndicatorStyle(style) => {
                 let i = self.layer;
@@ -308,7 +296,6 @@ impl App {
                     .into(),
             ));
         }
-        settings.push(labeled("Also show", also_info_editor(layer, names)));
         settings.push(labeled(
             "Show after",
             row![
@@ -364,28 +351,6 @@ impl App {
         }
         col.into()
     }
-}
-
-/// The extra info overlays a layer shows: one chip per overlay with a remove button, and a
-/// dropdown to add another.
-fn also_info_editor<'a>(layer: &'a Layer, names: &Names) -> Element<'a, Message> {
-    let mut col = column![].spacing(6);
-    for (i, info) in layer.also_info.iter().enumerate() {
-        let mut line = row![text(format!("Info overlay “{info}”")).size(13)].spacing(8).align_y(Alignment::Center);
-        if !names.infos.contains(info) {
-            line = line.push(text("missing").size(12).color(ERROR_COLOR));
-        }
-        col = col.push(line.push(button(text("✕").size(12)).style(button::text).on_press(Message::RemoveAlsoInfo(i))));
-    }
-    let options: Vec<String> = names.infos.iter().filter(|n| !layer.also_info.contains(n)).cloned().collect();
-    if options.is_empty() {
-        if layer.also_info.is_empty() {
-            col = col.push(text("No other info overlays to show.").size(12).color(MUTED_COLOR));
-        }
-    } else {
-        col = col.push(dropdown(options, None::<String>, Message::AddAlsoInfo).placeholder("+ Add an info overlay").width(260));
-    }
-    col.into()
 }
 
 #[cfg(test)]

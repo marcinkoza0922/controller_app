@@ -240,9 +240,6 @@ pub enum ButtonAction {
     /// While held, the game's layer named here applies on top of the active profile (wrap in
     /// Toggle to keep it on).
     Layer(String),
-    /// Like `Layer`, for an input that is also used on its own: if it is let go without any
-    /// other input having been used meanwhile, `tap` is pressed and released.
-    Shift { layer: String, tap: Box<ButtonAction> },
 }
 
 /// A Toggle's inner action, and whether it switches on by itself when the game starts.
@@ -793,10 +790,17 @@ impl ButtonAction {
         }
     }
 
-    /// What the Guide button does by default: holds the Guide layer, and passes a lone tap on
-    /// to the game or Steam.
-    pub fn guide_shift() -> Self {
-        ButtonAction::Shift { layer: GUIDE_LAYER.into(), tap: Box::new(ButtonAction::Gamepad(Button::Guide)) }
+    /// What the Guide button does by default: holds the Guide layer. The app owns Guide while
+    /// it runs; a double tap (see `Profile::take_guide`) is how Steam gets it.
+    pub fn guide_hold() -> Self {
+        ButtonAction::Layer(GUIDE_LAYER.into())
+    }
+
+    /// Whether this action (or one inside a `Multi`) holds the layer called `name`.
+    pub fn holds_layer(&self, name: &str) -> bool {
+        let mut found = false;
+        self.walk(&mut |a| found |= matches!(a, ButtonAction::Layer(n) if n == name));
+        found
     }
 
     pub fn key_names(&self) -> Vec<&String> {
@@ -1181,13 +1185,10 @@ pub struct Layer {
     /// How the name label looks, for `Indicator::Name`.
     #[serde(default = "OverlayStyle::indicator")]
     pub indicator_style: OverlayStyle,
-    /// More of the game's info overlays shown with the indicator while the layer is on.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub also_info: Vec<String>,
     /// The heading of the generated bindings sheet (may hold `{tokens}`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub indicator_title: Option<String>,
-    /// How long the layer must be on before its indicator and `also_info` appear, so a quick
+    /// How long the layer must be on before its indicator appears, so a quick
     /// tap of the input holding it doesn't flash them.
     #[serde(default, skip_serializing_if = "is_zero_ms")]
     pub indicator_delay_ms: u32,
@@ -1265,7 +1266,6 @@ impl Layer {
             name: name.into(),
             indicator: Indicator::Name,
             indicator_style: OverlayStyle::indicator(),
-            also_info: Vec::new(),
             indicator_title: None,
             indicator_delay_ms: 0,
             buttons: BTreeMap::new(),
@@ -1285,7 +1285,7 @@ impl Layer {
     pub fn apply(&self, p: &mut Profile) {
         if self.swallow_unbound {
             for b in Button::ALL {
-                let holds = matches!(p.button(b), ButtonAction::Layer(_) | ButtonAction::Shift { .. });
+                let holds = matches!(p.button(b), ButtonAction::Layer(_));
                 if !holds && !self.buttons.contains_key(&b) {
                     p.buttons.insert(b, ButtonAction::Disabled);
                     p.gestures.remove(&b);
@@ -1681,7 +1681,14 @@ impl Profile {
 
     /// Whether Guide holds the Guide layer.
     pub fn holds_guide_layer(&self) -> bool {
-        matches!(self.button(Button::Guide), ButtonAction::Shift { layer, .. } if layer == GUIDE_LAYER)
+        self.button(Button::Guide).holds_layer(GUIDE_LAYER)
+    }
+
+    /// Makes Guide hold the Guide layer, with a double tap sending Guide on to Steam.
+    pub fn take_guide(&mut self) {
+        self.set_button(Button::Guide, ButtonAction::guide_hold());
+        let gestures = self.gestures.entry(Button::Guide).or_default();
+        gestures.double_tap = Some(ButtonAction::Gamepad(Button::Guide));
     }
 
     /// This profile with `layers` on top, oldest first: later ones win.
@@ -1693,20 +1700,20 @@ impl Profile {
         p
     }
 
-    /// 1:1 virtual gamepad. Guide is the shift key of the Guide layer.
+    /// 1:1 virtual gamepad. Guide holds the Guide layer.
     pub fn passthrough(name: &str) -> Self {
         let buttons = Button::ALL
             .iter()
             .map(|&b| {
                 let action = if b == Button::Guide {
-                    ButtonAction::guide_shift()
+                    ButtonAction::guide_hold()
                 } else {
                     ButtonAction::Gamepad(b)
                 };
                 (b, action)
             })
             .collect();
-        Profile {
+        let mut p = Profile {
             name: name.into(),
             buttons,
             left_stick: StickConfig::new(StickAction::Gamepad { stick: Stick::Left, invert_y: false }, 0.05, 1.0),
@@ -1719,7 +1726,9 @@ impl Profile {
             tap_window_ms: default_tap_window_ms(),
             long_press_ms: default_long_press_ms(),
             gyro: GyroConfig::default(),
-        }
+        };
+        p.take_guide();
+        p
     }
 
     /// Keyboard-and-mouse action games (shooters, third-person action): WASD movement with
@@ -1746,7 +1755,7 @@ impl Profile {
                 (Button::DpadLeft, key("KEY_4")),
                 (Button::Start, key("KEY_ESC")),
                 (Button::Select, key("KEY_TAB")),
-                (Button::Guide, ButtonAction::guide_shift()),
+                (Button::Guide, ButtonAction::guide_hold()),
             ]),
             left_stick,
             right_stick: StickConfig::new(StickAction::mouse(1600.0), 0.1, 2.0),
@@ -1787,7 +1796,7 @@ impl Profile {
                 (Button::DpadLeft, key("KEY_4")),
                 (Button::Start, key("KEY_ESC")),
                 (Button::Select, key("KEY_TAB")),
-                (Button::Guide, ButtonAction::guide_shift()),
+                (Button::Guide, ButtonAction::guide_hold()),
             ]),
             left_stick: StickConfig::new(StickAction::mouse(1400.0), 0.12, 2.2),
             right_stick,
@@ -1820,7 +1829,7 @@ impl Profile {
                 (Button::DpadRight, key("KEY_RIGHT")),
                 (Button::Start, key("KEY_ENTER")),
                 (Button::Select, key("KEY_ESC")),
-                (Button::Guide, ButtonAction::guide_shift()),
+                (Button::Guide, ButtonAction::guide_hold()),
             ]),
             left_stick,
             right_stick: StickConfig::new(StickAction::Disabled, 0.15, 1.0),
@@ -1843,7 +1852,7 @@ impl Profile {
             (Button::RightBumper, Mouse(MouseButton::Forward)),
             (Button::Select, Keys(vec!["KEY_LEFTMETA".into()])),
             (Button::Start, key("KEY_ENTER")),
-            (Button::Guide, ButtonAction::guide_shift()),
+            (Button::Guide, ButtonAction::guide_hold()),
             (Button::LeftStick, Disabled),
             (Button::RightStick, Disabled),
             (Button::DpadUp, key("KEY_UP")),
@@ -1851,7 +1860,7 @@ impl Profile {
             (Button::DpadLeft, key("KEY_LEFT")),
             (Button::DpadRight, key("KEY_RIGHT")),
         ]);
-        Profile {
+        let mut p = Profile {
             name: name.into(),
             buttons,
             left_stick: StickConfig::new(StickAction::mouse(1200.0), 0.12, 2.0),
@@ -1875,7 +1884,9 @@ impl Profile {
             tap_window_ms: default_tap_window_ms(),
             long_press_ms: default_long_press_ms(),
             gyro: GyroConfig::default(),
-        }
+        };
+        p.take_guide();
+        p
     }
 }
 
@@ -2140,7 +2151,7 @@ impl Game {
         let mut changed = false;
         for p in &mut self.profiles {
             if p.button(Button::Guide) == &ButtonAction::NextProfile && !p.gestures.contains_key(&Button::Guide) {
-                p.set_button(Button::Guide, ButtonAction::guide_shift());
+                p.take_guide();
                 changed = true;
             }
         }
@@ -2256,7 +2267,7 @@ impl ItemKind {
             | (ItemKind::Menu, ButtonAction::OpenMenu(name))
             | (ItemKind::Info, ButtonAction::ShowInfo(name))
             | (ItemKind::Log, ButtonAction::ShowLog(name))
-            | (ItemKind::Layer, ButtonAction::Layer(name) | ButtonAction::Shift { layer: name, .. }) => Some(name),
+            | (ItemKind::Layer, ButtonAction::Layer(name)) => Some(name),
             _ => None,
         }
     }
@@ -2267,7 +2278,7 @@ impl ItemKind {
             | (ItemKind::Menu, ButtonAction::OpenMenu(name))
             | (ItemKind::Info, ButtonAction::ShowInfo(name))
             | (ItemKind::Log, ButtonAction::ShowLog(name))
-            | (ItemKind::Layer, ButtonAction::Layer(name) | ButtonAction::Shift { layer: name, .. }) => Some(name),
+            | (ItemKind::Layer, ButtonAction::Layer(name)) => Some(name),
             _ => None,
         }
     }
@@ -2312,7 +2323,6 @@ fn rename_in(
             {
                 *name = new.to_string();
             }
-            l.also_info.iter_mut().filter(|n| *n == old).for_each(|n| *n = new.to_string());
         }
     }
 }
@@ -2890,7 +2900,13 @@ mod tests {
             }
             // Guide always opens the Guide layer, which can switch profiles, so no template can
             // trap you in it.
-            assert_eq!(p.button(Button::Guide), &ButtonAction::guide_shift(), "{}", p.name);
+            assert_eq!(p.button(Button::Guide), &ButtonAction::guide_hold(), "{}", p.name);
+            assert_eq!(
+                p.gestures.get(&Button::Guide).and_then(|g| g.double_tap.as_ref()),
+                Some(&ButtonAction::Gamepad(Button::Guide)),
+                "{}: a double tap reaches Steam",
+                p.name
+            );
         }
     }
 
@@ -2904,7 +2920,10 @@ mod tests {
 
     #[test]
     fn old_guide_bindings_move_to_the_guide_layer_once() {
-        let old_guide = |p: &mut Profile| p.set_button(Button::Guide, ButtonAction::NextProfile);
+        let old_guide = |p: &mut Profile| {
+            p.set_button(Button::Guide, ButtonAction::NextProfile);
+            p.gestures.remove(&Button::Guide);
+        };
         let mut config = Config { guide_layer_adopted: false, ..Config::default() };
         config.general.layers.clear();
         config.general.profiles.iter_mut().for_each(old_guide);
@@ -2919,10 +2938,10 @@ mod tests {
         config.games = vec![doom, mine];
 
         assert!(config.adopt_guide_layer());
-        assert!(config.general.profiles.iter().all(|p| p.button(Button::Guide) == &ButtonAction::guide_shift()));
+        assert!(config.general.profiles.iter().all(|p| p.button(Button::Guide) == &ButtonAction::guide_hold()));
         assert_eq!(config.general.layers, [Layer::guide()]);
         let doom = &config.games[0];
-        assert_eq!(doom.profiles[0].button(Button::Guide), &ButtonAction::guide_shift());
+        assert_eq!(doom.profiles[0].button(Button::Guide), &ButtonAction::guide_hold());
         assert_eq!(doom.profiles[1].button(Button::Guide), &ButtonAction::Keys(vec!["KEY_F12".into()]));
         assert_eq!(doom.layers, [Layer::guide()]);
         assert_eq!(config.games[1].layers, [Layer::new(GUIDE_LAYER)], "an existing layer is left alone");

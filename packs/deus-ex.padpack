@@ -55,11 +55,11 @@ keys = ["KEY_F2"]
 [profiles.buttons.Start]
 keys = ["KEY_ESC"]
 
-[profiles.buttons.Guide.shift]
-layer = "Guide"
-
-[profiles.buttons.Guide.shift.tap]
-gamepad = "Guide"
+[profiles.buttons.Guide]
+multi = [
+    { layer = "Guide" },
+    { show_info = "Controls" },
+]
 
 [profiles.buttons.LeftStick.toggle]
 keys = ["KEY_X"]
@@ -125,6 +125,9 @@ keys = ["KEY_KPPLUS"]
 
 [profiles.gestures.Start.long_press]
 keys = ["KEY_KPSLASH"]
+
+[profiles.gestures.Guide.double_tap]
+gamepad = "Guide"
 
 [profiles.gyro]
 mode = "off"
@@ -378,7 +381,6 @@ opacity = 1.0
 [[layers]]
 name = "Guide"
 indicator = "bindings"
-also_info = ["Controls"]
 indicator_title = "Hold {guide} and press"
 indicator_delay_ms = 250
 swallow_unbound = true

@@ -98,7 +98,7 @@ impl Names {
 /// Whether `action` holds a layer outside any Toggle, which a tap (a menu item) can't do.
 pub(super) fn holds_layer(action: &ButtonAction) -> bool {
     match action {
-        ButtonAction::Layer(_) | ButtonAction::Shift { .. } => true,
+        ButtonAction::Layer(_) => true,
         ButtonAction::Multi(list) => list.iter().any(holds_layer),
         ButtonAction::Turbo { action, .. } => holds_layer(action),
         _ => false,
@@ -136,10 +136,10 @@ pub(super) fn action_problem(action: &ButtonAction, names: &Names) -> Option<Str
             ButtonAction::ShowLog(name) if !names.logs.contains(name) => {
                 problem = Some(format!("missing log overlay {name:?}"));
             }
-            ButtonAction::Layer(_) | ButtonAction::Shift { .. } if !names.layers_allowed => {
+            ButtonAction::Layer(_) if !names.layers_allowed => {
                 problem = Some("shared items can't use layers".into());
             }
-            ButtonAction::Layer(name) | ButtonAction::Shift { layer: name, .. } if !names.layers.contains(name) => {
+            ButtonAction::Layer(name) if !names.layers.contains(name) => {
                 problem = Some(format!("missing layer {name:?}"));
             }
             _ => {}
@@ -213,7 +213,7 @@ pub(super) fn items_problem(macros: &[Macro], menus: &[Menu], info: &[InfoOverla
         }
         if m.steps.iter().filter_map(MacroStep::action).any(|a| {
             let mut layer = false;
-            a.walk(&mut |a| layer |= matches!(a, ButtonAction::Layer(_) | ButtonAction::Shift { .. }));
+            a.walk(&mut |a| layer |= matches!(a, ButtonAction::Layer(_)));
             layer
         }) {
             return Some(format!("Macro {:?}: macros can't hold layers.", m.name));
@@ -340,9 +340,6 @@ pub(super) fn layers_problem(g: &Game, names: &Names) -> Option<String> {
             } else {
                 format!("{label}: missing info overlay {info:?} to show.")
             });
-        }
-        if let Some(info) = l.also_info.iter().find(|i| !names.infos.contains(i)) {
-            return Some(format!("{label}: missing info overlay {info:?} to show."));
         }
         if let Some(problem) = l.actions().into_iter().find_map(|a| action_problem(a, names)) {
             return Some(format!("{label}: {problem}."));

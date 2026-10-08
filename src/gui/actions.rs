@@ -124,7 +124,6 @@ pub(super) enum ActionKind {
     Info,
     Log,
     Layer,
-    LayerOrTap,
     Multiple,
 }
 
@@ -148,7 +147,6 @@ impl fmt::Display for ActionKind {
             ActionKind::Info => "Show info overlay…",
             ActionKind::Log => "Show log overlay…",
             ActionKind::Layer => "Layer…",
-            ActionKind::LayerOrTap => "Layer, or pad button on a tap…",
             ActionKind::Turbo => "Turbo (repeat while held)…",
             ActionKind::Multiple => "Multiple outputs…",
         })
@@ -156,7 +154,7 @@ impl fmt::Display for ActionKind {
 }
 
 /// Every kind, for a top-level action.
-pub(super) const ACTION_KINDS: [ActionKind; 20] = [
+pub(super) const ACTION_KINDS: [ActionKind; 19] = [
     ActionKind::Disabled,
     ActionKind::Gamepad,
     ActionKind::Keys,
@@ -175,7 +173,6 @@ pub(super) const ACTION_KINDS: [ActionKind; 20] = [
     ActionKind::Info,
     ActionKind::Log,
     ActionKind::Layer,
-    ActionKind::LayerOrTap,
     ActionKind::Multiple,
 ];
 
@@ -274,7 +271,7 @@ pub(super) fn action_editor<'a>(
 ) -> Element<'a, Message> {
     let kind = action_kind(action);
     // Shared items can't use layers, so they aren't offered there.
-    let kinds: Vec<ActionKind> = kinds.iter().copied().filter(|k| !matches!(k, ActionKind::Layer | ActionKind::LayerOrTap) || names.layers_allowed).collect();
+    let kinds: Vec<ActionKind> = kinds.iter().copied().filter(|k| !matches!(k, ActionKind::Layer) || names.layers_allowed).collect();
     let kind_picker = {
         let on_change = on_change.clone();
         let (current, names) = (action.clone(), names.clone());
@@ -305,7 +302,6 @@ pub(super) fn action_kind(action: &ButtonAction) -> ActionKind {
         ButtonAction::ShowInfo(_) => ActionKind::Info,
         ButtonAction::ShowLog(_) => ActionKind::Log,
         ButtonAction::Layer(_) => ActionKind::Layer,
-        ButtonAction::Shift { .. } => ActionKind::LayerOrTap,
     }
 }
 
@@ -343,10 +339,6 @@ pub(super) fn new_action(k: ActionKind, default_button: Button, current: &Button
         ActionKind::Log => ButtonAction::ShowLog(names.logs.first().cloned().unwrap_or_default()),
         // With no layers yet, picking the kind makes one.
         ActionKind::Layer => ButtonAction::Layer(names.layers.first().cloned().unwrap_or_else(|| NEW_LAYER.into())),
-        ActionKind::LayerOrTap => ButtonAction::Shift {
-            layer: names.layers.first().cloned().unwrap_or_else(|| NEW_LAYER.into()),
-            tap: Box::new(ButtonAction::Gamepad(default_button)),
-        },
     }
 }
 
@@ -517,21 +509,6 @@ pub(super) fn action_value<'a>(
                 .spacing(8)
                 .align_y(Alignment::Center);
             if !names.layers.contains(name) {
-                line = line.push(text("missing layer").size(12).color(ERROR_COLOR));
-            }
-            line.into()
-        }
-        ButtonAction::Shift { layer, tap } => {
-            let mut options = names.layers.clone();
-            options.push(NEW_LAYER.to_string());
-            let kept = tap.clone();
-            let mut line = row![
-                dropdown(options, Some(layer.clone()), move |n| on_change(ButtonAction::Shift { layer: n, tap: kept.clone() })).width(200),
-                text(format!("tap: {}", tap.summary())).size(12).color(MUTED_COLOR),
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center);
-            if !names.layers.contains(layer) {
                 line = line.push(text("missing layer").size(12).color(ERROR_COLOR));
             }
             line.into()

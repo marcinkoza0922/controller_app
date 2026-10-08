@@ -47,11 +47,11 @@ keys = ["KEY_SPACE"]
 [profiles.buttons.Start]
 keys = ["KEY_F10"]
 
-[profiles.buttons.Guide.shift]
-layer = "Guide"
-
-[profiles.buttons.Guide.shift.tap]
-gamepad = "Guide"
+[profiles.buttons.Guide]
+multi = [
+    { layer = "Guide" },
+    { show_info = "Controls" },
+]
 
 [profiles.buttons.LeftStick]
 multi = [
@@ -105,7 +105,8 @@ threshold = 0.3
 [profiles.right_trigger.action.button.action]
 mouse = "Left"
 
-[profiles.gestures]
+[profiles.gestures.Guide.double_tap]
+gamepad = "Guide"
 
 [profiles.gyro]
 mode = "off"
@@ -140,11 +141,11 @@ mouse = "Right"
 [profiles.buttons.Start]
 keys = ["KEY_ESC"]
 
-[profiles.buttons.Guide.shift]
-layer = "Guide"
-
-[profiles.buttons.Guide.shift.tap]
-gamepad = "Guide"
+[profiles.buttons.Guide]
+multi = [
+    { layer = "Guide" },
+    { show_info = "Controls" },
+]
 
 [profiles.buttons.DpadUp]
 keys = ["KEY_UP"]
@@ -186,7 +187,8 @@ threshold = 0.3
 [profiles.right_trigger.action.button.action]
 mouse = "Left"
 
-[profiles.gestures]
+[profiles.gestures.Guide.double_tap]
+gamepad = "Guide"
 
 [profiles.gyro]
 mode = "off"
@@ -455,7 +457,6 @@ keys = [
 [[layers]]
 name = "Guide"
 indicator = "bindings"
-also_info = ["Controls"]
 indicator_title = "Hold {guide} and press"
 indicator_delay_ms = 250
 swallow_unbound = true

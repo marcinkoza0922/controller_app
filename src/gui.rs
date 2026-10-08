@@ -383,8 +383,6 @@ enum Message {
     SetIndicator(IndicatorChoice),
     SetSwallowUnbound(bool),
     SetIndicatorDelay(u64),
-    AddAlsoInfo(String),
-    RemoveAlsoInfo(usize),
     SetIndicatorStyle(OverlayStyle),
     ToggleIndicatorAppearance,
     /// Make the layer set this (a copy of the profile's, to edit).

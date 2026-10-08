@@ -60,7 +60,6 @@ impl ButtonAction {
             ButtonAction::Macro { name, repeat: true } => format!("Macro “{name}” (repeat)"),
             ButtonAction::Macro { name, .. } => format!("Macro “{name}”"),
             ButtonAction::Layer(name) => format!("Layer “{name}”"),
-            ButtonAction::Shift { layer, tap } => format!("Layer “{layer}” (tap: {})", tap.summary()),
         }
     }
 }

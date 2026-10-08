@@ -228,7 +228,6 @@ fn references(profiles: &[Profile], menus: &[Menu], macros: &[Macro], layers: &[
         if let Indicator::Info(name) = &l.indicator {
             refs.insert((ItemKind::Info, name.clone()));
         }
-        refs.extend(l.also_info.iter().map(|name| (ItemKind::Info, name.clone())));
     }
     refs
 }

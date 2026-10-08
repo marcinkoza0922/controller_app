@@ -1,6 +1,6 @@
 # Guide button as a shift key
 
-Status: steps 1–2 implemented (2026-10-07): the `Shift` action, the swallow option, the default
+Status: steps 1–2 implemented (2026-10-07): the swallow option, the default
 Guide layer without Screenshot, ForceQuit and ToggleRecording (L3, RB and B are unbound in it
 for now), and the migration. Step 3 (`Screenshot`, in `src/capture.rs`) and `ForceQuit` (`src/quit.rs`, B held 2 s) are done too; `ToggleRecording` (`src/record.rs`, L3) is written but untried against a real gpu-screen-recorder; the packs are still to do.
 
@@ -15,8 +15,8 @@ screenshot, mouse clicks and so on).
 
 | Topic | Decision |
 |---|---|
-| Mechanism | A **Guide layer** (see `layers.md`), opened by a new `Shift` action on the Guide button. |
-| Plain Guide | `Shift { layer, tap }`: the layer starts on press. If Guide is released without any input the layer binds having been used, a Guide tap (`BTN_MODE`) goes to the virtual pad. Steam therefore sees Guide on release, and never sees its own hold or long press. |
+| Mechanism | A **Guide layer** (see `layers.md`), held by the Guide button. |
+| Plain Guide | `Layer("Guide")`. While the daemon is controlling an app, it owns the Guide button: nothing reaches Steam on a press, hold or single tap. A **double tap** is a gesture that sends an ordinary Guide (`BTN_MODE`) to the virtual pad, which opens the Steam overlay. |
 | Unbound inputs while held | Swallowed (a layer option, on for the Guide layer): Guide+A does nothing rather than pressing A in the game. |
 | Where it lives | A copy of the layer in General and in every game and pack, all built by one `guide_layer()` function. Editable per game. |
 | Profile switching | Moves to Guide + D-pad Up (Next profile). |
@@ -28,7 +28,7 @@ screenshot, mouse clicks and so on).
 
 | Input | Action |
 |---|---|
-| Guide (alone, released unused) | Guide tap to Steam |
+| Guide (double tap) | Guide to Steam |
 | + X | Open the on-screen keyboard |
 | + Y | Open the on-screen numpad |
 | + RB | Screenshot to `~/Pictures/Screenshots/<game>/` |
@@ -42,11 +42,6 @@ screenshot, mouse clicks and so on).
 
 ## New actions
 
-- **`Shift { layer, tap }`.** Engine change: starts the layer on press like `Layer`, and on
-  release emits `tap` only if no input bound by the layer was used meanwhile. "Used" means a
-  button, stick direction or trigger pull the layer overrides (or, for the swallow option, any
-  input at all). The press and release of the holding button follow the layer rules for
-  inputs held across a stack change.
 - **`Screenshot`.** The daemon picks the tool by compositor (kwin: spectacle, sway and
   hyprland: grim), names the file with a timestamp, and saves under
   `~/Pictures/Screenshots/<active game's name>/` (General's name when no game is active).
@@ -71,15 +66,15 @@ Holding Guide shows what it does, and games add to it.
 
 - **Layer indicators.** A layer's indicator can now be `bindings`: a cheat sheet generated
   from the layer's own buttons, triggers and sticks (`info::layer_sheet`), so it can't drift
-  from the real bindings. A layer can also list more info overlays of its game to show with it
-  (`also_info`), and wait `indicator_delay_ms` before showing any of it, so a quick Guide tap
-  (which reaches Steam) doesn't flash them. The layer itself is active immediately.
+  from the real bindings. A layer can wait `indicator_delay_ms` before showing its indicator, so a quick
+  tap doesn't flash it. The layer itself is active immediately.
 - **Headings.** The generated sheet is headed "Hold {guide} and press" (a layer's
   `indicator_title`), and each pack's Controls overlay "This game's controls" (an info overlay's
   new `title`), so it is clear that the shortcuts need Guide held and the centre panel is the
   game's own mapping.
 - **Defaults.** The Guide layer uses `bindings`, bottom left, after 250 ms. In the library
-  packs it also shows the game's `Controls` overlay, so two overlays are up while Guide is held.
+  packs the Guide button has two outputs, `Layer("Guide")` and `ShowInfo("Controls")`, so two
+  overlays are up while Guide is held.
 - **Removed from the packs.** The Start + Select combo that showed Controls, Deus Ex's startup
   `Hints` overlay, and the pack shortcuts for the on-screen keyboard and numpad (D-pad Up
   gestures in Deus Ex, Select hold in StarCraft's Gameplay profile). Guide + X / Guide + Y
@@ -88,9 +83,9 @@ Holding Guide shows what it does, and games add to it.
 ## Rollout
 
 - **Templates and defaults.** `passthrough`, `pc_action`, `strategy` and the other templates
-  set Guide to the Shift instead of `NextProfile`; new games and General get the layer.
+  set Guide to hold the layer instead of `NextProfile`; new games and General get the layer.
 - **Safety invariant.** The template test that "Guide always cycles profiles" becomes: every
-  profile's Guide is the Shift, and the Guide layer binds Next profile, so no profile can trap
+  profile's Guide holds the layer, and the Guide layer binds Next profile, so no profile can trap
   you.
 - **Existing configs.** A migration changes Guide only where it is still exactly
   `NextProfile`, and adds the `Guide` layer only when the game has no layer of that name.
@@ -102,7 +97,7 @@ Holding Guide shows what it does, and games add to it.
 
 ## Build order
 
-1. Engine: `Shift` action and the swallow-unbound layer option, with tests.
+1. Engine: the swallow-unbound layer option, with tests.
 2. `guide_layer()` with the config-only bindings (keyboard, numpad, clicks, mouse stick, keys,
    next profile), wired into General, templates and the migration. Usable on its own.
 3. `Screenshot`.
@@ -113,7 +108,5 @@ Holding Guide shows what it does, and games add to it.
 
 ## Open questions
 
-- Does Steam Input treat a tap that arrives on release differently from a normal press, for
-  example the Steam menu opening on press? Check on a real setup after step 2.
 - Whether gpu-screen-recorder needs a portal prompt on each start under the user's compositor;
   if so, recording may need a fixed capture target.
