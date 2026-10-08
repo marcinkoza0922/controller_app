@@ -673,6 +673,7 @@ pub mod draw {
                 Segment::Text(t) => Element::from(text(t.clone()).font(c.font).size(16.0 * s).color(c.background_text)),
                 Segment::Glyph { label, fill, round } => glyph(label, *fill, *round, c, s, opacity),
                 Segment::Dpad(lit) => dpad_glyph(*lit, c, s),
+                Segment::StickClick { right } => stick_click_glyph(*right, c, s),
             });
         }
         line.into()
@@ -695,6 +696,24 @@ pub mod draw {
         };
         let gap = || -> Element<'a, M> { space().width(cell).height(cell).into() };
         column![row![gap(), arm(up), gap()], row![arm(left), arm(false), arm(right)], row![gap(), arm(down), gap()]]
+        .into()
+    }
+
+    /// A stick press: a round stick cap marked L or R, with a down arrow for the push.
+    fn stick_click_glyph<'a, M: 'a>(right: bool, c: Colors, s: f32) -> Element<'a, M> {
+        let size = 26.0 * s;
+        let label = if right { "R" } else { "L" };
+        let cap = container(row![
+            text(label).font(c.font).size(12.0 * s).color(c.item_text),
+            text("↓").font(c.font).size(12.0 * s).color(c.item_text),
+        ])
+        .center_x(size)
+        .center_y(size);
+        cap.style(move |_: &iced::Theme| container::Style {
+            background: Some(c.item.into()),
+            border: Border { width: 2.0, radius: (size / 2.0).into(), color: Color { a: 0.6, ..c.item_text } },
+            ..container::Style::default()
+        })
         .into()
     }
 
