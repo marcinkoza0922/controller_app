@@ -168,7 +168,9 @@ pub(super) fn section_has_problem(p: &Profile, tab: ProfileTab, names: &Names) -
                 StickAction::Keys { up, down, left, right } => [up, down, left, right].iter().any(|k| KeyCode::from_str(k).is_err()),
                 _ => false,
             });
-            dirs || zones || triggers || keys
+            let rings = [Stick::Left, Stick::Right].into_iter().any(|s| p.stick(s).action.ring_actions().iter().any(bad));
+            let two_flicks = [Stick::Left, Stick::Right].into_iter().all(|s| matches!(p.stick(s).action, StickAction::Flick { .. }));
+            dirs || zones || triggers || keys || rings || two_flicks
         }
         ProfileTab::Combos => p.combos.iter().any(|c| c.buttons.len() < 2 || bad(&c.action)),
         ProfileTab::Gyro => false,
@@ -303,6 +305,9 @@ pub(super) fn game_problem(config: &Config, g: &Game) -> Option<String> {
         if analogs.into_iter().any(|a| p.zones(a).iter().any(|z| z.min >= z.max)) {
             return Some(format!("Profile {:?}: a zone's range must start below where it ends.", p.name));
         }
+        if [Stick::Left, Stick::Right].into_iter().all(|s| matches!(p.stick(s).action, StickAction::Flick { .. })) {
+            return Some(format!("Profile {:?}: only one stick can be a flick stick.", p.name));
+        }
         let mut keys: Vec<&String> = p.actions().into_iter().flat_map(|a| a.key_names()).collect();
         for s in [Stick::Left, Stick::Right] {
             if let StickAction::Keys { up, down, left, right } = &p.stick(s).action {
@@ -346,6 +351,9 @@ pub(super) fn layers_problem(g: &Game, names: &Names) -> Option<String> {
         let zones = zones.chain([&l.left_trigger, &l.right_trigger].into_iter().flatten().flat_map(|t| &t.zones));
         if zones.into_iter().any(|z| z.min >= z.max) {
             return Some(format!("{label}: a zone's range must start below where it ends."));
+        }
+        if [&l.left_stick, &l.right_stick].into_iter().all(|s| s.as_ref().is_some_and(|s| matches!(s.action, StickAction::Flick { .. }))) {
+            return Some(format!("{label}: only one stick can be a flick stick."));
         }
         let stick_keys = [&l.left_stick, &l.right_stick].into_iter().flatten().flat_map(|s| match &s.action {
             StickAction::Keys { up, down, left, right } => vec![up, down, left, right],

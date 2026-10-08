@@ -902,9 +902,56 @@ pub enum StickAction {
         invert_y: bool,
     },
     /// `speed` is pixels/second at full deflection.
-    Mouse { speed: f32 },
+    Mouse {
+        speed: f32,
+        #[serde(flatten)]
+        response: MouseResponse,
+    },
     /// `speed` is wheel notches/second at full deflection.
     Scroll { speed: f32 },
+    /// The stick's angle picks one of `sectors` equal slices, and that slice's action is held
+    /// while the stick points into it.
+    Ring {
+        #[serde(default = "default_sectors")]
+        sectors: u8,
+        /// Degrees clockwise from up to the middle of the first sector.
+        #[serde(default)]
+        start_angle: f32,
+        /// Deflection (after the deadzone) from which a sector is active.
+        #[serde(default = "default_ring_inner_radius")]
+        inner_radius: f32,
+        /// How far, as a share of a sector's width, the stick must pass a boundary to change sector.
+        #[serde(default = "default_ring_hysteresis")]
+        hysteresis: f32,
+        /// One action per sector, clockwise from the first; missing ones do nothing.
+        #[serde(default)]
+        actions: Vec<ButtonAction>,
+    },
+    /// Flick stick: pushing the stick out turns the camera to that direction at once, then
+    /// rotating the stick turns it the same angle. Horizontal mouse movement only, unless
+    /// `vertical` adds looking up and down.
+    Flick {
+        /// Mouse pixels that make a 360 degree turn in the game.
+        #[serde(default = "default_full_turn_px")]
+        full_turn_px: f32,
+        /// Deflection (after the deadzone) at which a flick starts.
+        #[serde(default = "default_flick_threshold")]
+        flick_threshold: f32,
+        /// The initial turn is spread over this long.
+        #[serde(default = "default_flick_time_ms")]
+        flick_time_ms: u32,
+        /// Time constant of a low-pass filter on the turning that follows a flick; 0 is off.
+        #[serde(default)]
+        rotate_smoothing_ms: u32,
+        /// Degrees either side of straight up in which a flick turns nothing.
+        #[serde(default)]
+        forward_deadzone: f32,
+        #[serde(default)]
+        vertical: FlickVertical,
+        /// Pixels/second at full deflection, when `vertical` is `look`.
+        #[serde(default = "default_vertical_speed")]
+        vertical_speed: f32,
+    },
     /// Directional keys, e.g. WASD or arrows.
     Keys {
         up: String,
@@ -914,6 +961,138 @@ pub enum StickAction {
     },
 }
 
+
+/// How a mouse stick's deflection turns into pointer speed, beyond the deadzone and curve.
+/// The defaults change nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MouseResponse {
+    /// 0.0..1.0: extra speed gained while held at full deflection, as a share of `speed`.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub accel: f32,
+    /// Milliseconds at full deflection to reach the full acceleration.
+    #[serde(skip_serializing_if = "is_default_ramp")]
+    pub accel_ramp_ms: u32,
+    /// Vertical speed relative to horizontal.
+    #[serde(skip_serializing_if = "is_one")]
+    pub y_scale: f32,
+    /// Extra speed multiplier in the outer tenth of the stick's travel.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub outer_boost: f32,
+    /// Time constant (milliseconds) of a low-pass filter on the stick position; 0 is off.
+    #[serde(skip_serializing_if = "is_zero_ms")]
+    pub smoothing_ms: u32,
+}
+
+impl Default for MouseResponse {
+    fn default() -> Self {
+        MouseResponse { accel: 0.0, accel_ramp_ms: 400, y_scale: 1.0, outer_boost: 0.0, smoothing_ms: 0 }
+    }
+}
+
+#[expect(clippy::trivially_copy_pass_by_ref, reason = "serde's skip_serializing_if passes a reference")]
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
+}
+
+#[expect(clippy::trivially_copy_pass_by_ref, reason = "serde's skip_serializing_if passes a reference")]
+fn is_one(v: &f32) -> bool {
+    *v == 1.0
+}
+
+#[expect(clippy::trivially_copy_pass_by_ref, reason = "serde's skip_serializing_if passes a reference")]
+fn is_default_ramp(v: &u32) -> bool {
+    *v == MouseResponse::default().accel_ramp_ms
+}
+
+#[expect(clippy::trivially_copy_pass_by_ref, reason = "serde's skip_serializing_if passes a reference")]
+fn is_zero_ms(v: &u32) -> bool {
+    *v == 0
+}
+
+/// What a flick stick does with the stick's up/down deflection.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FlickVertical {
+    #[default]
+    Off,
+    /// Moves the mouse vertically in proportion to it, using the stick's curve.
+    Look,
+}
+
+fn default_full_turn_px() -> f32 {
+    8000.0
+}
+
+fn default_flick_threshold() -> f32 {
+    0.9
+}
+
+fn default_flick_time_ms() -> u32 {
+    100
+}
+
+fn default_vertical_speed() -> f32 {
+    1200.0
+}
+
+fn default_sectors() -> u8 {
+    8
+}
+
+fn default_ring_inner_radius() -> f32 {
+    0.5
+}
+
+fn default_ring_hysteresis() -> f32 {
+    0.1
+}
+
+impl StickAction {
+    /// A ring of `sectors` slices that do nothing yet.
+    pub fn ring(sectors: u8) -> Self {
+        StickAction::Ring {
+            sectors,
+            start_angle: 0.0,
+            inner_radius: default_ring_inner_radius(),
+            hysteresis: default_ring_hysteresis(),
+            actions: vec![ButtonAction::Disabled; usize::from(sectors)],
+        }
+    }
+
+    /// A flick stick with the default settings.
+    pub fn flick() -> Self {
+        StickAction::Flick {
+            full_turn_px: default_full_turn_px(),
+            flick_threshold: default_flick_threshold(),
+            flick_time_ms: default_flick_time_ms(),
+            rotate_smoothing_ms: 0,
+            forward_deadzone: 0.0,
+            vertical: FlickVertical::Off,
+            vertical_speed: default_vertical_speed(),
+        }
+    }
+
+    /// The ring's sector actions; none for other modes.
+    pub fn ring_actions(&self) -> &[ButtonAction] {
+        match self {
+            StickAction::Ring { actions, .. } => actions,
+            _ => &[],
+        }
+    }
+
+    pub fn ring_actions_mut(&mut self) -> &mut [ButtonAction] {
+        match self {
+            StickAction::Ring { actions, .. } => actions,
+            _ => &mut [],
+        }
+    }
+
+    /// Mouse pointer at `speed` pixels/second, with the default response.
+    pub fn mouse(speed: f32) -> Self {
+        StickAction::Mouse { speed, response: MouseResponse::default() }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StickConfig {
@@ -1067,6 +1246,7 @@ impl Layer {
         }
         for s in [&self.left_stick, &self.right_stick].into_iter().flatten() {
             all.extend(s.zones.iter().map(|z| &z.action));
+            all.extend(s.action.ring_actions());
         }
         all
     }
@@ -1085,6 +1265,7 @@ impl Layer {
         }
         for s in [&mut self.left_stick, &mut self.right_stick].into_iter().flatten() {
             all.extend(s.zones.iter_mut().map(|z| &mut z.action));
+            all.extend(s.action.ring_actions_mut());
         }
         all
     }
@@ -1332,6 +1513,7 @@ impl Profile {
             all.extend(t.zones.iter().map(|z| &z.action));
         }
         all.extend(self.left_stick.zones.iter().chain(&self.right_stick.zones).map(|z| &z.action));
+        all.extend(self.left_stick.action.ring_actions().iter().chain(self.right_stick.action.ring_actions()));
         all
     }
 
@@ -1349,6 +1531,7 @@ impl Profile {
         }
         for stick in [&mut self.left_stick, &mut self.right_stick] {
             all.extend(stick.zones.iter_mut().map(|z| &mut z.action));
+            all.extend(stick.action.ring_actions_mut());
         }
         all
     }
@@ -1470,7 +1653,7 @@ impl Profile {
                 (Button::Guide, NextProfile),
             ]),
             left_stick,
-            right_stick: StickConfig::new(StickAction::Mouse { speed: 1600.0 }, 0.1, 2.0),
+            right_stick: StickConfig::new(StickAction::mouse(1600.0), 0.1, 2.0),
             left_trigger: TriggerAction::Button { action: Mouse(MouseButton::Right), threshold: 0.3 }.into(),
             right_trigger: TriggerAction::Button { action: Mouse(MouseButton::Left), threshold: 0.3 }.into(),
             // Gyro aiming while aiming down sights (LT), on pads that have a gyro.
@@ -1510,7 +1693,7 @@ impl Profile {
                 (Button::Select, key("KEY_TAB")),
                 (Button::Guide, NextProfile),
             ]),
-            left_stick: StickConfig::new(StickAction::Mouse { speed: 1400.0 }, 0.12, 2.2),
+            left_stick: StickConfig::new(StickAction::mouse(1400.0), 0.12, 2.2),
             right_stick,
             left_trigger: TriggerAction::Button { action: key("KEY_LEFTALT"), threshold: 0.4 }.into(),
             // Hold and move the pointer to drag a selection box.
@@ -1575,7 +1758,7 @@ impl Profile {
         Profile {
             name: name.into(),
             buttons,
-            left_stick: StickConfig::new(StickAction::Mouse { speed: 1200.0 }, 0.12, 2.0),
+            left_stick: StickConfig::new(StickAction::mouse(1200.0), 0.12, 2.0),
             right_stick: StickConfig::new(StickAction::Scroll { speed: 15.0 }, 0.15, 2.0),
             left_trigger: TriggerAction::Button {
                 action: Keys(vec!["KEY_LEFTSHIFT".into()]),

@@ -37,6 +37,7 @@ mod logs;
 mod overlays;
 mod packs;
 mod profile;
+mod ring_preview;
 mod tracking;
 mod widgets;
 
@@ -201,6 +202,10 @@ enum Target {
     MacroStep(usize, usize),
     /// Item `.1` of menu `.0` (in the shown list).
     MenuItem(usize, usize),
+    /// The advanced response settings of a mouse stick.
+    StickResponse(Stick),
+    /// Sector `.1` of a stick's button ring.
+    RingSector(Stick, usize),
 }
 
 /// Open-card indices after item `i` is removed: later items move up one place.
@@ -248,6 +253,7 @@ enum Message {
     SetRuleProfile(usize, String),
     SetRuleEnabled(usize, bool),
     TestRumble(String),
+    TestTurn(i32),
     ToggleOverlay,
     ToggleNumpad,
     ToggleNumpadAppearance,

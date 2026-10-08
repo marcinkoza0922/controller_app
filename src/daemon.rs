@@ -1161,6 +1161,10 @@ impl Daemon {
                     None => Response::Error(format!("{path} is not being managed")),
                 }
             }
+            Request::TestTurn(px) => {
+                crate::output::test_turn(px);
+                Response::Ok
+            }
             Request::TestRumble(path) => {
                 let known = self
                     .gamepads

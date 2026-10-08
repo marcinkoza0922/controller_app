@@ -660,8 +660,9 @@ impl App {
                     Target::Combo(i) => p.combos.get_mut(i).map(|c| &mut c.action),
                     Target::Gesture(b, kind) => p.gestures.get_mut(&b).and_then(|g| g.slot(kind).as_mut()),
                     Target::Zone(a, i) => p.zones_mut(a).get_mut(i).map(|z| &mut z.action),
+                    Target::RingSector(st, i) => p.stick_mut(st).action.ring_actions_mut().get_mut(i),
                     // Handled above, outside any profile.
-                    Target::MacroStep(..) | Target::MenuItem(..) => None,
+                    Target::MacroStep(..) | Target::MenuItem(..) | Target::StickResponse(_) => None,
                 };
                 if let Some(action) = root.and_then(|a| action_at(a, &path)) {
                     *action = ButtonAction::Keys(keys);
