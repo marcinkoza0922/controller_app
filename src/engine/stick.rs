@@ -152,16 +152,18 @@ impl Engine {
             let gain = mag.powf(cfg.curve.max(0.1)) / mag * self.response_gain(s, mag, &response, dt);
             let (x, y) = (x * gain, y * gain);
             match cfg.action {
-                StickAction::Mouse { speed, .. } => {
-                    let (dx, dy) = take_whole(&mut self.mouse_acc, x * speed * dt, y * speed * response.y_scale * dt);
+                StickAction::Mouse { speed, invert_y, .. } => {
+                    let dir = if invert_y { -1.0 } else { 1.0 };
+                    let (dx, dy) = take_whole(&mut self.mouse_acc, x * speed * dt, dir * y * speed * response.y_scale * dt);
                     if dx != 0 || dy != 0 {
                         out.push(OutEvent::MouseMove(dx, dy));
                     }
                 }
-                StickAction::Scroll { speed } => {
+                StickAction::Scroll { speed, invert_y } => {
                     let units = speed * WHEEL_UNITS_PER_NOTCH * dt;
-                    // Stick up scrolls up, which is a positive wheel value.
-                    let (h, v) = take_whole(&mut self.scroll_acc, x * units, -y * units);
+                    // Stick up scrolls up, which is a positive wheel value, unless Y is inverted.
+                    let dir = if invert_y { 1.0 } else { -1.0 };
+                    let (h, v) = take_whole(&mut self.scroll_acc, x * units, dir * y * units);
                     if h != 0 || v != 0 {
                         out.push(OutEvent::Wheel { vertical: v, horizontal: h });
                     }
@@ -244,7 +246,7 @@ mod tests {
 
     fn mouse_profile(response: MouseResponse) -> Profile {
         let mut p = Profile::passthrough("p");
-        p.right_stick = StickConfig::new(StickAction::Mouse { speed: 1000.0, response }, 0.0, 1.0);
+        p.right_stick = StickConfig::new(StickAction::Mouse { speed: 1000.0, response, invert_y: false }, 0.0, 1.0);
         p
     }
 
@@ -297,6 +299,45 @@ mod tests {
     }
 
     #[test]
+    fn invert_y_flips_only_vertical_pointer_motion() {
+        let mut p = mouse_profile(MouseResponse::default());
+        p.right_stick.action = StickAction::Mouse { speed: 1000.0, response: MouseResponse::default(), invert_y: true };
+        let mut e = Engine::default();
+        push(&mut e, &p, 0.5, 0.5);
+        let (x, y) = travel(&mut e, &p, 1.0);
+        assert!((x - 500).abs() <= 2, "x {x}");
+        assert!((y + 500).abs() <= 2, "y {y}");
+    }
+
+    /// Total vertical wheel movement over `secs` of 4 ms ticks.
+    fn scrolled(e: &mut Engine, p: &Profile, secs: f32) -> i32 {
+        let mut out = Vec::new();
+        for _ in 0..(secs / 0.004).round() as usize {
+            e.tick(p, 0.004, &mut out);
+        }
+        out.iter().map(|o| if let OutEvent::Wheel { vertical, .. } = o { *vertical } else { 0 }).sum()
+    }
+
+    #[test]
+    fn invert_y_flips_scroll_direction() {
+        let scroll = |invert_y| {
+            let mut p = Profile::passthrough("p");
+            p.right_stick = StickConfig::new(StickAction::Scroll { speed: 15.0, invert_y }, 0.0, 1.0);
+            p
+        };
+        let (normal, inverted) = (scroll(false), scroll(true));
+        // Stick up (negative y on screen).
+        let mut e = Engine::default();
+        push(&mut e, &normal, 0.0, -1.0);
+        let up = scrolled(&mut e, &normal, 1.0);
+        assert!(up > 0, "stick up scrolled {up}");
+        let mut e = Engine::default();
+        push(&mut e, &inverted, 0.0, -1.0);
+        let inv = scrolled(&mut e, &inverted, 1.0);
+        assert_eq!(inv, -up);
+    }
+
+    #[test]
     fn outer_boost_applies_only_near_the_edge() {
         let p = mouse_profile(MouseResponse { outer_boost: 0.5, ..MouseResponse::default() });
         let mut e = Engine::default();
@@ -329,7 +370,11 @@ mod tests {
         assert_eq!(old.action, StickAction::mouse(900.0));
 
         let tuned = StickConfig::new(
-            StickAction::Mouse { speed: 900.0, response: MouseResponse { accel: 0.4, y_scale: 0.8, ..MouseResponse::default() } },
+            StickAction::Mouse {
+                speed: 900.0,
+                response: MouseResponse { accel: 0.4, y_scale: 0.8, ..MouseResponse::default() },
+                invert_y: false,
+            },
             0.1,
             2.0,
         );

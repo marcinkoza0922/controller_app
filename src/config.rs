@@ -966,9 +966,15 @@ pub enum StickAction {
         speed: f32,
         #[serde(flatten)]
         response: MouseResponse,
+        #[serde(default)]
+        invert_y: bool,
     },
     /// `speed` is wheel notches/second at full deflection.
-    Scroll { speed: f32 },
+    Scroll {
+        speed: f32,
+        #[serde(default)]
+        invert_y: bool,
+    },
     /// The stick's angle picks one of `sectors` equal slices, and that slice's action is held
     /// while the stick points into it.
     Ring {
@@ -1143,7 +1149,7 @@ impl StickAction {
 
     /// Mouse pointer at `speed` pixels/second, with the default response.
     pub fn mouse(speed: f32) -> Self {
-        StickAction::Mouse { speed, response: MouseResponse::default() }
+        StickAction::Mouse { speed, response: MouseResponse::default(), invert_y: false }
     }
 
     /// A ring of eight directions that press keys: each sector is one direction, and the
@@ -2003,7 +2009,7 @@ impl Profile {
             name: name.into(),
             buttons,
             left_stick: StickConfig::new(StickAction::mouse(1200.0), 0.12, 2.0),
-            right_stick: StickConfig::new(StickAction::Scroll { speed: 15.0 }, 0.15, 2.0),
+            right_stick: StickConfig::new(StickAction::Scroll { speed: 15.0, invert_y: false }, 0.15, 2.0),
             left_trigger: TriggerAction::Button {
                 action: Keys(vec!["KEY_LEFTSHIFT".into()]),
                 threshold: 0.5,

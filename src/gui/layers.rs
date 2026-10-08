@@ -389,10 +389,10 @@ mod tests {
         // Override copies the profile's stick; editing it changes the layer's copy.
         let _ = app.update(Message::OverrideInput(LayerPart::Stick(Stick::Right)));
         assert_eq!(app.game().layers[0].right_stick.as_ref(), Some(&app.game().profiles[0].right_stick));
-        let scroll = StickConfig::new(StickAction::Scroll { speed: 15.0 }, 0.15, 2.0);
+        let scroll = StickConfig::new(StickAction::Scroll { speed: 15.0, invert_y: false }, 0.15, 2.0);
         let _ = app.update(Message::SetStick(Stick::Right, scroll.clone()));
         assert_eq!(app.game().layers[0].right_stick, Some(scroll));
-        assert_ne!(app.game().profiles[0].right_stick.action, StickAction::Scroll { speed: 15.0 });
+        assert_ne!(app.game().profiles[0].right_stick.action, StickAction::Scroll { speed: 15.0, invert_y: false });
         let _ = app.update(Message::RevertInput(LayerPart::Stick(Stick::Right)));
         let _ = app.update(Message::RevertInput(LayerPart::Button(Button::North)));
         assert!(app.game().layers[0].right_stick.is_none() && app.game().layers[0].gestures.is_empty());
