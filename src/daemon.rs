@@ -44,6 +44,8 @@ use crate::{
 };
 
 mod logs;
+#[cfg(test)]
+mod kernel_tests;
 mod touchpad;
 
 const TICK: Duration = Duration::from_millis(4);
@@ -393,18 +395,44 @@ pub fn run() -> Result<()> {
     Ok(())
 }
 
+/// Binds the control socket so that only this user can connect: its directory must belong to
+/// this user and be private, and the socket itself is `0600`. Anyone who can send a request can
+/// drive the daemon, so this matters most for the `/tmp` fallback, which other users can see.
 fn bind_socket() -> Result<UnixListener> {
-    let path = ipc::socket_path();
+    bind_socket_at(&ipc::socket_path())
+}
+
+fn bind_socket_at(path: &std::path::Path) -> Result<UnixListener> {
+    use std::os::unix::fs::PermissionsExt;
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
+        prepare_private_dir(dir)?;
     }
     if path.exists() {
-        if UnixStream::connect(&path).is_ok() {
+        if UnixStream::connect(path).is_ok() {
             bail!("another daemon is already running ({})", path.display());
         }
-        std::fs::remove_file(&path)?;
+        std::fs::remove_file(path)?;
     }
-    UnixListener::bind(&path).with_context(|| format!("binding {}", path.display()))
+    let listener = UnixListener::bind(path).with_context(|| format!("binding {}", path.display()))?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        .with_context(|| format!("restricting {}", path.display()))?;
+    Ok(listener)
+}
+
+/// Creates `dir` (and any missing parents) as a directory only this user can use. An existing
+/// directory must be owned by this user, or the daemon refuses to put its socket there.
+fn prepare_private_dir(dir: &std::path::Path) -> Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+    std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
+    let meta = std::fs::symlink_metadata(dir)?;
+    // SAFETY: getuid cannot fail.
+    if meta.uid() != unsafe { libc::getuid() } || !meta.is_dir() {
+        bail!("{} is not a directory owned by this user", dir.display());
+    }
+    if meta.mode() & 0o077 != 0 {
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
 }
 
 impl Daemon {
@@ -447,6 +475,10 @@ impl Daemon {
             }
             if now >= next_scan {
                 self.scan();
+                // A release the kernel refused is sent again here, not only on the next key.
+                if let Err(e) = self.kbm.sync() {
+                    log!("output error: {e:#}");
+                }
                 next_scan = now + SCAN_INTERVAL;
             }
         }
@@ -1958,7 +1990,7 @@ impl Daemon {
     fn release_devices(&mut self, pred: impl Fn(&Managed) -> bool) {
         let ids: Vec<u64> = self.devices.iter().filter(|(_, d)| pred(d)).map(|(id, _)| *id).collect();
         for id in ids {
-            let mut dev = self.devices.remove(&id).unwrap();
+            let Some(mut dev) = self.devices.remove(&id) else { continue };
             dev.stop.store(true, Ordering::Relaxed);
             monitor::clear();
             self.forget_active(id);
@@ -2454,5 +2486,22 @@ mod tests {
         assert!(!other.matches(pad, &hid, &mac));
         // Empty unique IDs (common over USB) never count as a match.
         assert!(!node("x", None, Some("")).matches(pad, &None, &Some(String::new())));
+    }
+
+    #[test]
+    fn the_control_socket_is_private_to_this_user() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("padwight-test-{}", std::process::id())).join("run");
+        let path = dir.join("padwight.sock");
+        let _ = std::fs::remove_dir_all(dir.parent().unwrap());
+
+        let listener = bind_socket_at(&path).unwrap();
+        let dir_mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+        let sock_mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!((dir_mode, sock_mode), (0o700, 0o600));
+        assert!(bind_socket_at(&path).is_err(), "a running daemon's socket is not taken over");
+
+        drop(listener);
+        let _ = std::fs::remove_dir_all(dir.parent().unwrap());
     }
 }

@@ -9,6 +9,25 @@ mod files {
     include!(concat!(env!("OUT_DIR"), "/library.rs"));
 }
 
+/// Damaged copies of `text` for robustness tests: cut at every fourth line, and with a character
+/// removed or replaced every `step` characters. Most won't parse; none may panic.
+#[cfg(test)]
+pub(crate) fn mutants(text: &str, step: usize) -> Vec<String> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out: Vec<String> = text.match_indices('\n').step_by(4).map(|(i, _)| text[..i].to_string()).collect();
+    for i in (0..chars.len()).step_by(step) {
+        let mut removed = chars.clone();
+        removed.remove(i);
+        out.push(removed.iter().collect());
+        for junk in ['"', '[', '\u{0}'] {
+            let mut replaced = chars.clone();
+            replaced[i] = junk;
+            out.push(replaced.iter().collect());
+        }
+    }
+    out
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Entry {
     pub file: &'static str,
@@ -164,5 +183,32 @@ mod tests {
         assert_eq!(updates(&config, std::slice::from_ref(&entry)).len(), 1);
         config.games[0].origin.as_mut().unwrap().library = false;
         assert!(updates(&config, &[entry]).is_empty(), "only library games follow the library");
+    }
+
+    #[test]
+    fn every_library_pack_survives_a_save_and_load() {
+        for (file, text) in files::FILES {
+            let pack = pack::parse(text).unwrap();
+            let again = pack::parse(&pack.to_toml().unwrap()).unwrap_or_else(|e| panic!("{file}: {e:#}"));
+            assert_eq!(again, pack, "{file}");
+        }
+    }
+
+    #[test]
+    fn damaged_packs_are_refused_or_handled_without_panicking() {
+        let base = Config::default();
+        let mut checked = 0;
+        for (_, text) in files::FILES {
+            for damaged in mutants(text, 151) {
+                checked += 1;
+                // Whatever parses must also survive the checks and an import.
+                if let Ok(pack) = pack::parse(&damaged) {
+                    let _ = problems(&pack);
+                    let plan = pack::plan(&base, pack, false);
+                    pack::apply(&mut base.clone(), &plan, &pack::Choices::default());
+                }
+            }
+        }
+        assert!(checked > 500, "the sweep covers the packs ({checked} variants)");
     }
 }

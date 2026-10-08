@@ -182,7 +182,9 @@ pub fn shared_runtime_dir() -> Option<PathBuf> {
 pub fn socket_path() -> PathBuf {
     match shared_runtime_dir() {
         Some(dir) => dir.join("padwight.sock"),
-        None => std::env::temp_dir().join(format!("padwight-{}.sock", unsafe { libc::getuid() })),
+        // Without a runtime dir, a per-user directory in the shared temp dir (the daemon makes it
+        // private before binding; see `daemon::bind_socket`).
+        None => std::env::temp_dir().join(format!("padwight-{}", unsafe { libc::getuid() })).join("padwight.sock"),
     }
 }
 

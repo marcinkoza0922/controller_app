@@ -21,6 +21,8 @@ use crate::{
 mod flick;
 pub(crate) mod stick;
 mod touchpad;
+#[cfg(test)]
+pub(crate) mod release_tests;
 
 /// A stick-direction button releases this far below its press threshold.
 const STICK_DIRECTION_HYSTERESIS: f32 = 0.05;

@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  RUST_BACKTRACE: "0"
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Build dependencies for the iced GUI and the tray. The GUI is not run here.
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libxkbcommon-dev libwayland-dev libudev-dev libfontconfig1-dev libdbus-1-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check
+        run: cargo check --all-targets
+
+      - name: Clippy (zero warnings)
+        run: cargo clippy --all-targets -- -D warnings
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+
+      - name: Tests
+        run: cargo nextest run --profile agent --hide-progress-bar --cargo-quiet
+
+  project-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Docs, pack format, links, Flatpak sources, fonts
+        run: python3 scripts/check-project.py
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - name: Known vulnerabilities in Cargo.lock
+        run: cargo audit

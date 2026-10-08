@@ -3686,4 +3686,55 @@ always = true
         assert_eq!(game.profiles[0].button(Button::West), &ButtonAction::toggle(ButtonAction::Macro { name: "New".into(), repeat: false }));
         assert_eq!(game.menus[0].items[0].action, ButtonAction::Macro { name: "New".into(), repeat: false });
     }
+
+    /// A config from before games existed, with one auto-switch rule and one macro.
+    const LEGACY: &str = r#"
+enabled = true
+active_profile = "Souls"
+
+[auto_switch]
+enabled = true
+default_profile = "Desktop"
+
+[[auto_switch.rules]]
+kind = "steam_app_id"
+value = "1245620"
+profile = "Souls"
+
+[[macros]]
+name = "Roll"
+profiles = ["Souls"]
+steps = [{ wait = 10 }]
+"#;
+
+    fn legacy_config() -> String {
+        let mut value: toml::Table = toml::from_str(LEGACY).unwrap();
+        let profiles = [Profile::desktop("Desktop"), Profile::pc_action("Souls")];
+        value.insert("profiles".into(), toml::Value::try_from(profiles).unwrap());
+        toml::to_string(&value).unwrap()
+    }
+
+    #[test]
+    fn a_converted_config_saves_and_loads_unchanged() {
+        // What `load` does on a legacy file: convert, then save. Loading the saved file again
+        // must give the same config and need no further migration.
+        let config = Config::from_legacy(&legacy_config()).unwrap();
+        let saved = toml::to_string_pretty(&config).unwrap();
+        let back: Config = toml::from_str(&saved).unwrap();
+        assert!(back == config, "the saved file loads back as the same config");
+        let migrated: Config = toml::from_str(&migrate_text(&saved)).unwrap();
+        assert!(migrated == config, "migrating a saved file changes nothing");
+    }
+
+    #[test]
+    fn damaged_configs_are_refused_or_handled_without_panicking() {
+        let current = toml::to_string_pretty(&Config::default()).unwrap();
+        let legacy = legacy_config();
+        for text in crate::library::mutants(&current, 97).iter().chain(&crate::library::mutants(&legacy, 37)) {
+            let migrated = migrate_text(text);
+            let _ = toml::from_str::<Config>(&migrated);
+            let _ = Config::from_legacy(text);
+            let _ = Config::from_legacy(&migrated);
+        }
+    }
 }

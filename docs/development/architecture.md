@@ -156,12 +156,16 @@ Library packs are read at build time (`build.rs`) and checked by `cargo test` (`
 | `cargo test` | All unit tests, including every library pack check (`library.rs`, `pack.rs`). |
 | `cargo nextest run` | The same tests under nextest. `.config/nextest.toml` has a quiet `agent` profile. |
 | `cargo test -- --ignored rumble` | The end-to-end rumble check. It needs `/dev/uinput`, so it is opt-in. |
+| `python3 scripts/check-project.py` | Checks that the docs match the code: CLI commands, the pack format number, links and anchors, `flatpak/cargo-sources.json` against `Cargo.lock`, and bundled font licenses. CI runs it. |
+| `scripts/kernel-test-docker.sh` | Runs the kernel-level uinput test in a Docker container, so the account needs no `input` group membership. Needs `/dev/uinput` on the host. |
+| `cargo audit` | Known vulnerabilities in `Cargo.lock`. CI runs it. |
 
 A few conventions to know:
 
 - **Formatting.** The code is not rustfmt-formatted as a whole, so running `cargo fmt` rewrites many unrelated files. Format only what you change, by hand.
 - **File size.** Files over about 400 lines are candidates for splitting. `scripts/long-files.sh` lists them. Several of the largest (`config.rs`, `daemon.rs`, `engine.rs`, `gui/profile.rs`) are already over that, so put new code in a submodule rather than adding to them.
 - **Warnings.** Clippy is kept at zero warnings. Fix a new warning rather than allowing it; use `#[expect(..., reason = "...")]` only where the lint is wrong for that code.
+- **CI.** `.github/workflows/ci.yml` runs check, clippy with warnings denied, the tests, the project checks and `cargo audit` on every push and pull request.
 - **Agents.** `CLAUDE.md` holds the commands and rules that automated agents in this repo follow.
 
 ## Focus tracking

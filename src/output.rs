@@ -160,12 +160,55 @@ fn stick_raw(v: f32) -> i32 {
     (v.clamp(-1.0, 1.0) * 32767.0).round() as i32
 }
 
-/// Shared virtual keyboard + mouse. Presses are reference counted so two inputs mapped to
-/// the same key don't release it early.
+/// Which keys and buttons the daemon wants down, and which the kernel was last sent. They differ
+/// only after a write has failed, and the difference is sent again on the next sync.
+#[derive(Default)]
+struct PressState {
+    /// Presses per source, so two inputs mapped to one key don't release it early.
+    held: HashMap<KeyCode, u32>,
+    /// Keys and buttons the kernel has been sent a press for, and no release yet.
+    sent: HashSet<KeyCode>,
+}
+
+impl PressState {
+    fn press(&mut self, code: KeyCode, pressed: bool) {
+        if pressed {
+            *self.held.entry(code).or_insert(0) += 1;
+        } else if let Some(count) = self.held.get_mut(&code) {
+            *count -= 1;
+            if *count == 0 {
+                self.held.remove(&code);
+            }
+        }
+    }
+
+    /// Sends each key whose state differs from what was sent, in code order. Stops at the first
+    /// failed write, and the rest stay pending for the next call.
+    fn sync(&mut self, mut write: impl FnMut(KeyCode, bool) -> Result<()>) -> Result<()> {
+        let mut codes: Vec<KeyCode> = self.held.keys().chain(&self.sent).copied().collect();
+        codes.sort_by_key(|c| c.0);
+        codes.dedup();
+        for code in codes {
+            let want = self.held.contains_key(&code);
+            if want != self.sent.contains(&code) {
+                write(code, want)?;
+                if want {
+                    self.sent.insert(code);
+                } else {
+                    self.sent.remove(&code);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Shared virtual keyboard + mouse. Presses are reference counted (see `PressState`), and a
+/// press or release the kernel refused is sent again by `sync`.
 pub struct VirtualKbm {
     keyboard: VirtualDevice,
     mouse: VirtualDevice,
-    held: HashMap<KeyCode, u32>,
+    press: PressState,
     /// Hi-res wheel units not yet emitted as whole REL_WHEEL notches.
     wheel_acc: (i32, i32),
 }
@@ -198,36 +241,35 @@ impl VirtualKbm {
             .with_relative_axes(&rel)?
             .build()?;
 
-        Ok(VirtualKbm { keyboard, mouse, held: HashMap::new(), wheel_acc: (0, 0) })
+        Ok(VirtualKbm { keyboard, mouse, press: PressState::default(), wheel_acc: (0, 0) })
     }
 
     pub fn key(&mut self, code: KeyCode, pressed: bool) -> Result<()> {
-        if self.update_refcount(code, pressed) {
-            self.keyboard.emit(&[key_event(code, pressed)])?;
-        }
-        Ok(())
+        self.press.press(code, pressed);
+        self.sync()
     }
 
     pub fn mouse_button(&mut self, b: MouseButton, pressed: bool) -> Result<()> {
-        let code = mouse_code(b);
-        if self.update_refcount(code, pressed) {
-            self.mouse.emit(&[key_event(code, pressed)])?;
-        }
-        Ok(())
+        self.press.press(mouse_code(b), pressed);
+        self.sync()
     }
 
-    /// Returns true when the press state actually changes.
-    fn update_refcount(&mut self, code: KeyCode, pressed: bool) -> bool {
-        let count = self.held.entry(code).or_insert(0);
-        if pressed {
-            *count += 1;
-            *count == 1
-        } else if *count > 0 {
-            *count -= 1;
-            *count == 0
-        } else {
-            false
-        }
+    /// Brings the kernel in line with what is held. Called after every key or button, and by the
+    /// daemon's periodic scan, so a release that failed is sent again even if nothing else is
+    /// pressed.
+    pub fn sync(&mut self) -> Result<()> {
+        let Self { press, keyboard, mouse, .. } = self;
+        press.sync(|code, down| {
+            let dev = if MouseButton::ALL.iter().any(|b| mouse_code(*b) == code) { &mut *mouse } else { &mut *keyboard };
+            Ok(dev.emit(&[key_event(code, down)])?)
+        })
+    }
+
+    /// The event nodes of the keyboard and the mouse, for tests that read what the kernel got.
+    #[cfg(test)]
+    pub(crate) fn event_nodes(&mut self) -> (std::path::PathBuf, std::path::PathBuf) {
+        let node = |dev: &mut VirtualDevice| dev.enumerate_dev_nodes_blocking().unwrap().flatten().next().unwrap();
+        (node(&mut self.keyboard), node(&mut self.mouse))
     }
 
     pub fn mouse_move(&mut self, dx: i32, dy: i32) -> Result<()> {
@@ -272,7 +314,7 @@ impl VirtualKbm {
     }
 }
 
-fn mouse_code(b: MouseButton) -> KeyCode {
+pub(crate) fn mouse_code(b: MouseButton) -> KeyCode {
     match b {
         MouseButton::Left => KeyCode::BTN_LEFT,
         MouseButton::Right => KeyCode::BTN_RIGHT,
@@ -314,4 +356,66 @@ pub fn test_turn(px: i32) {
             thread::sleep(Duration::from_millis(10));
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use anyhow::bail;
+
+    use super::*;
+
+    /// Sends what `state` wants down to a fake kernel (a set of codes), refusing every write
+    /// when `refuse` is set.
+    fn sync(state: &mut PressState, kernel: &mut HashSet<KeyCode>, refuse: bool) -> Result<()> {
+        state.sync(|code, down| {
+            if refuse {
+                bail!("write refused");
+            }
+            if down {
+                kernel.insert(code);
+            } else {
+                kernel.remove(&code);
+            }
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn presses_are_counted_per_source() {
+        let (mut state, mut kernel) = (PressState::default(), HashSet::new());
+        state.press(KeyCode::KEY_A, true);
+        state.press(KeyCode::KEY_A, true);
+        sync(&mut state, &mut kernel, false).unwrap();
+        state.press(KeyCode::KEY_A, false);
+        sync(&mut state, &mut kernel, false).unwrap();
+        assert!(kernel.contains(&KeyCode::KEY_A), "one source still holds the key");
+        state.press(KeyCode::KEY_A, false);
+        sync(&mut state, &mut kernel, false).unwrap();
+        assert!(kernel.is_empty());
+    }
+
+    #[test]
+    fn a_refused_release_is_sent_again_on_a_later_sync() {
+        let (mut state, mut kernel) = (PressState::default(), HashSet::new());
+        state.press(KeyCode::KEY_A, true);
+        sync(&mut state, &mut kernel, false).unwrap();
+
+        state.press(KeyCode::KEY_A, false);
+        assert!(sync(&mut state, &mut kernel, true).is_err());
+        assert!(kernel.contains(&KeyCode::KEY_A), "the kernel still has the key down");
+
+        // Nothing else is pressed, and the next sync still releases it.
+        sync(&mut state, &mut kernel, false).unwrap();
+        assert!(kernel.is_empty());
+    }
+
+    #[test]
+    fn a_refused_press_is_sent_before_the_next_key() {
+        let (mut state, mut kernel) = (PressState::default(), HashSet::new());
+        state.press(KeyCode::KEY_A, true);
+        assert!(sync(&mut state, &mut kernel, true).is_err());
+        state.press(KeyCode::KEY_B, true);
+        sync(&mut state, &mut kernel, false).unwrap();
+        assert_eq!(kernel, HashSet::from([KeyCode::KEY_A, KeyCode::KEY_B]));
+    }
 }
