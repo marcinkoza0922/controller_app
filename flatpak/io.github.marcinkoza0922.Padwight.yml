@@ -17,6 +17,8 @@ finish-args:
   - --device=all
   # Focus tracking: KWin's scripting API, and the event and command sockets of Hyprland.
   - --talk-name=org.kde.KWin
+  # Tray icon, when the daemon runs outside systemd (see the tray notes in the README).
+  - --talk-name=org.kde.StatusNotifierWatcher
   - --own-name=io.github.marcinkoza0922.Padwight
   - --filesystem=xdg-run/hypr
   # Game detection reads launcher libraries (read-only). Add other library folders with

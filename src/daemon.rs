@@ -3,6 +3,8 @@
 use std::{
     collections::{HashMap, HashSet},
     io::{BufRead, BufReader, ErrorKind, Write},
+    process::Stdio,
+    os::unix::process::CommandExt,
     os::{
         fd::AsRawFd,
         unix::{
@@ -37,6 +39,7 @@ use crate::{
     menu::{MenuOutcome, MenuSession},
     overlay::{OverlayAction, OverlayController, OverlayFrame, OverlayView},
     rumble,
+    tray::{self, TrayIcon},
 };
 
 mod logs;
@@ -82,6 +85,8 @@ enum Msg {
     RecordingEnded { pid: u32, ok: bool, path: PathBuf },
     /// A fresh reading of the media player.
     Media(MediaState),
+    /// A choice from the tray icon's menu.
+    Tray(tray::Command),
 }
 
 struct Managed {
@@ -289,7 +294,41 @@ struct Daemon {
     /// layer-shell) isn't restarted every second for info overlays.
     overlay_started: Option<Instant>,
     overlay_process: Option<std::process::Child>,
+    /// The settings window, opened from the tray; one at a time.
+    settings_process: Option<std::process::Child>,
+    tray: Option<TrayIcon>,
     tx: Sender<Msg>,
+}
+
+/// Starts the daemon in the background unless one is already running, so opening the settings
+/// window is enough to get remapping going. The daemon doesn't belong to the window: it keeps
+/// running after the window closes, and its output goes to a log file.
+pub fn ensure_running() -> Result<()> {
+    if UnixStream::connect(ipc::socket_path()).is_ok() {
+        return Ok(());
+    }
+    let log = log_path();
+    if let Some(dir) = log.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let stderr = std::fs::File::create(&log).with_context(|| format!("creating {}", log.display()))?;
+    let mut command = std::process::Command::new(std::env::current_exe()?);
+    command.arg("daemon").stdin(Stdio::null()).stdout(Stdio::null()).stderr(stderr);
+    // SAFETY: only calls `setsid`, which is async-signal-safe. A new session keeps the daemon
+    // alive when the terminal that started the window goes away.
+    unsafe {
+        command.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+    // The child is not waited for: it outlives this process by design.
+    command.spawn().context("starting the daemon")?;
+    Ok(())
+}
+
+fn log_path() -> PathBuf {
+    dirs::state_dir().unwrap_or_else(std::env::temp_dir).join("padwight").join("daemon.log")
 }
 
 pub fn run() -> Result<()> {
@@ -340,17 +379,12 @@ pub fn run() -> Result<()> {
         sampler: crate::info::Sampler::default(),
         overlay_started: None,
         overlay_process: None,
+        settings_process: None,
+        tray: None,
         tx,
     };
     log!("padwight daemon started, socket at {}", ipc::socket_path().display());
-    {
-        let tx = daemon.tx.clone();
-        focus::spawn(move |ev| {
-            let _ = tx.send(Msg::Focus(ev));
-        });
-    }
-    // Start the overlay window now so menus appear instantly; it idles invisibly.
-    daemon.ensure_overlay_process();
+    daemon.start_services();
     daemon.scan();
     daemon.run(&rx);
     Ok(())
@@ -390,6 +424,7 @@ impl Daemon {
                     while let Ok(msg) = rx.try_recv() {
                         self.handle(msg);
                     }
+                    self.sync_tray();
                 }
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => return,
@@ -701,6 +736,83 @@ impl Daemon {
     }
 
     /// Makes sure the (normally resident) overlay window process is running.
+    /// Starts what runs beside the input loop: focus tracking, the overlay window (started now so
+    /// menus appear instantly; it idles invisibly) and the tray icon.
+    fn start_services(&mut self) {
+        let tx = self.tx.clone();
+        focus::spawn(move |ev| {
+            let _ = tx.send(Msg::Focus(ev));
+        });
+        self.ensure_overlay_process();
+        self.tray = self.start_tray();
+    }
+
+    fn start_tray(&self) -> Option<TrayIcon> {
+        if !tray::wanted() {
+            return None;
+        }
+        let tx = self.tx.clone();
+        let icon = TrayIcon::start(self.tray_shown(), move |cmd| {
+            let _ = tx.send(Msg::Tray(cmd));
+        });
+        if icon.is_none() {
+            log!("no system tray to show the icon in; running without one");
+        }
+        icon
+    }
+
+    fn tray_shown(&self) -> tray::Shown {
+        tray::Shown {
+            enabled: self.config.enabled,
+            profile: self.config.active().map(|p| p.name.clone()).unwrap_or_default(),
+        }
+    }
+
+    fn sync_tray(&mut self) {
+        let shown = self.tray_shown();
+        if let Some(icon) = &mut self.tray {
+            icon.show(&shown);
+        }
+    }
+
+    fn tray_command(&mut self, cmd: tray::Command) {
+        match cmd {
+            tray::Command::ToggleEnabled => {
+                self.request(Request::SetEnabled(!self.config.enabled));
+            }
+            tray::Command::OpenSettings => self.open_settings(),
+            tray::Command::Quit => {
+                log!("quit from the tray");
+                if let Some(mut overlay) = self.overlay_process.take() {
+                    let _ = overlay.kill();
+                }
+                std::process::exit(0);
+            }
+        }
+    }
+
+    fn open_settings(&mut self) {
+        if let Some(child) = &mut self.settings_process
+            && child.try_wait().ok().flatten().is_none()
+        {
+            return;
+        }
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap_or_default());
+        // SAFETY: only calls `prctl`, which is async-signal-safe. The window closes when the
+        // daemon exits, however it exits. The parent thread is the one running the daemon loop,
+        // so it lives as long as the daemon does.
+        unsafe {
+            command.pre_exec(|| {
+                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+                Ok(())
+            });
+        }
+        match command.spawn() {
+            Ok(child) => self.settings_process = Some(child),
+            Err(e) => log!("cannot open the settings window: {e}"),
+        }
+    }
+
     fn ensure_overlay_process(&mut self) -> bool {
         if let Some(child) = &mut self.overlay_process
             && child.try_wait().ok().flatten().is_some()
@@ -1054,6 +1166,7 @@ impl Daemon {
             Msg::Ipc { req, reply } => {
                 let _ = reply.send(self.request(req));
             }
+            Msg::Tray(cmd) => self.tray_command(cmd),
             Msg::Focus(FocusEvent::Backend(backend)) => {
                 self.focus_backend = backend;
                 // Re-evaluate from scratch the next time processes are scanned.

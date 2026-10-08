@@ -52,10 +52,17 @@ use tracking::*;
 use widgets::*;
 
 pub fn run() -> iced::Result {
+    if let Err(e) = crate::daemon::ensure_running() {
+        crate::monitor::log!("cannot start the daemon: {e:#}");
+    }
     let app = iced::application(App::boot, App::update, App::view)
         .title("Padwight")
         .subscription(App::subscription)
-        .window_size((1100.0, 900.0));
+        .window(iced::window::Settings {
+            size: iced::Size::new(1100.0, 900.0),
+            icon: crate::icon::window(),
+            ..Default::default()
+        });
     crate::font::BUNDLED.iter().fold(app, |app, b| app.font(b.bytes)).run()
 }
 

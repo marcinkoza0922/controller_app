@@ -5,6 +5,7 @@ mod engine;
 mod focus;
 mod font;
 mod gui;
+mod icon;
 mod info;
 mod inputlog;
 mod input;
@@ -24,6 +25,7 @@ mod quit;
 mod record;
 mod rumble;
 mod style;
+mod tray;
 
 use anyhow::{Result, bail};
 

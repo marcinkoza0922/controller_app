@@ -42,6 +42,13 @@ systemctl --user enable --now padwight
 padwight            # open the GUI
 ```
 
+For an application-menu entry and icon for the settings window:
+
+```sh
+install -Dm644 flatpak/io.github.marcinkoza0922.Padwight.svg ~/.local/share/icons/hicolor/scalable/apps/io.github.marcinkoza0922.Padwight.svg
+install -Dm644 flatpak/io.github.marcinkoza0922.Padwight.desktop ~/.local/share/applications/io.github.marcinkoza0922.Padwight.desktop
+```
+
 Controllers can be unplugged, reconnected or swapped while it runs. A disconnect releases everything that controller held and closes a menu it had open, and a toast names the controller that left or arrived. The profile stays as it was, so reconnecting the same pad picks up where it left off. If the pad that comes back (or replaces it) lacks something the active profile is marked as needing, such as gyro, the game's first profile that doesn't need it takes over (or the default profile, if none does), with a toast saying so. When a pad with the feature is connected again, the profile you were on returns, unless you've changed it since. The change is made once the controllers have looked the same for two 2-second scans, so a motion sensor that shows up a moment after its pad doesn't make the profile flicker.
 
 On most desktops (systemd-logind with `uaccess`), your user can already open `/dev/uinput` and the gamepad nodes, so no root is needed. If it can't, add a udev rule that grants access, or add yourself to the `input` group.
@@ -207,6 +214,10 @@ Problems that would block saving (unknown keys, missing macros, incomplete combo
 `profile <name>` looks in the active game, then General, then the first game with a profile of that name. `menu <name>` opens one of the active game's menus, or a shared one.
 
 When `padwight daemon` runs in a terminal, it keeps a live status line showing each controller's input and what is being output.
+
+Opening the GUI starts the daemon in the background if it isn't running (its output goes to `~/.local/state/padwight/daemon.log`), and that daemon keeps running after the window closes. Stopping the daemon closes the window.
+
+Outside systemd (a terminal, or an autostart entry), the daemon also puts an icon in the system tray. Clicking it opens the settings window. Its menu has a Remapping switch, Open settings, and Quit. Under systemd the unit manages the daemon, so no icon is shown. Desktops without a tray (such as GNOME without an extension) show no icon, and the daemon works without one. In a Flatpak, the tray needs the `org.kde.StatusNotifierWatcher` permission, which the manifest grants.
 
 ## Notes
 
