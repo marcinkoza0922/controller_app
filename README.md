@@ -14,7 +14,7 @@ The GUI's sidebar lists General and the games (with a search), and each game's p
 
 ## Packs and the library
 
-A game can be shared as a **pack**: **Details → Export…** writes it to a `.padpack` file (TOML), copying in any shared items it uses. The export dialog warns about references to missing items and about anything beyond a plain XInput pad (today, gyro), which players with simpler controllers won't get. Re-exporting your own game keeps its pack ID; exporting someone else's makes a fork with its own ID that credits the original.
+A game can be shared as a **pack**: **Details → Export…** writes it to a `.padpack` file (TOML), copying in any shared items it uses. The export dialog warns about references to missing items. Whether a pack needs more than a plain XInput pad (today, gyro) is stated by each **profile**, not the pack: on the profile's Gyro tab, tick *Can't be played without gyro* when it depends on it (a flick stick setup that turns up and down with gyro, say), and leave it unticked when gyro only adds to a scheme that works without. It is your word, nothing is detected, and the export dialog just lists what you've declared. Players whose controller lacks a feature are only offered the profiles that don't need it, and Guide skips the others. Re-exporting your own game keeps its pack ID; exporting someone else's makes a fork with its own ID that credits the original.
 
 **+ Add game** opens the picker: the built-in library (games you have installed in Steam, Heroic or Lutris, or running, come first), an empty game from a template, or **Import a file…**. Importing shows a preview first: what's inside, what your controller lacks, a game with the same name (add under a new name, or replace yours), shared items it renames to avoid clashes, and other games' rules for the same window (the imported game takes over unless you keep yours). Nothing changes until Save & apply. Imported games are ordinary, editable games that remember their pack: importing a newer version of the same pack, or an app update shipping a newer library version (marked "update" in the sidebar), offers to update it and lists what you changed since. A pack made by a newer app version is refused with a request to update.
 
@@ -29,6 +29,8 @@ cp dist/controller_app.service ~/.config/systemd/user/
 systemctl --user enable --now controller_app
 controller_app            # open the GUI
 ```
+
+Controllers can be unplugged, reconnected or swapped while it runs. A disconnect releases everything that controller held and closes a menu it had open, and a toast names the controller that left or arrived. The profile stays as it was, so reconnecting the same pad picks up where it left off. If the pad that comes back (or replaces it) lacks something the active profile is marked as needing, such as gyro, the game's first profile that doesn't need it takes over (or the default profile, if none does), with a toast saying so. When a pad with the feature is connected again, the profile you were on returns, unless you've changed it since. The change is made once the controllers have looked the same for two 2-second scans, so a motion sensor that shows up a moment after its pad doesn't make the profile flicker.
 
 On most desktops (systemd-logind with `uaccess`), your user can already open `/dev/uinput` and the gamepad nodes, so no root is needed. If it can't, add a udev rule that grants access, or add yourself to the `input` group.
 
@@ -132,7 +134,7 @@ Controllers with motion sensors (DualShock 4, DualSense, Switch Pro, Joy-Cons) c
 - **Gamepad stick**: rotation speed deflects a virtual-pad stick, added to the physical stick. An anti-deadzone gets past the game's own stick deadzone.
 - **Steering**: tilt the controller like a wheel to move a stick.
 
-Horizontal aim can come from yaw (turning), roll (tilting) or both, and either axis can be inverted. Gyro can be **always on**, **on only while holding** an input (e.g. LT to aim down sights), **off while holding** (a clutch for repositioning the controller), or **toggled**. A **recenter** input sets the current tilt as straight for steering. Slow movement below a jitter threshold is scaled down to hide drift, and "Calibrate gyro" in the controller list measures the drift while the controller sits still. The PC action template turns on gyro mouse aiming while LT is held.
+Horizontal aim can come from yaw (turning), roll (tilting) or both, and either axis can be inverted. Gyro can be **always on**, **on only while holding** an input (e.g. LT to aim down sights), **off while holding** (a clutch for repositioning the controller), or **toggled**. A **recenter** input sets the current tilt as straight for steering. Slow movement below a jitter threshold is scaled down to hide drift, and "Calibrate gyro" in the controller list measures the drift while the controller sits still. The PC action template turns on gyro mouse aiming while LT is held. StarCraft's Gameplay profile has a "+ Gyro" twin that moves the cursor by tilting, as an extra to the left stick. The library's shooters (Deus Ex, F.E.A.R., Max Payne 1 and 2) each ship three profiles: one without gyro, one with gyro as an extra, and a flick stick one that needs gyro. Their rules start on the plain one; picking another when the Guide offer appears makes that one the game's.
 
 ## Per-game profiles
 

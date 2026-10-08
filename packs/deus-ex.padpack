@@ -1,4 +1,4 @@
-format = 7
+format = 8
 macros = []
 overlay_font = "Rajdhani"
 
@@ -9,7 +9,6 @@ version = "1.1"
 author = "controller_app"
 description = "The original Deus Ex (2000) on an Xbox-style pad, for the game's default keys. Belt slots and augmentations on radial menus (hold LB / RB, aim with the right stick), crouch toggle on L3, quick save and load on Start. Hold Guide to see every control and the system shortcuts (Guide + Y opens the numpad for keypads, Guide + X the keyboard)."
 made_with = "Xbox controller"
-requires = []
 
 [[rules]]
 kind = "executable"
@@ -137,6 +136,253 @@ invert_y = false
 activation = "always"
 noise_threshold = 1.0
 
+
+[[profiles]]
+name = "Deus Ex + Gyro"
+combos = []
+combo_window_ms = 120
+tap_window_ms = 250
+long_press_ms = 500
+
+[profiles.buttons]
+DpadUp = "disabled"
+
+[profiles.buttons.South]
+keys = ["KEY_SPACE"]
+
+[profiles.buttons.East]
+mouse = "Right"
+
+[profiles.buttons.North]
+keys = ["KEY_F1"]
+
+[profiles.buttons.West]
+keys = ["KEY_SEMICOLON"]
+
+[profiles.buttons.LeftBumper]
+open_menu = "Belt"
+
+[profiles.buttons.RightBumper]
+open_menu = "Augmentations"
+
+[profiles.buttons.Select]
+keys = ["KEY_F2"]
+
+[profiles.buttons.Start]
+keys = ["KEY_ESC"]
+
+[profiles.buttons.Guide]
+multi = [
+    { layer = "Guide" },
+    { show_info = "Controls" },
+]
+
+[profiles.buttons.LeftStick.toggle]
+keys = ["KEY_X"]
+
+[profiles.buttons.RightStick]
+keys = ["KEY_RIGHTBRACE"]
+
+[profiles.buttons.DpadDown]
+keys = ["KEY_TAB"]
+
+[profiles.buttons.DpadLeft]
+keys = ["KEY_Q"]
+
+[profiles.buttons.DpadRight]
+keys = ["KEY_E"]
+
+[profiles.left_stick]
+deadzone = 0.12
+curve = 1.0
+key_threshold = 0.25
+
+[profiles.left_stick.action.keys]
+up = "KEY_W"
+down = "KEY_S"
+left = "KEY_A"
+right = "KEY_D"
+
+[[profiles.left_stick.zones]]
+min = 0.0
+max = 0.6
+
+[profiles.left_stick.zones.action]
+keys = ["KEY_LEFTSHIFT"]
+
+[profiles.right_stick]
+deadzone = 0.1
+curve = 2.0
+key_threshold = 0.5
+
+[profiles.right_stick.action.mouse]
+speed = 1600.0
+
+[profiles.left_trigger.action.button]
+threshold = 0.4
+
+[profiles.left_trigger.action.button.action]
+keys = ["KEY_LEFTBRACE"]
+
+[profiles.right_trigger.action.button]
+threshold = 0.3
+
+[profiles.right_trigger.action.button.action]
+mouse = "Left"
+
+[profiles.gestures.West.long_press]
+keys = ["KEY_APOSTROPHE"]
+
+[profiles.gestures.LeftBumper.double_tap]
+keys = ["KEY_BACKSPACE"]
+
+[profiles.gestures.Start.double_tap]
+keys = ["KEY_KPPLUS"]
+
+[profiles.gestures.Start.long_press]
+keys = ["KEY_KPSLASH"]
+
+[profiles.gestures.Guide.double_tap]
+gamepad = "Guide"
+
+[profiles.gyro]
+horizontal = "yaw"
+invert_x = false
+invert_y = false
+noise_threshold = 1.0
+
+[profiles.gyro.mode.mouse]
+sensitivity = 15.0
+
+[profiles.gyro.activation.unless_held]
+button = "DpadUp"
+
+[[profiles]]
+name = "Deus Ex + Flick stick"
+combos = []
+combo_window_ms = 120
+tap_window_ms = 250
+long_press_ms = 500
+requires = ["gyro"]
+
+[profiles.buttons]
+DpadUp = "disabled"
+
+[profiles.buttons.South]
+keys = ["KEY_SPACE"]
+
+[profiles.buttons.East]
+mouse = "Right"
+
+[profiles.buttons.North]
+keys = ["KEY_F1"]
+
+[profiles.buttons.West]
+keys = ["KEY_SEMICOLON"]
+
+[profiles.buttons.LeftBumper]
+open_menu = "Belt"
+
+[profiles.buttons.RightBumper]
+open_menu = "Augmentations"
+
+[profiles.buttons.Select]
+keys = ["KEY_F2"]
+
+[profiles.buttons.Start]
+keys = ["KEY_ESC"]
+
+[profiles.buttons.Guide]
+multi = [
+    { layer = "Guide" },
+    { show_info = "Controls" },
+]
+
+[profiles.buttons.LeftStick.toggle]
+keys = ["KEY_X"]
+
+[profiles.buttons.RightStick]
+keys = ["KEY_RIGHTBRACE"]
+
+[profiles.buttons.DpadDown]
+keys = ["KEY_TAB"]
+
+[profiles.buttons.DpadLeft]
+keys = ["KEY_Q"]
+
+[profiles.buttons.DpadRight]
+keys = ["KEY_E"]
+
+[profiles.left_stick]
+deadzone = 0.12
+curve = 1.0
+key_threshold = 0.25
+
+[profiles.left_stick.action.keys]
+up = "KEY_W"
+down = "KEY_S"
+left = "KEY_A"
+right = "KEY_D"
+
+[[profiles.left_stick.zones]]
+min = 0.0
+max = 0.6
+
+[profiles.left_stick.zones.action]
+keys = ["KEY_LEFTSHIFT"]
+
+[profiles.right_stick]
+deadzone = 0.1
+curve = 2.0
+key_threshold = 0.5
+
+[profiles.right_stick.action.flick]
+full_turn_px = 8000.0
+flick_threshold = 0.9
+flick_time_ms = 100
+rotate_smoothing_ms = 0
+forward_deadzone = 0.0
+vertical = "off"
+vertical_speed = 1200.0
+
+[profiles.left_trigger.action.button]
+threshold = 0.4
+
+[profiles.left_trigger.action.button.action]
+keys = ["KEY_LEFTBRACE"]
+
+[profiles.right_trigger.action.button]
+threshold = 0.3
+
+[profiles.right_trigger.action.button.action]
+mouse = "Left"
+
+[profiles.gestures.West.long_press]
+keys = ["KEY_APOSTROPHE"]
+
+[profiles.gestures.LeftBumper.double_tap]
+keys = ["KEY_BACKSPACE"]
+
+[profiles.gestures.Start.double_tap]
+keys = ["KEY_KPPLUS"]
+
+[profiles.gestures.Start.long_press]
+keys = ["KEY_KPSLASH"]
+
+[profiles.gestures.Guide.double_tap]
+gamepad = "Guide"
+
+[profiles.gyro]
+horizontal = "yaw"
+invert_x = false
+invert_y = false
+noise_threshold = 1.0
+
+[profiles.gyro.mode.mouse]
+sensitivity = 22.0
+
+[profiles.gyro.activation.unless_held]
+button = "DpadUp"
 [[menus]]
 name = "Belt"
 

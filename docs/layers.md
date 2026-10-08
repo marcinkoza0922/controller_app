@@ -208,8 +208,8 @@ drawn by the overlay window that already shows info overlays and menus.
 - A layer's overrides get the same checks as the base: valid keys, existing macros, menus and
   info overlays, combos of at least two buttons, and zone ranges.
 - Packs: layers are part of the game, so export and import carry them like its macros. Layers are
-  never shared, so they can't clash with shared items on import. Gyro in a layer counts toward
-  the `gyro` requirement.
+  never shared, so they can't clash with shared items on import. Gyro in a layer is listed in the
+  export dialog as an extra; only a profile's own declaration makes it a requirement.
 
 ## Open questions
 

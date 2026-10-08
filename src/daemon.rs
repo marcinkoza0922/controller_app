@@ -24,7 +24,7 @@ use anyhow::{Context, Result, bail};
 use evdev::Device;
 
 use crate::{
-    config::{Config, Profile, ProfileRef, Scope},
+    config::{Config, Feature, Profile, ProfileRef, Refit, Scope},
     engine::{Engine, Opener},
     focus::{self, FocusEvent},
     input::{self, InputEvent, MotionFrame, MotionNormalizer, MotionSample, Normalizer},
@@ -193,6 +193,19 @@ enum Active {
 /// A device node identity; the inode changes when a node is recreated for a new device.
 type NodeKey = (PathBuf, u64);
 
+/// What the daemon has noticed about the controllers coming and going.
+#[derive(Default)]
+struct PadWatch {
+    /// Their features as the last scan saw them, and as last settled on.
+    seen: Option<Vec<Feature>>,
+    settled: Option<Vec<Feature>>,
+    /// A profile left for lacking features (what it was, what replaced it), so it returns
+    /// when they come back.
+    fell_back: Option<(ProfileRef, ProfileRef)>,
+    /// Whether the first scan (at startup) is over, after which new controllers are announced.
+    scanned: bool,
+}
+
 /// Where the offer to add a library game stands.
 #[derive(Default)]
 struct Offers {
@@ -239,6 +252,7 @@ struct Daemon {
     recording: Option<u32>,
     recording_starting: bool,
     offers: Offers,
+    pads: PadWatch,
     /// The game (or other program) that was in front when recording started, and its process:
     /// the recording ends when it does.
     recording_target: Option<(String, u32)>,
@@ -304,6 +318,7 @@ pub fn run() -> Result<()> {
         recording: None,
         recording_starting: false,
         offers: Offers::default(),
+        pads: PadWatch::default(),
         recording_target: None,
         layer_started: HashMap::new(),
         overlay_watchers: Vec::new(),
@@ -472,7 +487,7 @@ impl Daemon {
             }
             dev.draw_status();
         }
-        if switch && let Some(next) = self.config.next_profile() {
+        if switch && let Some(next) = self.config.next_profile(self.pad_features().as_deref()) {
             self.switch_profile(next);
         }
         if let Some(layout) = toggle_overlay {
@@ -766,7 +781,7 @@ impl Daemon {
         if menu_up && (switch || toggle_overlay.is_some()) {
             self.close_overlay();
         }
-        if switch && let Some(next) = self.config.next_profile() {
+        if switch && let Some(next) = self.config.next_profile(self.pad_features().as_deref()) {
             self.switch_profile(next);
         }
         if let Some(layout) = toggle_overlay {
@@ -1021,16 +1036,7 @@ impl Daemon {
     fn handle(&mut self, msg: Msg) {
         match msg {
             Msg::Input { id, events } => self.input(id, events),
-            Msg::Gone { id } => {
-                if let Some(mut dev) = self.devices.remove(&id) {
-                    monitor::clear();
-                    log!("device gone: {} ({})", dev.name, dev.path.display());
-                    self.forget_active(id);
-                    let mut out = Vec::new();
-                    dev.engine.release_all(false, &mut out);
-                    dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
-                }
-            }
+            Msg::Gone { id } => self.device_gone(id),
             Msg::Ipc { req, reply } => {
                 let _ = reply.send(self.request(req));
             }
@@ -1078,6 +1084,31 @@ impl Daemon {
                     self.watchers.push(watcher);
                 }
             }
+        }
+    }
+
+    /// A controller was unplugged or dropped off (not one we let go of ourselves).
+    fn device_gone(&mut self, id: u64) {
+        if let Some(mut dev) = self.devices.remove(&id) {
+            // Its motion and rumble threads follow it out.
+            dev.stop.store(true, Ordering::Relaxed);
+            monitor::clear();
+            log!("device gone: {} ({})", dev.name, dev.path.display());
+            self.forget_active(id);
+            let mut out = Vec::new();
+            dev.engine.release_all(false, &mut out);
+            dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
+            // A menu is run by the controller that opened it, and with no controller
+            // left nothing could close an overlay.
+            let orphaned = match &self.active {
+                Some(Active::Menu { device, .. }) => *device == id || self.devices.is_empty(),
+                Some(_) => self.devices.is_empty(),
+                None => false,
+            };
+            if orphaned {
+                self.close_overlay();
+            }
+            self.say(vec![format!("{} disconnected", dev.name)]);
         }
     }
 
@@ -1164,7 +1195,10 @@ impl Daemon {
             return;
         }
         match focus::profile_for(&self.config, window) {
-            Some(target) => self.auto_switch_to(target, &describe(window), true),
+            Some(target) => {
+                let target = self.config.usable_profile(target, self.pad_features().as_deref());
+                self.auto_switch_to(target, &describe(window), true);
+            }
             None => self.leave_game(&describe(window)),
         }
         if let Some((game, pid)) = focus::game_launch(&self.config, window) {
@@ -1216,7 +1250,10 @@ impl Daemon {
         if target != self.scan_target {
             self.scan_target = target.clone();
             match target {
-                Some(target) => self.auto_switch_to(target, "running processes", true),
+                Some(target) => {
+                    let target = self.config.usable_profile(target, self.pad_features().as_deref());
+                    self.auto_switch_to(target, "running processes", true);
+                }
                 None => self.leave_game("no game running"),
             }
         }
@@ -1311,7 +1348,7 @@ impl Daemon {
         let recording = dev.engine.take_recording_toggle();
         let media = dev.engine.take_media_toggle();
         let menu_request = dev.engine.take_menu_request();
-        if switch && let Some(next) = self.config.next_profile() {
+        if switch && let Some(next) = self.config.next_profile(self.pad_features().as_deref()) {
             self.switch_profile(next);
         }
         if let Some(layout) = toggle_overlay {
@@ -1358,6 +1395,15 @@ impl Daemon {
         tapped
     }
 
+    /// What the managed controllers can do beyond a plain XInput pad, together; `None` with
+    /// none connected, when there is nothing to judge a profile's needs by.
+    fn pad_features(&self) -> Option<Vec<Feature>> {
+        (!self.devices.is_empty()).then(|| {
+            let gyro = self.devices.values().any(|d| d.motion.is_some()).then_some(Feature::Gyro);
+            gyro.into_iter().collect()
+        })
+    }
+
     /// Asks whether to add the focused game's profiles, when the library has some for it.
     fn offer_library_game(&mut self) {
         if self.active.is_some() || !self.config.enabled {
@@ -1365,7 +1411,8 @@ impl Daemon {
         }
         let Some(window) = self.focused.clone() else { return };
         let library = crate::library::entries();
-        let mut found = crate::offer::candidates(&self.config, &library, &window);
+        let have = self.pad_features();
+        let mut found = crate::offer::candidates(&self.config, &library, &window, have.as_deref());
         found.retain(|&i| !self.offers.declined.contains(&library[i].pack.pack.id));
         if found.is_empty() || !self.ensure_overlay_process() {
             return;
@@ -1373,7 +1420,7 @@ impl Daemon {
         log!("offering library profiles for {}", describe(&window));
         self.release_mappings();
         self.offers.shown = found.iter().map(|&i| library[i].clone()).collect();
-        let session = OfferSession::new(&library, &found, Instant::now());
+        let session = OfferSession::new(&library, &found, have.as_deref(), Instant::now());
         self.active = Some(Active::Offer(session));
         self.broadcast_overlay();
     }
@@ -1509,7 +1556,7 @@ impl Daemon {
                 Response::Ok
             }
             Request::NextProfile => {
-                if let Some(next) = self.config.next_profile() {
+                if let Some(next) = self.config.next_profile(self.pad_features().as_deref()) {
                     self.switch_profile(next);
                 }
                 Response::Ok
@@ -1711,6 +1758,7 @@ impl Daemon {
     fn scan(&mut self) {
         let Ok(entries) = std::fs::read_dir("/dev/input") else { return };
         let mut present = HashSet::new();
+        let known: HashSet<u64> = self.devices.keys().copied().collect();
         for entry in entries.flatten() {
             let path = entry.path();
             if !path.file_name().is_some_and(|n| n.to_string_lossy().starts_with("event")) {
@@ -1767,6 +1815,63 @@ impl Daemon {
         self.attach_motion();
         self.scan_processes();
         self.gamepads.retain(|k, _| present.contains(k));
+        self.announce_new_controllers(&known);
+        self.settle_features();
+    }
+
+    /// Says which controllers were just connected (not at startup, when all of them are).
+    fn announce_new_controllers(&mut self, known: &HashSet<u64>) {
+        let new: Vec<String> = self
+            .devices
+            .iter()
+            .filter(|(id, _)| !known.contains(id))
+            .map(|(_, d)| if d.motion.is_some() { format!("{} (with gyro)", d.name) } else { d.name.clone() })
+            .collect();
+        if self.pads.scanned && !new.is_empty() {
+            self.say(new.into_iter().map(|n| format!("{n} connected")).collect());
+        }
+        self.pads.scanned = true;
+    }
+
+    /// Once what the controllers can do has stayed the same for two scans (a pad's motion
+    /// sensor shows up a moment after the pad itself), makes the active profile fit it.
+    fn settle_features(&mut self) {
+        let now = self.pad_features();
+        if now == self.pads.seen && now != self.pads.settled {
+            self.pads.settled.clone_from(&now);
+            if let Some(have) = &now {
+                self.fit_profile_to(have);
+            }
+        }
+        self.pads.seen = now;
+    }
+
+    /// Controllers came or went, or swapped for ones with other features: a profile that needs
+    /// something now missing gives way to one of its game's that doesn't (or to the default
+    /// profile), and comes back when the feature does. With no controller at all nothing
+    /// changes, so reconnecting the same one finds everything as it was.
+    fn fit_profile_to(&mut self, have: &[Feature]) {
+        match self.config.refit(have, self.pads.fell_back.as_ref()) {
+            Refit::Keep => {}
+            Refit::Forget => self.pads.fell_back = None,
+            Refit::Leave { missing, to } => {
+                let from = self.config.active_ref();
+                let names: Vec<&str> = missing.iter().map(|f| f.label()).collect();
+                log!("{from} needs {}, which the controllers lack → {to}", names.join(" and "));
+                let lines = vec![format!("{} needs {}", from.profile, names.join(" and ")), format!("Using {} instead", to.profile)];
+                if self.set_profile(to.clone()) {
+                    self.pads.fell_back = Some((from, to));
+                    self.say(lines);
+                }
+            }
+            Refit::Return(wanted) => {
+                self.pads.fell_back = None;
+                log!("controllers can play {wanted} again");
+                if self.set_profile(wanted.clone()) {
+                    self.say(vec![format!("Back to {}", wanted.profile)]);
+                }
+            }
+        }
     }
 
     fn manage(&mut self, path: PathBuf, name: String, mut dev: Device) {

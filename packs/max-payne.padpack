@@ -1,4 +1,4 @@
-format = 7
+format = 8
 macros = []
 overlay_font = "Source Code Pro"
 
@@ -9,7 +9,6 @@ version = "1.1"
 author = "controller_app"
 description = "Max Payne (2001) on an Xbox-style pad, for the game's default keys. LT is bullet time, RB shoot-dodge (move + RB), LB opens a radial menu of weapon groups (aim with the right stick), L3 toggles crouch, North takes painkillers. Hold Guide to see every control and the system shortcuts."
 made_with = "Xbox controller"
-requires = []
 
 [[rules]]
 kind = "executable"
@@ -121,6 +120,221 @@ invert_y = false
 activation = "always"
 noise_threshold = 1.0
 
+
+[[profiles]]
+name = "Max Payne + Gyro"
+combos = []
+combo_window_ms = 120
+tap_window_ms = 250
+long_press_ms = 500
+
+[profiles.buttons]
+DpadDown = "disabled"
+
+[profiles.buttons.South]
+keys = ["KEY_SPACE"]
+
+[profiles.buttons.East]
+keys = ["KEY_E"]
+
+[profiles.buttons.North]
+keys = ["KEY_TAB"]
+
+[profiles.buttons.West]
+keys = ["KEY_R"]
+
+[profiles.buttons.LeftBumper]
+open_menu = "Weapons"
+
+[profiles.buttons.RightBumper]
+mouse = "Right"
+
+[profiles.buttons.Select]
+keys = ["KEY_P"]
+
+[profiles.buttons.Start]
+keys = ["KEY_ESC"]
+
+[profiles.buttons.Guide]
+multi = [
+    { layer = "Guide" },
+    { show_info = "Controls" },
+]
+
+[profiles.buttons.LeftStick.toggle]
+keys = ["KEY_C"]
+
+[profiles.buttons.DpadUp]
+keys = ["KEY_G"]
+
+[profiles.buttons.DpadLeft]
+wheel = "Up"
+
+[profiles.buttons.DpadRight]
+wheel = "Down"
+
+[profiles.left_stick]
+deadzone = 0.12
+curve = 1.0
+key_threshold = 0.25
+
+[profiles.left_stick.action.keys]
+up = "KEY_W"
+down = "KEY_S"
+left = "KEY_A"
+right = "KEY_D"
+
+[profiles.right_stick]
+deadzone = 0.1
+curve = 2.0
+key_threshold = 0.5
+
+[profiles.right_stick.action.mouse]
+speed = 1300.0
+
+[profiles.left_trigger.action.button]
+threshold = 0.4
+
+[profiles.left_trigger.action.button.action]
+keys = ["KEY_LEFTSHIFT"]
+
+[profiles.right_trigger.action.button]
+threshold = 0.3
+
+[profiles.right_trigger.action.button.action]
+mouse = "Left"
+
+[profiles.gestures.Start.double_tap]
+keys = ["KEY_F5"]
+
+[profiles.gestures.Start.long_press]
+keys = ["KEY_F9"]
+
+[profiles.gestures.Guide.double_tap]
+gamepad = "Guide"
+
+[profiles.gyro]
+horizontal = "yaw"
+invert_x = false
+invert_y = false
+noise_threshold = 1.0
+
+[profiles.gyro.mode.mouse]
+sensitivity = 15.0
+
+[profiles.gyro.activation.unless_held]
+button = "DpadDown"
+
+[[profiles]]
+name = "Max Payne + Flick stick"
+combos = []
+combo_window_ms = 120
+tap_window_ms = 250
+long_press_ms = 500
+requires = ["gyro"]
+
+[profiles.buttons]
+DpadDown = "disabled"
+
+[profiles.buttons.South]
+keys = ["KEY_SPACE"]
+
+[profiles.buttons.East]
+keys = ["KEY_E"]
+
+[profiles.buttons.North]
+keys = ["KEY_TAB"]
+
+[profiles.buttons.West]
+keys = ["KEY_R"]
+
+[profiles.buttons.LeftBumper]
+open_menu = "Weapons"
+
+[profiles.buttons.RightBumper]
+mouse = "Right"
+
+[profiles.buttons.Select]
+keys = ["KEY_P"]
+
+[profiles.buttons.Start]
+keys = ["KEY_ESC"]
+
+[profiles.buttons.Guide]
+multi = [
+    { layer = "Guide" },
+    { show_info = "Controls" },
+]
+
+[profiles.buttons.LeftStick.toggle]
+keys = ["KEY_C"]
+
+[profiles.buttons.DpadUp]
+keys = ["KEY_G"]
+
+[profiles.buttons.DpadLeft]
+wheel = "Up"
+
+[profiles.buttons.DpadRight]
+wheel = "Down"
+
+[profiles.left_stick]
+deadzone = 0.12
+curve = 1.0
+key_threshold = 0.25
+
+[profiles.left_stick.action.keys]
+up = "KEY_W"
+down = "KEY_S"
+left = "KEY_A"
+right = "KEY_D"
+
+[profiles.right_stick]
+deadzone = 0.1
+curve = 2.0
+key_threshold = 0.5
+
+[profiles.right_stick.action.flick]
+full_turn_px = 8000.0
+flick_threshold = 0.9
+flick_time_ms = 100
+rotate_smoothing_ms = 0
+forward_deadzone = 0.0
+vertical = "off"
+vertical_speed = 1200.0
+
+[profiles.left_trigger.action.button]
+threshold = 0.4
+
+[profiles.left_trigger.action.button.action]
+keys = ["KEY_LEFTSHIFT"]
+
+[profiles.right_trigger.action.button]
+threshold = 0.3
+
+[profiles.right_trigger.action.button.action]
+mouse = "Left"
+
+[profiles.gestures.Start.double_tap]
+keys = ["KEY_F5"]
+
+[profiles.gestures.Start.long_press]
+keys = ["KEY_F9"]
+
+[profiles.gestures.Guide.double_tap]
+gamepad = "Guide"
+
+[profiles.gyro]
+horizontal = "yaw"
+invert_x = false
+invert_y = false
+noise_threshold = 1.0
+
+[profiles.gyro.mode.mouse]
+sensitivity = 22.0
+
+[profiles.gyro.activation.unless_held]
+button = "DpadDown"
 [[menus]]
 name = "Weapons"
 

@@ -148,7 +148,6 @@ description = """
 Gyro aim while holding LT. Back of the menu is on Select.
 """
 made_with = "DualSense"          # free text, informational
-requires = ["gyro"]              # computed on export, see "Controller features"
 
 [pack.based_on]                  # only on forks
 id = "…"
@@ -206,19 +205,33 @@ A generic XInput pad is the minimum a pack can expect: South, East, West, North,
 bumpers, both analog triggers, Select, Start, Guide, both sticks with clicks, and the D-pad.
 Anything beyond that is a **feature**:
 
-- `gyro`: any profile has gyro enabled. Today this is the only input the app supports beyond
-  the baseline.
+- `gyro`: a gyro and accelerometer, as on PlayStation and Switch controllers.
 - Future inputs go here as the app adds them: back paddles, touchpad, extra buttons.
 
-**On export**, the dialog lists each feature used and where ("Gyro aim in profile
-*Gameplay*") and says players on a plain XInput pad won't get it. It doesn't block.
-`requires` is computed from this; authors don't type it.
+**Profiles state what they need.** Each profile has `requires = ["gyro"]` when its author says it
+can't be played without that feature (a flick stick setup that turns up and down with gyro). It
+is never worked out from the settings: a profile that adds gyro aiming to a scheme that works
+without it leaves `requires` out. The author ticks *Can't be played without gyro* on the profile's
+Gyro tab. A pack has no list of its own; packs made before format 8 had one, and it is moved onto
+their gyro-using profiles when read.
 
-**On import** (and in the library preview), `requires` is compared with the connected
-controllers. Anything missing is listed as a warning ("Your controller has no gyro: gyro aim
-won't work"). The import goes ahead regardless, and those bindings never fire. Adapting a pack
-to a simpler controller is up to the user. With no controller connected, requirements are
-listed without a verdict.
+**On export**, the dialog lists each declared need and each profile or layer that uses gyro without
+declaring it ("works without it, as marked"), and warns if no profile works on a plain pad. It
+doesn't block.
+
+**Compatible profiles.** A profile is compatible when the managed controllers have everything it
+requires. With no controller connected there is nothing to judge by, so every profile counts.
+- The Guide offer for a library game lists only compatible profiles, and skips the question when
+  one is left (its rules are then pointed at it). A pack with no compatible profile isn't offered.
+- *Next profile* (Guide's cycling) skips incompatible profiles of the game.
+- When a window's rule picks an incompatible profile, the game's first compatible one is used.
+
+**On import** (and in the library preview), the profiles that need a feature the controller lacks
+are listed ("Your controller has no gyro, so these profiles aren't offered: …"), or an error if
+every profile needs it. The import goes ahead regardless.
+
+**Library shooters** ship a profile without gyro (the one the rules start on), one with gyro as an
+extra, and a flick stick one that requires gyro.
 
 ### Import
 

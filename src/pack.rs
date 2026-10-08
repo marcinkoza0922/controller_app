@@ -14,8 +14,9 @@ use crate::config::{
 /// The pack format this app writes, and the newest it reads. 2 added layers; 3, toggles
 /// that start on; 4, the keyboard and numpad styles; 5, the overlay font; 6, grid menus; 7,
 /// the Guide shift, screenshot, recording and force-quit actions and layer indicators
-/// with generated bindings, extra info overlays and a delay.
-pub const FORMAT: u32 = 7;
+/// with generated bindings, extra info overlays and a delay; 8, profiles stating what
+/// controller features they need (replacing the pack-wide list).
+pub const FORMAT: u32 = 8;
 pub const EXTENSION: &str = "padpack";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -63,41 +64,24 @@ pub struct Header {
     /// The controller it was made with (free text).
     #[serde(default)]
     pub made_with: String,
-    /// Inputs beyond a plain XInput pad that its profiles use.
-    #[serde(default)]
+    /// Read from packs made before profiles declared their own needs (format 7 and older),
+    /// which `parse` moves onto the profiles. Never written.
+    #[serde(default, skip_serializing)]
     pub requires: Vec<Feature>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub based_on: Option<PackRef>,
 }
 
-/// An input beyond the XInput baseline (face buttons, bumpers, analog triggers, Select,
-/// Start, Guide, two clickable sticks and the D-pad).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Feature {
-    Gyro,
-}
-
-impl Feature {
-    pub fn label(self) -> &'static str {
-        match self {
-            Feature::Gyro => "gyro",
-        }
-    }
-
-    /// What a player without it loses, for warnings.
-    pub fn missing(self) -> &'static str {
-        match self {
-            Feature::Gyro => "gyro controls won't work",
-        }
-    }
-}
+pub use crate::config::Feature;
 
 /// A feature and where it's used, e.g. "profile “Play”".
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct FeatureUse {
     pub feature: Feature,
     pub place: String,
+    /// Whether the author declared that the profile can't be played without it. Otherwise it
+    /// only adds to a scheme that works on a plain pad.
+    pub required: bool,
 }
 
 impl Pack {
@@ -147,8 +131,13 @@ pub fn parse(text: &str) -> Result<Pack> {
     if format < 1 {
         bail!("unknown pack format {format}");
     }
-    // Older formats would be upgraded here, before parsing as the current one.
-    let pack: Pack = toml::from_str(text).context("reading the pack")?;
+    let mut pack: Pack = toml::from_str(text).context("reading the pack")?;
+    // Before format 8 the pack listed what its gyro-aiming profiles needed, as a whole.
+    for feature in std::mem::take(&mut pack.pack.requires) {
+        for p in pack.profiles.iter_mut().filter(|p| feature == Feature::Gyro && p.gyro.mode != GyroMode::Off) {
+            p.requires.push(feature);
+        }
+    }
     check(&pack)?;
     Ok(pack)
 }
@@ -264,19 +253,35 @@ pub fn dependencies(source: &Game, kind: ItemKind, name: &str, resolves: impl Fn
     needed
 }
 
-/// Inputs beyond the XInput baseline that a game's profiles and layers use, and where.
+/// Inputs beyond the XInput baseline that a game's profiles and layers use or demand, and
+/// where. What a profile demands is only what its author declared.
 pub fn features(game: &Game) -> Vec<FeatureUse> {
-    let profiles = game
-        .profiles
-        .iter()
-        .filter(|p| p.gyro.mode != GyroMode::Off)
-        .map(|p| FeatureUse { feature: Feature::Gyro, place: format!("profile “{}”", p.name) });
+    let profiles = game.profiles.iter().flat_map(|p| {
+        let uses_gyro = p.gyro.mode != GyroMode::Off;
+        Feature::ALL.into_iter().filter_map(move |feature| {
+            let required = p.requires.contains(&feature);
+            (required || (feature == Feature::Gyro && uses_gyro))
+                .then(|| FeatureUse { feature, place: format!("profile “{}”", p.name), required })
+        })
+    });
     let layers = game
         .layers
         .iter()
         .filter(|l| l.gyro.as_ref().is_some_and(|g| g.mode != GyroMode::Off))
-        .map(|l| FeatureUse { feature: Feature::Gyro, place: format!("layer “{}”", l.name) });
+        .map(|l| FeatureUse { feature: Feature::Gyro, place: format!("layer “{}”", l.name), required: false });
     profiles.chain(layers).collect()
+}
+
+impl Pack {
+    /// The features every profile of the pack needs, so a player without them gets nothing.
+    pub fn required_by_all(&self) -> Vec<Feature> {
+        Feature::ALL.into_iter().filter(|f| !self.profiles.is_empty() && self.profiles.iter().all(|p| p.requires.contains(f))).collect()
+    }
+
+    /// The names of the profiles that need `feature`.
+    pub fn needing(&self, feature: Feature) -> Vec<&str> {
+        self.profiles.iter().filter(|p| p.requires.contains(&feature)).map(|p| p.name.as_str()).collect()
+    }
 }
 
 /// A pack ready to save, and what the export dialog should point out.
@@ -353,7 +358,6 @@ pub fn export(game: &Game, shared: &Shared, info: &PackInfo) -> Export {
         }
     }
     let features = features(&pack_game);
-    let requires: BTreeSet<Feature> = features.iter().map(|f| f.feature).collect();
     let pack = Pack {
         format: FORMAT,
         pack: Header {
@@ -363,7 +367,7 @@ pub fn export(game: &Game, shared: &Shared, info: &PackInfo) -> Export {
             author: info.author.clone(),
             description: info.description.clone(),
             made_with: info.made_with.clone(),
-            requires: requires.into_iter().collect(),
+            requires: Vec::new(),
             based_on: info.based_on.clone(),
         },
         rules: pack_game.rules.iter().map(|r| Rule { enabled: true, ..r.clone() }).collect(),
@@ -682,6 +686,31 @@ mod tests {
     }
 
     #[test]
+    fn profiles_state_their_own_needs_and_old_packs_are_upgraded() {
+        let mut config = setup();
+        let game = &mut config.games[0];
+        game.profiles[0].requires = vec![Feature::Gyro];
+        game.profiles.push(Profile::passthrough("Plain"));
+        let out = export(game, &config.shared, &draft(game, false));
+        assert_eq!(out.features, [FeatureUse { feature: Feature::Gyro, place: "profile “Play”".into(), required: true }]);
+        assert_eq!(out.pack.required_by_all(), []);
+        assert_eq!(out.pack.needing(Feature::Gyro), ["Play"]);
+        let back = parse(&out.pack.to_toml().unwrap()).unwrap();
+        assert_eq!(back.profiles[0].requires, [Feature::Gyro]);
+        assert!(back.profiles[1].requires.is_empty());
+
+        // Format 7 listed the need for the whole pack: it lands on the gyro profiles.
+        let mut old = out.pack.clone();
+        old.format = 7;
+        old.profiles.iter_mut().for_each(|p| p.requires.clear());
+        let text = old.to_toml().unwrap().replacen("[pack]\n", "[pack]\nrequires = [\"gyro\"]\n", 1);
+        let upgraded = parse(&text).unwrap();
+        assert_eq!(upgraded.profiles[0].requires, [Feature::Gyro]);
+        assert!(upgraded.profiles[1].requires.is_empty());
+        assert!(upgraded.pack.requires.is_empty());
+    }
+
+    #[test]
     fn export_copies_in_used_shared_items_and_reports_problems() {
         let config = setup();
         let game = &config.games[0];
@@ -689,8 +718,9 @@ mod tests {
         let out = export(game, &config.shared, &info);
         assert_eq!(out.pulled_in, [(ItemKind::Menu, "Wheel".to_string()), (ItemKind::Macro, "Heal".to_string())]);
         assert_eq!(out.dangling, ["macro \"Gone\""]);
-        assert_eq!(out.pack.pack.requires, [Feature::Gyro], "the action template aims with gyro");
-        assert_eq!(out.features, [FeatureUse { feature: Feature::Gyro, place: "profile “Play”".into() }]);
+        assert!(out.pack.pack.requires.is_empty(), "a pack doesn't state needs; its profiles do");
+        let uses = FeatureUse { feature: Feature::Gyro, place: "profile “Play”".into(), required: false };
+        assert_eq!(out.features, [uses], "the action template aims with gyro, which it can do without");
         assert!(!out.pack.macros.iter().any(|m| m.name == "Unused"));
         assert_eq!(out.pack.pack.name, "Doom");
     }
@@ -820,7 +850,7 @@ mod tests {
 
         let out = export(&config.games[0], &config.shared, &draft(&config.games[0], false));
         assert!(out.pulled_in.contains(&(ItemKind::Info, "Cheat sheet".into())), "an indicator's info overlay comes along");
-        assert_eq!(out.features, [FeatureUse { feature: Feature::Gyro, place: "layer “Deeper”".into() }]);
+        assert_eq!(out.features, [FeatureUse { feature: Feature::Gyro, place: "layer “Deeper”".into(), required: false }]);
         let text = out.pack.to_toml().unwrap();
         assert!(text.contains(&format!("format = {FORMAT}")));
         let back = parse(&text).unwrap();

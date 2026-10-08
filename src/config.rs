@@ -1559,6 +1559,43 @@ impl From<TriggerConfigRepr> for TriggerConfig {
     }
 }
 
+/// What to do about the active profile when the controllers' features change.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Refit {
+    Keep,
+    /// Switch to `to`, because the active profile needs `missing`.
+    Leave { missing: Vec<Feature>, to: ProfileRef },
+    /// A profile left earlier can be played again.
+    Return(ProfileRef),
+    /// The profile left earlier is no longer the one to return to.
+    Forget,
+}
+
+/// An input beyond the XInput baseline (face buttons, bumpers, analog triggers, Select,
+/// Start, Guide, two clickable sticks and the D-pad).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Feature {
+    Gyro,
+}
+
+impl Feature {
+    pub const ALL: [Feature; 1] = [Feature::Gyro];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Feature::Gyro => "gyro",
+        }
+    }
+
+    /// What a player without it loses, for warnings.
+    pub fn missing(self) -> &'static str {
+        match self {
+            Feature::Gyro => "gyro controls won't work",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Profile {
     pub name: String,
@@ -1583,9 +1620,19 @@ pub struct Profile {
     /// Only used by controllers with motion sensors (PlayStation, Switch).
     #[serde(default)]
     pub gyro: GyroConfig,
+    /// Inputs beyond a plain XInput pad that the profile can't be played without. Stated by
+    /// its author, never worked out from the settings: a profile that merely adds gyro
+    /// aiming to a scheme that works without it leaves this empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requires: Vec<Feature>,
 }
 
 impl Profile {
+    /// Whether a controller with these features can play the profile.
+    pub fn usable_with(&self, have: &[Feature]) -> bool {
+        self.requires.iter().all(|f| have.contains(f))
+    }
+
     /// True if `b` belongs to a combo (2+ buttons), so its own action is held back briefly.
     pub fn in_combo(&self, b: Button) -> bool {
         self.combos.iter().any(|c| c.buttons.len() >= 2 && c.buttons.contains(&b))
@@ -1730,6 +1777,7 @@ impl Profile {
             tap_window_ms: default_tap_window_ms(),
             long_press_ms: default_long_press_ms(),
             gyro: GyroConfig::default(),
+            requires: Vec::new(),
         };
         p.take_guide();
         p
@@ -1888,6 +1936,7 @@ impl Profile {
             tap_window_ms: default_tap_window_ms(),
             long_press_ms: default_long_press_ms(),
             gyro: GyroConfig::default(),
+            requires: Vec::new(),
         };
         p.take_guide();
         p
@@ -2705,12 +2754,50 @@ impl Config {
         };
     }
 
-    /// The next profile of the active game, wrapping around.
-    pub fn next_profile(&self) -> Option<ProfileRef> {
+    /// `target`, or when it needs features outside `have`, the first profile of its game
+    /// that doesn't (still `target` when none fits, or with no controller to judge by).
+    pub fn usable_profile(&self, target: ProfileRef, have: Option<&[Feature]>) -> ProfileRef {
+        let Some(have) = have else { return target };
+        let Some(game) = self.games.iter().find(|g| Some(g.name.as_str()) == target.game.as_deref()) else { return target };
+        let fits = |p: &Profile| p.usable_with(have);
+        if game.profiles.iter().find(|p| p.name == target.profile).is_none_or(fits) {
+            return target;
+        }
+        match game.profiles.iter().find(|p| fits(p)) {
+            Some(p) => ProfileRef { profile: p.name.clone(), ..target },
+            None => target,
+        }
+    }
+
+    /// What the active profile should do now that the controllers have `have`. `fell_back` is
+    /// a profile left earlier for lacking features (what it was, what replaced it).
+    pub fn refit(&self, have: &[Feature], fell_back: Option<&(ProfileRef, ProfileRef)>) -> Refit {
+        let active = self.active_ref();
+        let Some(profile) = self.profile(&active) else { return Refit::Keep };
+        if !profile.usable_with(have) {
+            let missing = profile.requires.iter().copied().filter(|f| !have.contains(f)).collect();
+            let mut to = self.usable_profile(active.clone(), Some(have));
+            if to == active {
+                to = self.fallback_profile();
+            }
+            return if to == active { Refit::Keep } else { Refit::Leave { missing, to } };
+        }
+        match fell_back {
+            // Changed by hand or by a game rule since: nothing to give back.
+            Some((_, instead)) if *instead != active => Refit::Forget,
+            Some((wanted, _)) if self.profile(wanted).is_some_and(|p| p.usable_with(have)) => Refit::Return(wanted.clone()),
+            _ => Refit::Keep,
+        }
+    }
+
+    /// The next profile of the active game, wrapping around and skipping those that need
+    /// features outside `have` (`None`: no controller to judge by, so none is skipped).
+    pub fn next_profile(&self, have: Option<&[Feature]>) -> Option<ProfileRef> {
         let at = self.active_ref();
         let profiles = &self.active_game().profiles;
         let idx = profiles.iter().position(|p| p.name == at.profile)?;
-        let next = &profiles[(idx + 1) % profiles.len()];
+        let usable = |p: &&Profile| have.is_none_or(|h| p.usable_with(h));
+        let next = (1..profiles.len()).map(|n| &profiles[(idx + n) % profiles.len()]).find(usable)?;
         Some(ProfileRef { profile: next.name.clone(), ..at })
     }
 
@@ -3159,14 +3246,56 @@ mod tests {
     }
 
     #[test]
+    fn profiles_needing_missing_features_are_skipped() {
+        let mut gyro = Profile::passthrough("Gyro");
+        gyro.requires = vec![Feature::Gyro];
+        let mut config = Config::default();
+        config.games.push(Game::new("Doom", vec![gyro, Profile::passthrough("Plain"), Profile::passthrough("Other")]));
+        config.active = ProfileRef::new(Some("Doom"), "Other");
+        let plain: &[Feature] = &[];
+        assert_eq!(config.next_profile(None), Some(ProfileRef::new(Some("Doom"), "Gyro")));
+        assert_eq!(config.next_profile(Some(plain)), Some(ProfileRef::new(Some("Doom"), "Plain")));
+        assert_eq!(config.next_profile(Some(&[Feature::Gyro])), Some(ProfileRef::new(Some("Doom"), "Gyro")));
+        let gyro_ref = ProfileRef::new(Some("Doom"), "Gyro");
+        assert_eq!(config.usable_profile(gyro_ref.clone(), Some(plain)), ProfileRef::new(Some("Doom"), "Plain"));
+        assert_eq!(config.usable_profile(gyro_ref.clone(), Some(&[Feature::Gyro])), gyro_ref);
+        assert_eq!(config.usable_profile(gyro_ref.clone(), None), gyro_ref);
+        assert!(Profile::passthrough("P").usable_with(&[]));
+    }
+
+    #[test]
+    fn profile_follows_the_controllers_features() {
+        let mut gyro = Profile::passthrough("Gyro");
+        gyro.requires = vec![Feature::Gyro];
+        let mut config = Config::default();
+        config.games.push(Game::new("Doom", vec![gyro, Profile::passthrough("Plain")]));
+        let (gyro_ref, plain_ref) = (ProfileRef::new(Some("Doom"), "Gyro"), ProfileRef::new(Some("Doom"), "Plain"));
+        let with = [Feature::Gyro];
+        config.active = gyro_ref.clone();
+        assert_eq!(config.refit(&with, None), Refit::Keep);
+        // The DualSense is swapped for an Xbox pad: the game's plain profile takes over.
+        assert_eq!(config.refit(&[], None), Refit::Leave { missing: vec![Feature::Gyro], to: plain_ref.clone() });
+        config.active = plain_ref.clone();
+        let fell = (gyro_ref.clone(), plain_ref.clone());
+        assert_eq!(config.refit(&[], Some(&fell)), Refit::Keep, "still without gyro");
+        assert_eq!(config.refit(&with, Some(&fell)), Refit::Return(gyro_ref.clone()), "and back with it");
+        config.active = ProfileRef::new(None, "Gamepad");
+        assert_eq!(config.refit(&with, Some(&fell)), Refit::Forget, "chosen by hand since");
+        // A game with nothing playable gives way to the default profile.
+        config.games[0].profiles.remove(1);
+        config.active = gyro_ref;
+        assert_eq!(config.refit(&[], None), Refit::Leave { missing: vec![Feature::Gyro], to: config.fallback_profile() });
+    }
+
+    #[test]
     fn next_profile_wraps_within_the_game() {
         let mut config = Config::default();
-        assert_eq!(config.next_profile(), Some(ProfileRef::new(None, "Desktop")));
+        assert_eq!(config.next_profile(None), Some(ProfileRef::new(None, "Desktop")));
         config.active = ProfileRef::new(None, "Desktop");
-        assert_eq!(config.next_profile(), Some(ProfileRef::new(None, "Gamepad")));
+        assert_eq!(config.next_profile(None), Some(ProfileRef::new(None, "Gamepad")));
         config.games.push(Game::new("Doom", vec![Profile::pc_action("Play"), Profile::desktop("Menus")]));
         config.active = ProfileRef::new(Some("Doom"), "Menus");
-        assert_eq!(config.next_profile(), Some(ProfileRef::new(Some("Doom"), "Play")));
+        assert_eq!(config.next_profile(None), Some(ProfileRef::new(Some("Doom"), "Play")));
     }
 
     #[test]

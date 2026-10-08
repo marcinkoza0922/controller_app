@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    config::{Button, Config, OverlayStyle, ScreenPosition},
+    config::{Button, Config, Feature, OverlayStyle, ScreenPosition},
     focus,
     input::InputEvent,
     ipc::WindowInfo,
@@ -19,9 +19,10 @@ use crate::{
 const IDLE_CLOSE: Duration = Duration::from_secs(30);
 
 /// Library packs for the window in front, if it is a game the config doesn't have: no game
-/// rule matches it, none of the packs is installed or turned down for good. Indexes into
-/// `library`.
-pub fn candidates(config: &Config, library: &[Entry], window: &WindowInfo) -> Vec<usize> {
+/// rule matches it, none of the packs is installed or turned down for good, and at least one
+/// of its profiles works with the controllers' features `have` (`None`: no controller to
+/// judge by). Indexes into `library`.
+pub fn candidates(config: &Config, library: &[Entry], window: &WindowInfo, have: Option<&[Feature]>) -> Vec<usize> {
     if focus::is_own_window(window) || focus::profile_for(config, window).is_some() {
         return Vec::new();
     }
@@ -34,6 +35,7 @@ pub fn candidates(config: &Config, library: &[Entry], window: &WindowInfo) -> Ve
             !config.declined_packs.contains(id)
                 && !config.games.iter().any(|g| g.origin.as_ref().is_some_and(|o| &o.id == id))
                 && e.pack.rules.iter().any(|r| focus::rule_matches_any(r, seen))
+                && e.pack.profiles.iter().any(|p| have.is_none_or(|h| p.usable_with(h)))
         })
         .map(|(i, _)| i)
         .collect()
@@ -69,7 +71,10 @@ struct Offered {
     name: String,
     description: String,
     id: String,
-    profiles: Vec<String>,
+    /// The profiles the controllers can play, with their positions in the pack.
+    profiles: Vec<(usize, String)>,
+    /// How many profiles the pack has in all.
+    total: usize,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -89,7 +94,7 @@ pub struct OfferSession {
 }
 
 impl OfferSession {
-    pub fn new(library: &[Entry], candidates: &[usize], now: Instant) -> Self {
+    pub fn new(library: &[Entry], candidates: &[usize], have: Option<&[Feature]>, now: Instant) -> Self {
         let packs = candidates
             .iter()
             .map(|&i| {
@@ -99,7 +104,14 @@ impl OfferSession {
                     name: p.name.clone(),
                     description: p.description.clone(),
                     id: p.id.clone(),
-                    profiles: pack.profiles.iter().map(|p| p.name.clone()).collect(),
+                    profiles: pack
+                        .profiles
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, p)| have.is_none_or(|h| p.usable_with(h)))
+                        .map(|(i, p)| (i, p.name.clone()))
+                        .collect(),
+                    total: pack.profiles.len(),
                 }
             })
             .collect();
@@ -126,7 +138,7 @@ impl OfferSession {
             Stage::Pack => {
                 return pick("Several sets of profiles fit this game".into(), self.packs.iter().map(|p| p.name.clone()).collect());
             }
-            Stage::Profile(i) => return pick(format!("{} has several profiles", self.packs[i].name), self.packs[i].profiles.clone()),
+            Stage::Profile(i) => return pick(format!("{} has several profiles", self.packs[i].name), self.packs[i].profiles.iter().map(|(_, n)| n.clone()).collect()),
             Stage::Ask => {}
         }
         let (title, detail) = match self.packs.as_slice() {
@@ -167,12 +179,15 @@ impl OfferSession {
 
     /// Pack `i` is chosen: add it, after asking for a profile if it has several.
     fn chosen_pack(&mut self, i: usize) -> Option<OfferOutcome> {
-        if self.packs[i].profiles.len() > 1 {
+        let pack = &self.packs[i];
+        if pack.profiles.len() > 1 {
             self.stage = Stage::Profile(i);
             self.selected = 0;
             return None;
         }
-        Some(OfferOutcome::Add(i, None))
+        // Some profiles don't suit the controllers: the one left is the one to use.
+        let only = pack.profiles.first().filter(|_| pack.total > 1).map(|(at, _)| *at);
+        Some(OfferOutcome::Add(i, only))
     }
 
     fn handle_pick(&mut self, b: Button) -> Option<OfferOutcome> {
@@ -183,7 +198,7 @@ impl OfferSession {
         match (b, self.stage) {
             (Button::DpadUp, _) => self.selected = self.selected.checked_sub(1).unwrap_or(len - 1),
             (Button::DpadDown, _) => self.selected = (self.selected + 1) % len,
-            (Button::South, Stage::Profile(i)) => return Some(OfferOutcome::Add(i, Some(self.selected))),
+            (Button::South, Stage::Profile(i)) => return Some(OfferOutcome::Add(i, Some(self.packs[i].profiles[self.selected].0))),
             (Button::South, _) => return self.chosen_pack(self.selected),
             (Button::East, Stage::Profile(_)) if self.packs.len() > 1 => {
                 self.stage = Stage::Pack;
@@ -231,27 +246,27 @@ mod tests {
     fn only_unknown_library_games_are_offered() {
         let library = vec![entry("Doom", "doom.exe"), entry("Doom Remix", "DOOM.EXE"), entry("Quake", "quake.exe")];
         let mut config = Config::default();
-        assert_eq!(candidates(&config, &library, &window("doom.exe")), [0, 1], "both packs fit");
-        assert!(candidates(&config, &library, &window("other.exe")).is_empty());
+        assert_eq!(candidates(&config, &library, &window("doom.exe"), None), [0, 1], "both packs fit");
+        assert!(candidates(&config, &library, &window("other.exe"), None).is_empty());
 
         config.declined_packs.push(library[1].pack.pack.id.clone());
-        assert_eq!(candidates(&config, &library, &window("doom.exe")), [0]);
+        assert_eq!(candidates(&config, &library, &window("doom.exe"), None), [0]);
 
         let plan = pack::plan(&config, library[0].pack.clone(), true);
         pack::apply(&mut config, &plan, &pack::Choices::default());
-        assert!(candidates(&config, &library, &window("doom.exe")).is_empty(), "a game with rules is the config's");
+        assert!(candidates(&config, &library, &window("doom.exe"), None).is_empty(), "a game with rules is the config's");
     }
 
     #[test]
     fn answers_and_picking() {
         let library = vec![entry("Doom", "doom.exe"), entry("Doom Remix", "doom.exe")];
-        let one = |i: usize| OfferSession::new(&library, &[i], Instant::now());
+        let one = |i: usize| OfferSession::new(&library, &[i], None, Instant::now());
         assert_eq!(press(&mut one(0), Button::South), Some(OfferOutcome::Add(0, None)));
         assert_eq!(press(&mut one(0), Button::East), Some(OfferOutcome::No));
         assert_eq!(press(&mut one(0), Button::West), Some(OfferOutcome::Never));
         assert_eq!(press(&mut one(0), Button::North), None);
 
-        let mut two = OfferSession::new(&library, &[0, 1], Instant::now());
+        let mut two = OfferSession::new(&library, &[0, 1], None, Instant::now());
         assert_eq!(press(&mut two, Button::South), None, "yes leads to the list");
         assert_eq!(two.view().choices, ["Doom", "Doom Remix"]);
         press(&mut two, Button::DpadDown);
@@ -263,7 +278,7 @@ mod tests {
         let mut multi = entry("Doom", "doom.exe");
         multi.pack.profiles.push(Profile::passthrough("Alt"));
         let library = vec![multi];
-        let mut s = OfferSession::new(&library, &[0], Instant::now());
+        let mut s = OfferSession::new(&library, &[0], None, Instant::now());
         assert_eq!(press(&mut s, Button::South), None);
         assert_eq!(s.view().choices, ["P", "Alt"]);
         press(&mut s, Button::DpadDown);
@@ -271,8 +286,42 @@ mod tests {
         press(&mut s, Button::East);
         assert!(s.view().choices.is_empty(), "B from the profile list goes back to the question");
 
+    }
+
+    #[test]
+    fn profiles_the_controller_cannot_play_are_not_offered() {
+        // Profiles that need a gyro are neither listed nor offered without one.
+        let mut gyro = entry("Doom", "doom.exe");
+        gyro.pack.profiles[0].requires = vec![Feature::Gyro];
+        gyro.pack.profiles.push(Profile::passthrough("Plain"));
+        gyro.pack.profiles.push(Profile::passthrough("Plain 2"));
+        let library = vec![gyro];
+        let mut s = OfferSession::new(&library, &[0], Some(&[]), Instant::now());
+        press(&mut s, Button::South);
+        assert_eq!(s.view().choices, ["Plain", "Plain 2"]);
+        press(&mut s, Button::DpadDown);
+        assert_eq!(press(&mut s, Button::South), Some(OfferOutcome::Add(0, Some(2))), "the position in the pack");
+        let mut s = OfferSession::new(&library, &[0], Some(&[Feature::Gyro]), Instant::now());
+        press(&mut s, Button::South);
+        assert_eq!(s.view().choices, ["P", "Plain", "Plain 2"]);
+
+        let mut one = entry("Doom", "doom.exe");
+        one.pack.profiles[0].requires = vec![Feature::Gyro];
+        one.pack.profiles.push(Profile::passthrough("Plain"));
+        let library = vec![one];
+        let mut s = OfferSession::new(&library, &[0], Some(&[]), Instant::now());
+        assert_eq!(press(&mut s, Button::South), Some(OfferOutcome::Add(0, Some(1))), "a lone fit is used without asking");
+        let mut gyro_only = entry("Doom", "doom.exe");
+        gyro_only.pack.profiles[0].requires = vec![Feature::Gyro];
+        assert!(candidates(&Config::default(), &[gyro_only.clone()], &window("doom.exe"), Some(&[])).is_empty());
+        assert_eq!(candidates(&Config::default(), &[gyro_only.clone()], &window("doom.exe"), Some(&[Feature::Gyro])), [0]);
+        assert_eq!(candidates(&Config::default(), &[gyro_only], &window("doom.exe"), None), [0]);
+    }
+
+    #[test]
+    fn b_goes_back_to_the_question() {
         let library = vec![entry("Doom", "doom.exe"), entry("Doom Remix", "doom.exe")];
-        let mut back = OfferSession::new(&library, &[0, 1], Instant::now());
+        let mut back = OfferSession::new(&library, &[0, 1], None, Instant::now());
         press(&mut back, Button::South);
         assert_eq!(press(&mut back, Button::East), None, "B goes back to the question");
         assert!(back.view().choices.is_empty());

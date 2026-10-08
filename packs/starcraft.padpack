@@ -1,4 +1,4 @@
-format = 7
+format = 8
 macros = []
 overlay_font = "Rajdhani"
 
@@ -7,9 +7,8 @@ id = "61b6cfbf-9932-4091-89e9-6cf0f6fa5a6e"
 name = "StarCraft"
 version = "1.1"
 author = "controller_app"
-description = "StarCraft: Remastered (Battle.net) on an Xbox-style pad, for the default hotkeys. Left stick moves the cursor, RT left-clicks, LT right-clicks, right stick scrolls the map. Face buttons are Attack / Cancel / Stop / Hold, the d-pad is Move / Patrol / Basic and Advanced structures, RB is Shift (queue). Hold LB for control groups 1-8 (also hold RB in there to assign the group instead), R3 opens a radial menu of worker and unit commands. Start is the game menu, Select jumps to the last alert, Guide + X opens the on-screen keyboard (profile names, chat); hold Guide to see every control and the system shortcuts. Unit-specific keys (siege, cloak, burrow...) aren't mapped; add them to the radial menu if you want them."
+description = "StarCraft: Remastered (Battle.net) on an Xbox-style pad, for the default hotkeys. Left stick moves the cursor, RT left-clicks, LT right-clicks, right stick scrolls the map. Face buttons are Attack / Cancel / Stop / Hold, the d-pad is Move / Patrol / Basic and Advanced structures, RB is Shift (queue). Hold LB for control groups 1-8 (also hold RB in there to assign the group instead), R3 opens a radial menu of worker and unit commands. Start is the game menu, Select jumps to the last alert, Guide + X opens the on-screen keyboard (profile names, chat); hold Guide to see every control and the system shortcuts. Holding Select switches the Menus layer on and off (face buttons click and confirm, the d-pad presses the arrows, the right stick scrolls). The \"Gameplay + Gyro\" profile also moves the cursor by tilting the controller, as a fine pointer next to the left stick. Unit-specific keys (siege, cloak, burrow...) aren't mapped; add them to the radial menu if you want them."
 made_with = "Xbox controller"
-requires = []
 
 [[rules]]
 kind = "executable"
@@ -105,6 +104,9 @@ threshold = 0.3
 [profiles.right_trigger.action.button.action]
 mouse = "Left"
 
+[profiles.gestures.Select.long_press.toggle]
+layer = "Menus"
+
 [profiles.gestures.Guide.double_tap]
 gamepad = "Guide"
 
@@ -117,29 +119,35 @@ activation = "always"
 noise_threshold = 1.0
 
 [[profiles]]
-name = "Menus"
+name = "Gameplay + Gyro"
 combos = []
 combo_window_ms = 120
 tap_window_ms = 250
 long_press_ms = 500
 
-[profiles.buttons]
-Select = "toggle_overlay"
-
 [profiles.buttons.South]
-mouse = "Left"
+keys = ["KEY_A"]
 
 [profiles.buttons.East]
 keys = ["KEY_ESC"]
 
 [profiles.buttons.North]
-keys = ["KEY_ENTER"]
+keys = ["KEY_H"]
 
 [profiles.buttons.West]
-mouse = "Right"
+keys = ["KEY_S"]
+
+[profiles.buttons.LeftBumper]
+layer = "Groups"
+
+[profiles.buttons.RightBumper]
+keys = ["KEY_LEFTSHIFT"]
+
+[profiles.buttons.Select]
+keys = ["KEY_SPACE"]
 
 [profiles.buttons.Start]
-keys = ["KEY_ESC"]
+keys = ["KEY_F10"]
 
 [profiles.buttons.Guide]
 multi = [
@@ -147,17 +155,26 @@ multi = [
     { show_info = "Controls" },
 ]
 
+[profiles.buttons.LeftStick]
+multi = [
+    { keys = ["KEY_LEFTCTRL"] },
+    { mouse = "Left" },
+]
+
+[profiles.buttons.RightStick]
+open_menu = "Commands"
+
 [profiles.buttons.DpadUp]
-keys = ["KEY_UP"]
+keys = ["KEY_M"]
 
 [profiles.buttons.DpadDown]
-keys = ["KEY_DOWN"]
+keys = ["KEY_V"]
 
 [profiles.buttons.DpadLeft]
-keys = ["KEY_LEFT"]
+keys = ["KEY_B"]
 
 [profiles.buttons.DpadRight]
-keys = ["KEY_RIGHT"]
+keys = ["KEY_P"]
 
 [profiles.left_stick]
 deadzone = 0.1
@@ -168,12 +185,15 @@ key_threshold = 0.25
 speed = 1500.0
 
 [profiles.right_stick]
-deadzone = 0.15
+deadzone = 0.2
 curve = 1.0
-key_threshold = 0.5
+key_threshold = 0.45
 
-[profiles.right_stick.action.scroll]
-speed = 12.0
+[profiles.right_stick.action.keys]
+up = "KEY_UP"
+down = "KEY_DOWN"
+left = "KEY_LEFT"
+right = "KEY_RIGHT"
 
 [profiles.left_trigger.action.button]
 threshold = 0.4
@@ -187,16 +207,21 @@ threshold = 0.3
 [profiles.right_trigger.action.button.action]
 mouse = "Left"
 
+[profiles.gestures.Select.long_press.toggle]
+layer = "Menus"
+
 [profiles.gestures.Guide.double_tap]
 gamepad = "Guide"
 
 [profiles.gyro]
-mode = "off"
+activation = "always"
 horizontal = "yaw"
 invert_x = false
 invert_y = false
-activation = "always"
 noise_threshold = 1.0
+
+[profiles.gyro.mode.mouse]
+sensitivity = 20.0
 
 [[menus]]
 name = "Commands"
@@ -318,8 +343,8 @@ rows = [
     [
     "{start}",
     "Game menu",
-    "{guide} + {up}",
-    "Gameplay / Menus profile",
+    "Hold {select}",
+    "Menus layer on / off",
 ],
 ]
 
@@ -453,6 +478,68 @@ keys = [
     "KEY_LEFTCTRL",
     "KEY_6",
 ]
+
+[[layers]]
+name = "Menus"
+indicator = "name"
+swallow_unbound = true
+
+[layers.indicator_style]
+position = "top_center"
+scale = 0.7
+
+[layers.indicator_style.background]
+color = "#16181c"
+opacity = 0.7
+
+[layers.indicator_style.items]
+color = "#30343c"
+opacity = 0.95
+
+[layers.indicator_style.selected]
+color = "#2f5db0"
+opacity = 1.0
+
+[layers.buttons]
+Select = "toggle_overlay"
+
+[layers.buttons.South]
+mouse = "Left"
+
+[layers.buttons.East]
+keys = ["KEY_ESC"]
+
+[layers.buttons.North]
+keys = ["KEY_ENTER"]
+
+[layers.buttons.West]
+mouse = "Right"
+
+[layers.buttons.Start]
+keys = ["KEY_ESC"]
+
+[layers.buttons.DpadUp]
+keys = ["KEY_UP"]
+
+[layers.buttons.DpadDown]
+keys = ["KEY_DOWN"]
+
+[layers.buttons.DpadLeft]
+keys = ["KEY_LEFT"]
+
+[layers.buttons.DpadRight]
+keys = ["KEY_RIGHT"]
+
+[layers.gestures.Select.long_press.toggle]
+layer = "Menus"
+
+[layers.right_stick]
+deadzone = 0.15
+curve = 1.0
+key_threshold = 0.5
+
+[layers.right_stick.action.scroll]
+speed = 12.0
 
 [[layers]]
 name = "Guide"

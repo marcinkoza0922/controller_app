@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use iced::widget::{column, row};
+use iced::widget::{Column, column, row};
 
 use super::*;
 use crate::{
@@ -370,7 +370,7 @@ impl App {
         for i in &order {
             let pack = &self.library[*i].pack;
             let mut line = row![text(pack.pack.name.clone()).size(15).width(Length::Fill)].spacing(8).align_y(Alignment::Center);
-            for f in &pack.pack.requires {
+            for f in pack.required_by_all() {
                 line = line.push(text(f.label()).size(12).color(MUTED_COLOR));
             }
             if added(&pack.pack.id).is_some() {
@@ -499,17 +499,7 @@ impl App {
         if !out.dangling.is_empty() {
             col = col.push(text(format!("It refers to things that don't exist: {}.", out.dangling.join(", "))).size(13).color(ERROR_COLOR));
         }
-        for f in &out.features {
-            col = col.push(
-                text(format!(
-                    "The {} uses {}: players on a plain XInput pad won't get it.",
-                    f.place,
-                    f.feature.label()
-                ))
-                .size(13)
-                .color(ERROR_COLOR),
-            );
-        }
+        col = feature_notes(col, out);
         if g.rules.is_empty() {
             col = col.push(text("It has no auto-switch rules, so it won't be selected automatically for anyone who imports it.").size(13).color(MUTED_COLOR));
         }
@@ -668,6 +658,30 @@ impl App {
     }
 }
 
+/// What the export dialog says about controller features: each profile's declared needs,
+/// and gyro used as an extra, which the author vouches works without.
+fn feature_notes<'a>(mut col: Column<'a, Message>, out: &pack::Export) -> Column<'a, Message> {
+    for f in &out.features {
+        let line = if f.required {
+            text(format!("The {} needs {}: players without it aren't offered it.", f.place, f.feature.label())).color(MUTED_COLOR)
+        } else {
+            text(format!(
+                "The {} uses {} as an extra: it is marked as playable without it. If it isn't, tick \
+                 “Can't be played without {}” on its Gyro tab.",
+                f.place,
+                f.feature.label(),
+                f.feature.label(),
+            ))
+            .color(MUTED_COLOR)
+        };
+        col = col.push(line.size(13));
+    }
+    if !out.pack.profiles.iter().any(|p| p.usable_with(&[])) {
+        col = col.push(text("Every profile needs something beyond a plain XInput pad, so players without it get nothing. Consider adding a profile that works without.").size(13).color(ERROR_COLOR));
+    }
+    col
+}
+
 /// A pack's description, contents, game IDs and controller needs, for the picker and preview.
 fn pack_summary<'a>(p: &pack::Pack, gyro: Option<bool>) -> Element<'a, Message> {
     let h = &p.pack;
@@ -696,11 +710,19 @@ fn pack_summary<'a>(p: &pack::Pack, gyro: Option<bool>) -> Element<'a, Message> 
     if !ids.is_empty() {
         col = col.push(text(format!("Switches on for: {}", ids.join(", "))).size(13).color(MUTED_COLOR));
     }
-    for f in &h.requires {
+    for f in pack::Feature::ALL {
+        let needing = p.needing(f);
+        if needing.is_empty() {
+            continue;
+        }
+        let list = needing.join(", ");
         let line = match gyro {
-            Some(false) => text(format!("Your controller has no {}: {}.", f.label(), f.missing())).color(ERROR_COLOR),
-            Some(true) => text(format!("Uses {}, which your controller has.", f.label())).color(MUTED_COLOR),
-            None => text(format!("Uses {} (no controller connected to check).", f.label())).color(MUTED_COLOR),
+            Some(false) if needing.len() == p.profiles.len() => {
+                text(format!("Every profile needs {}, and your controller has none: {}.", f.label(), f.missing())).color(ERROR_COLOR)
+            }
+            Some(false) => text(format!("Your controller has no {}, so these profiles aren't offered: {list}.", f.label())).color(MUTED_COLOR),
+            Some(true) => text(format!("Needs {}, which your controller has: {list}.", f.label())).color(MUTED_COLOR),
+            None => text(format!("Needs {} (no controller connected to check): {list}.", f.label())).color(MUTED_COLOR),
         };
         col = col.push(line.size(13));
     }

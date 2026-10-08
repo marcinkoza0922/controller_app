@@ -336,11 +336,15 @@ pub(super) fn view_profile<'a>(p: &'a Profile, ui: &Ui, tab: ProfileTab) -> Elem
                 GyroMode::Off => "off".to_string(),
                 _ => "on".to_string(),
             };
-            vec![section(
+            let mut sections = vec![section(
                 "Gyro",
                 Some("Aim by tilting the controller. If the aim drifts, calibrate the gyro from the controller list on the Overview page.".into()),
                 layer_part(ui, LayerPart::Gyro, "Gyro".into(), summary, || gyro_rows(&p.gyro, ui.any_gyro)),
-            )]
+            )];
+            if ui.layer.is_none() {
+                sections.push(requirement_section(p));
+            }
+            sections
         }
     };
     column(sections).spacing(16).into()
@@ -456,6 +460,33 @@ impl fmt::Display for RecenterChoice {
             None => f.write_str("(none)"),
         }
     }
+}
+
+/// Where the profile's author says what it can't be played without. Never worked out from
+/// the settings: a profile that adds gyro aiming to a scheme that works without it leaves
+/// the box unticked.
+fn requirement_section(p: &Profile) -> Element<'_, Message> {
+    let rows = Feature::ALL
+        .into_iter()
+        .map(|f| {
+            let has = p.requires.contains(&f);
+            let toggled = move |on: bool| {
+                let mut all: Vec<Feature> = p.requires.iter().copied().filter(|x| *x != f).collect();
+                all.extend(on.then_some(f));
+                Message::SetRequires(all)
+            };
+            checkbox(has).label(format!("Can't be played without {}", f.label())).on_toggle(toggled).into()
+        })
+        .chain([text(
+            "You decide this; it isn't detected. Tick it when the profile depends on the feature (for example a flick stick \
+             setup that turns vertically with gyro). Leave it unticked when it only adds to a scheme that works without. \
+             Players whose controller lacks a ticked feature aren't offered the profile, and Guide skips it.",
+        )
+        .size(12)
+        .color(MUTED_COLOR)
+        .into()])
+        .collect();
+    section("Controller requirements", None, rows)
 }
 
 #[expect(clippy::too_many_lines, reason = "predates the size lints")]
@@ -1320,6 +1351,11 @@ impl App {
     #[expect(clippy::too_many_lines, clippy::cognitive_complexity, reason = "predates the size lints")]
     pub(super) fn update_profile(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::SetRequires(requires) => {
+                if let Some(p) = self.profile_mut() {
+                    p.requires = requires;
+                }
+            }
             Message::SetGyro(gyro) => {
                 if let Some(p) = self.profile_mut() {
                     p.gyro = gyro;
