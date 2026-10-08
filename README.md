@@ -6,6 +6,18 @@ Background service that remaps gamepad inputs, or turns them into mouse and keyb
 - **gui**: edits profiles and talks to the daemon over `$XDG_RUNTIME_DIR/padwight.sock`.
 - **config**: `~/.config/padwight/config.toml`. The daemon is the only writer while it runs; after editing by hand, run `padwight reload`. A config from before games existed is converted on first load, and the original is kept as `config.toml.old`. Each profile that an auto-switch rule pointed to becomes a game of its own with those rules; the rest go to General. Macros, menus and info overlays limited to one game's profiles move into that game, and the others become shared.
 
+## Documentation
+
+For users:
+
+- [docs/tutorial-deus-ex-pack.md](docs/tutorial-deus-ex-pack.md): a step-by-step walkthrough of making a pack, using Deus Ex on an Xbox-style pad, with the reasons for the less obvious mappings.
+- [docs/pack-format.md](docs/pack-format.md): reference for the `.padpack` format (format 8).
+
+For developers, in [docs/development/](docs/development/):
+
+- [architecture.md](docs/development/architecture.md): how the processes, input pipeline, config and focus tracking fit together, with a module map and test commands.
+- [specs.md](docs/development/specs.md), [layers.md](docs/development/layers.md), [sticks.md](docs/development/sticks.md), [guide.md](docs/development/guide.md): design notes for individual features.
+
 ## Games
 
 Everything is organized by game. A game holds its own profiles, macros, menus, info overlays and the auto-switch rules that activate it; all of its profiles can use all of its items. **General** is a built-in game with no rules, for the desktop and a plain gamepad. Its Macros, Menus and Info overlays tabs also hold the **shared** items, which every profile of every game can use. Names only need to be unique within a game, and a game's items can't reuse a shared item's name.
