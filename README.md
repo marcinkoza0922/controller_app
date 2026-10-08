@@ -70,7 +70,7 @@ On top of that:
 - **Gestures**: double tap, triple tap and long press per button. The final tap of a sequence fires on press and holds, so "double-tap and hold" works. A quick tap on a button with gestures fires once the gesture is decided; holding it past the tap window presses the button's own action right away and holds it until release (unless a long press is set).
 - **Zones**: extra actions held while a stick or trigger is within part of its travel. For example, Left Shift on a partial stick push gives walk/run with WASD, and a half versus full trigger pull can do different things. Zones are hidden for controllers whose triggers are on/off only (e.g. Switch pads).
 
-General's defaults are **Gamepad** (1:1 passthrough) and **Desktop** (left stick moves the mouse, right stick scrolls, A/B click, LB+RB = Alt+Tab). Guide cycles between the profiles of the active game in both.
+General's defaults are **Gamepad** (1:1 passthrough) and **Desktop** (left stick moves the mouse, right stick scrolls, A/B click, LB+RB = Alt+Tab). Guide holds the Guide layer, and Guide + D-pad Up cycles between the profiles of the active game in both.
 
 More templates are available under "New from template…" in the GUI:
 
@@ -110,7 +110,7 @@ The "On-screen keyboard" action (also a button on the Overview tab, and `padwigh
 | hold LT | hold Shift |
 | hold B | close |
 
-New Desktop profiles open it with a long press of Guide. It needs a compositor with layer-shell (KDE Plasma, Sway, Hyprland, …).
+Guide holds the Guide layer, where X opens it (Guide + X). It needs a compositor with layer-shell (KDE Plasma, Sway, Hyprland, …).
 
 The "On-screen numpad" action (or `padwight numpad-toggle`) opens a smaller pad with the digits 0–9 and a dot, for codes and number fields: move with the D-pad or left stick, A presses a number, X is backspace, Start presses Enter, and holding B closes it. It types the top-row number keys, so it works whatever the Num Lock state. Both pads have their own position, size and colors on the Settings page, and opening one closes the other.
 
