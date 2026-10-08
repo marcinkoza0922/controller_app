@@ -827,6 +827,9 @@ fn watch_input() -> impl iced::futures::Stream<Item = Message> {
 }
 
 #[cfg(test)]
+mod bench;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

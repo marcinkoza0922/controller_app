@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod bench;
 mod capture;
 mod config;
 mod daemon;
