@@ -228,6 +228,9 @@ pub enum ButtonAction {
     Screenshot,
     /// Starts screen recording to `~/Videos/Recordings/<game>/`, or stops it if on.
     ToggleRecording,
+    /// Opens or closes the media controls at the top of the screen; while open, the controller
+    /// drives whatever MPRIS player is running (Spotify, a browser, a local player).
+    ToggleMedia,
     /// While held for a couple of seconds, ends the focused window's process (a game or any
     /// other app, but never the desktop).
     ForceQuit,
@@ -1238,6 +1241,7 @@ impl Layer {
             (Button::East, ForceQuit),
             (Button::LeftStick, ToggleRecording),
             (Button::RightBumper, Screenshot),
+            (Button::LeftBumper, ToggleMedia),
             (Button::West, ToggleOverlay),
             (Button::North, ToggleNumpad),
             (Button::DpadUp, NextProfile),

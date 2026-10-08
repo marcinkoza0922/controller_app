@@ -172,6 +172,8 @@ pub struct Engine {
     screenshot_requested: bool,
     /// Set when a ToggleRecording action fires; the daemon takes it.
     recording_toggled: bool,
+    /// Set when a ToggleMedia action fires; the daemon takes it.
+    media_toggled: bool,
     /// How many inputs hold a ForceQuit action down.
     force_quit_holds: u32,
     /// Set when an OpenMenu action fires; the daemon takes it.
@@ -307,6 +309,11 @@ impl Engine {
     /// Whether a ToggleRecording action fired since the last call.
     pub fn take_recording_toggle(&mut self) -> bool {
         std::mem::take(&mut self.recording_toggled)
+    }
+
+    /// Whether a ToggleMedia action fired since the last call.
+    pub fn take_media_toggle(&mut self) -> bool {
+        std::mem::take(&mut self.media_toggled)
     }
 
     /// Whether a ForceQuit action is being held down.
@@ -783,6 +790,11 @@ impl Engine {
         ButtonAction::ToggleRecording => {
             if pressed {
                 self.recording_toggled = true;
+            }
+        }
+        ButtonAction::ToggleMedia => {
+            if pressed {
+                self.media_toggled = true;
             }
         }
         ButtonAction::ForceQuit => {

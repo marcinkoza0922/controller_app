@@ -12,6 +12,7 @@ mod ipc;
 mod keyboard;
 mod launchers;
 mod library;
+mod media;
 mod menu;
 mod monitor;
 mod output;

@@ -49,6 +49,7 @@ const MODIFIERS: [&str; 8] = [
 pub enum OverlayView {
     Keyboard(KeyboardView),
     Menu(crate::menu::MenuView),
+    Media(crate::media::MediaView),
 }
 
 /// Everything the overlay window shows at once: info overlays, plus the keyboard or a menu.
@@ -501,6 +502,7 @@ mod ui {
         match &state.frame.active {
             Some(OverlayView::Keyboard(k)) => layers.push(draw::place(draw::keyboard_panel(k, font), &k.style)),
             Some(OverlayView::Menu(m)) => layers.push(draw::place(draw::menu_panel(m, font), &m.style)),
+            Some(OverlayView::Media(m)) => layers.push(draw::place(draw::media_panel(m, font), &m.style)),
             None => {}
         }
         stack(layers).into()
@@ -527,7 +529,8 @@ pub mod draw {
     use crate::{
         config::{MenuKind, OverlayStyle, Paint, ScreenPosition},
         info::{InfoView, Segment},
-        keyboard,
+        keyboard, media,
+        media::{MediaView, PlayState},
         menu::MenuView,
     };
 
@@ -819,6 +822,66 @@ pub mod draw {
             line = line.push(text("▸").font(font).size(size).color(Color { a: 0.7, ..fg }));
         }
         line.into()
+    }
+
+    /// A play, pause or stop symbol, drawn so it doesn't depend on the font having the glyph.
+    fn state_icon<'a, M: 'a>(state: PlayState, color: Color, size: f32) -> Element<'a, M> {
+        let [r, g, b, _] = color.into_rgba8();
+        let shape = match state {
+            PlayState::Playing => "<path d='M6 3 L21 12 L6 21 Z'/>",
+            PlayState::Paused => "<rect x='5' y='3' width='5' height='18' rx='1'/><rect x='14' y='3' width='5' height='18' rx='1'/>",
+            PlayState::Stopped => "<rect x='5' y='5' width='14' height='14' rx='2'/>",
+        };
+        let svg_text = format!("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='#{r:02x}{g:02x}{b:02x}' fill-opacity='{}'>{shape}</svg>", color.a);
+        iced::widget::svg(iced::widget::svg::Handle::from_memory(svg_text.into_bytes())).width(size).height(size).into()
+    }
+
+    /// The media controls: what is playing, how far along, and the volume.
+    pub fn media_panel<'a, M: 'a>(m: &MediaView, font: Font) -> Element<'a, M> {
+        let c = colors(&m.style, font);
+        let s = m.style.scale.clamp(0.5, 2.0);
+        let width = 560.0 * s;
+        let body: Element<'a, M> = match &m.player {
+            None => text("No media player is running").font(c.font).size(18.0 * s).color(c.background_text).into(),
+            Some(player) => {
+                let title = if m.title.is_empty() { "Nothing playing" } else { &m.title };
+                let by = [m.artist.as_str(), player.as_str()].iter().filter(|p| !p.is_empty()).copied().collect::<Vec<_>>().join(" · ");
+                let progress = if m.length_ms > 0 { (m.position_ms as f32 / m.length_ms as f32).clamp(0.0, 1.0) } else { 0.0 };
+                let times = format!("{} / {}", media::clock(m.position_ms), if m.length_ms > 0 { media::clock(m.length_ms) } else { "--:--".into() });
+                let mut meta = row![text(times).font(c.font).size(14.0 * s).color(c.muted)].spacing(16.0 * s);
+                if let Some(v) = m.volume {
+                    meta = meta.push(text(format!("Volume {:.0}%", v * 100.0)).font(c.font).size(14.0 * s).color(c.muted));
+                }
+                if m.players > 1 {
+                    meta = meta.push(text(format!("{} players", m.players)).font(c.font).size(14.0 * s).color(c.muted));
+                }
+                column![
+                    row![
+                        state_icon(m.state, c.background_text, 28.0 * s),
+                        column![
+                            text(title.to_string()).font(c.font).size(20.0 * s).color(c.background_text),
+                            text(by).font(c.font).size(14.0 * s).color(c.muted),
+                        ]
+                        .spacing(2.0 * s),
+                    ]
+                    .spacing(14.0 * s)
+                    .align_y(Alignment::Center),
+                    progress_bar(0.0..=1.0, progress).girth(6.0 * s),
+                    meta,
+                ]
+                .spacing(10.0 * s)
+                .into()
+            }
+        };
+        container(
+            column![body, text(m.hint.clone()).font(c.font).size(12.0 * s).color(c.muted)]
+                .spacing(12.0 * s)
+                .width(width)
+                .align_x(Alignment::Center),
+        )
+        .padding(18.0 * s)
+        .style(panel_style(c))
+        .into()
     }
 
     pub fn menu_panel<'a, M: 'a>(m: &MenuView, font: Font) -> Element<'a, M> {

@@ -48,6 +48,7 @@ impl ButtonAction {
             ButtonAction::ToggleNumpad => "On-screen numpad".into(),
             ButtonAction::Screenshot => "Screenshot".into(),
             ButtonAction::ToggleRecording => "Start / stop recording".into(),
+            ButtonAction::ToggleMedia => "Media controls".into(),
             ButtonAction::ForceQuit => "Force quit focused window (hold)".into(),
             ButtonAction::OpenMenu(name) => format!("Menu “{name}”"),
             ButtonAction::ShowInfo(name) => format!("Info “{name}”"),

@@ -31,6 +31,7 @@ screenshot, mouse clicks and so on).
 | Guide (double tap) | Guide to Steam |
 | + X | Open the on-screen keyboard |
 | + Y | Open the on-screen numpad |
+| + LB | Media controls (see below) |
 | + RB | Screenshot to `~/Pictures/Screenshots/<game>/` |
 | + L3 | Start / stop video recording |
 | + RT | Left click |
@@ -59,6 +60,17 @@ screenshot, mouse clicks and so on).
 
 All three appear in the action picker with summaries, and pack validation knows them.
 `requires` on packs lists gpu-screen-recorder or the screenshot tool where they are used.
+
+## Media controls
+
+`ToggleMedia` (Guide + LB) opens a panel at the top of the screen for any MPRIS player
+(Spotify, a browser playing YouTube Music, a local player). `src/media.rs` has a worker thread
+on the session bus, so a stuck player can't stall the daemon. It shows title, artist, player,
+progress and volume. While it is open the controller drives it: D-pad left / right = seek 10 s,
+up / down = volume, LB / RB = previous / next track, A = play / pause, Y = switch player, B (or Guide +
+LB again) = close. It also closes after 10 s without input. The player that is playing is
+chosen; Y overrides that until it goes away. Existing configs keep their stored Guide layer,
+so bind `ToggleMedia` there by hand.
 
 ## Info overlays
 

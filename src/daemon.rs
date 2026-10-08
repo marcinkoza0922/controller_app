@@ -32,6 +32,7 @@ use crate::{
     ipc::{self, DeviceInfo, FocusBackend, InputSnapshot, Request, Response, Status, WindowInfo},
     monitor::{self, InputView, OutputView, log},
     output::{FfCaps, OutEvent, VIRTUAL_PREFIX, VirtualKbm, VirtualPad},
+    media::{MediaOutcome, MediaSession, MediaState},
     menu::{MenuOutcome, MenuSession},
     overlay::{OverlayAction, OverlayController, OverlayFrame, OverlayView},
     rumble,
@@ -74,6 +75,8 @@ enum Msg {
     RecordingFailed(String),
     /// The recorder exited (finished its file, or died).
     RecordingEnded { pid: u32, ok: bool, path: PathBuf },
+    /// A fresh reading of the media player.
+    Media(MediaState),
 }
 
 struct Managed {
@@ -178,6 +181,8 @@ enum Active {
     Keyboard(OverlayController),
     /// A menu, and the controller that opened it (its engine runs the chosen item).
     Menu { session: MenuSession, device: u64 },
+    /// The media controls at the top of the screen.
+    Media(MediaSession),
 }
 
 /// A device node identity; the inode changes when a node is recreated for a new device.
@@ -373,6 +378,7 @@ impl Daemon {
         let overlay = match &self.active {
             Some(Active::Keyboard(k)) => k.next_deadline(),
             Some(Active::Menu { session, .. }) => session.next_deadline(),
+            Some(Active::Media(m)) => m.next_deadline(),
             None => None,
         };
         self.devices
@@ -402,6 +408,12 @@ impl Daemon {
             Some(Active::Menu { session, .. }) if session.next_deadline().is_some_and(|d| d <= now) => {
                 changed = session.tick(&self.scope.menus, now);
             }
+            Some(Active::Media(m)) if m.next_deadline().is_some_and(|d| d <= now) => {
+                m.tick(now);
+                if m.expired(now) {
+                    return self.close_overlay();
+                }
+            }
             _ => {}
         }
         self.apply_keyboard(keyboard_actions);
@@ -419,6 +431,7 @@ impl Daemon {
         let mut toggle_overlay = None;
         let mut screenshot = false;
         let mut recording = false;
+        let mut media = false;
         let mut menu_request = None;
         let mut fired = Vec::new();
         for (id, dev) in self.devices.iter_mut() {
@@ -435,6 +448,7 @@ impl Daemon {
             toggle_overlay = dev.engine.take_overlay_toggle().or(toggle_overlay);
             screenshot |= dev.engine.take_screenshot();
             recording |= dev.engine.take_recording_toggle();
+            media |= dev.engine.take_media_toggle();
             if let Some(request) = dev.engine.take_menu_request() {
                 menu_request = Some((*id, request));
             }
@@ -451,6 +465,9 @@ impl Daemon {
         }
         if recording {
             self.toggle_recording();
+        }
+        if media {
+            self.toggle_media();
         }
         self.update_force_quit();
         if let Some((id, (name, opener))) = menu_request {
@@ -577,7 +594,7 @@ impl Daemon {
         match &self.active {
             Some(Active::Keyboard(k)) if k.layout() == layout => return self.close_overlay(),
             Some(Active::Keyboard(_)) => self.close_overlay(),
-            Some(Active::Menu { .. }) => return,
+            Some(Active::Menu { .. } | Active::Media(_)) => return,
             None => {}
         }
         if !self.ensure_overlay_process() {
@@ -590,6 +607,33 @@ impl Daemon {
         controller.set_guide_held(self.devices.values().any(|d| d.view.buttons().any(|b| b == crate::config::Button::Guide)));
         self.active = Some(Active::Keyboard(controller));
         self.broadcast_overlay();
+    }
+
+    /// Opens or closes the media controls.
+    fn toggle_media(&mut self) {
+        match &self.active {
+            Some(Active::Media(_)) => return self.close_overlay(),
+            Some(_) => return,
+            None => {}
+        }
+        if !self.ensure_overlay_process() {
+            return;
+        }
+        self.release_mappings();
+        log!("media controls open");
+        let (commands, requests) = std::sync::mpsc::channel();
+        let tx = self.tx.clone();
+        thread::spawn(move || crate::media::worker(&requests, |state| tx.send(Msg::Media(state)).is_ok()));
+        let guide_held = self.devices.values().any(|d| d.view.buttons().any(|b| b == crate::config::Button::Guide));
+        self.active = Some(Active::Media(MediaSession::new(commands, guide_held, Instant::now())));
+        self.broadcast_overlay();
+    }
+
+    fn update_media(&mut self, state: MediaState) {
+        if let Some(Active::Media(m)) = &mut self.active {
+            m.update(state);
+            self.broadcast_overlay();
+        }
     }
 
     fn open_menu(&mut self, device: u64, name: &str, opener: Opener) {
@@ -657,6 +701,7 @@ impl Daemon {
                 log!("on-screen {} closed", layout_name(k.layout()));
             }
             Some(Active::Menu { .. }) => {}
+            Some(Active::Media(_)) => log!("media controls closed"),
             None => return,
         }
         // The overlay window goes back to idle (it stays running for next time).
@@ -695,6 +740,7 @@ impl Daemon {
         let toggle_overlay = dev.engine.take_overlay_toggle();
         let screenshot = dev.engine.take_screenshot();
         let recording = dev.engine.take_recording_toggle();
+        let media = dev.engine.take_media_toggle();
         let menu_request = dev.engine.take_menu_request();
         // Switching profiles or opening the keyboard closes a menu that is still up.
         let menu_up = matches!(self.active, Some(Active::Menu { .. }));
@@ -712,6 +758,9 @@ impl Daemon {
         }
         if recording {
             self.toggle_recording();
+        }
+        if media {
+            self.toggle_media();
         }
         self.update_force_quit();
         if let Some((name, opener)) = menu_request {
@@ -731,6 +780,7 @@ impl Daemon {
                 Some(OverlayView::Keyboard(view))
             }
             Some(Active::Menu { session, .. }) => session.view(&self.scope.menus).map(OverlayView::Menu),
+            Some(Active::Media(m)) => Some(OverlayView::Media(m.view())),
             None => None,
         }
     }
@@ -971,6 +1021,7 @@ impl Daemon {
             }
             Msg::Focus(FocusEvent::Focused(window)) => self.window_focused(&window),
             Msg::Toast(lines) => self.say(lines),
+            Msg::Media(state) => self.update_media(state),
             Msg::RecordingStarted { pid } => {
                 (self.recording, self.recording_starting) = (Some(pid), false);
                 self.say(vec!["Recording started".into()]);
@@ -1237,6 +1288,7 @@ impl Daemon {
         let toggle_overlay = dev.engine.take_overlay_toggle();
         let screenshot = dev.engine.take_screenshot();
         let recording = dev.engine.take_recording_toggle();
+        let media = dev.engine.take_media_toggle();
         let menu_request = dev.engine.take_menu_request();
         if switch && let Some(next) = self.config.next_profile() {
             self.switch_profile(next);
@@ -1249,6 +1301,9 @@ impl Daemon {
         }
         if recording {
             self.toggle_recording();
+        }
+        if media {
+            self.toggle_media();
         }
         self.update_force_quit();
         if let Some((name, opener)) = menu_request {
@@ -1295,6 +1350,11 @@ impl Daemon {
                         }
                         Some(MenuOutcome::Close) => return self.close_overlay(),
                         None => {}
+                    }
+                }
+                Some(Active::Media(m)) => {
+                    if m.handle(ev, now) == Some(MediaOutcome::Close) {
+                        return self.close_overlay();
                     }
                 }
                 None => return,
