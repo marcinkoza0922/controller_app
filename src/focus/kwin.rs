@@ -66,7 +66,7 @@ pub fn unload_script(conn: &Connection) -> Result<()> {
 }
 
 fn script_path() -> PathBuf {
-    dirs::runtime_dir()
+    crate::ipc::shared_runtime_dir()
         .unwrap_or_else(std::env::temp_dir)
         .join("padwight")
         .join("kwin_focus.js")

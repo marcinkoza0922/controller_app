@@ -1,0 +1,58 @@
+id: io.github.marcinkoza0922.Padwight
+runtime: org.freedesktop.Platform
+runtime-version: '25.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: padwight
+
+finish-args:
+  # Window and rendering: the settings GUI and the on-screen keyboard/menus (layer-shell).
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=dri
+  # Gamepads are grabbed through /dev/input, and the virtual pad, keyboard and mouse are
+  # created through /dev/uinput. Only --device=all exposes uinput; --device=input does not.
+  - --device=all
+  # Focus tracking: KWin's scripting API, and the event and command sockets of Hyprland.
+  - --talk-name=org.kde.KWin
+  - --own-name=io.github.marcinkoza0922.Padwight
+  - --filesystem=xdg-run/hypr
+  # Game detection reads launcher libraries (read-only). Add other library folders with
+  # `flatpak override --user --filesystem=/path:ro io.github.marcinkoza0922.Padwight`.
+  - --filesystem=xdg-data/Steam:ro
+  - --filesystem=~/.steam/steam:ro
+  - --filesystem=~/.var/app/com.valvesoftware.Steam/.local/share/Steam:ro
+  - --filesystem=xdg-data/lutris:ro
+  - --filesystem=xdg-config/lutris:ro
+
+modules:
+  - name: padwight
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/rust-stable/bin
+      env:
+        CARGO_HOME: /run/build/padwight/cargo
+        # The project's .cargo/config.toml links with clang and lld for the developer's
+        # machine. The SDK has neither, so the flatpak build uses the default linker.
+        CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: cc
+        RUSTFLAGS: ''
+    build-commands:
+      - cargo build --release --frozen --offline --manifest-path Cargo.toml
+      - install -Dm755 target/release/padwight /app/bin/padwight
+      - install -Dm644 flatpak/io.github.marcinkoza0922.Padwight.desktop /app/share/applications/io.github.marcinkoza0922.Padwight.desktop
+      - install -Dm644 flatpak/io.github.marcinkoza0922.Padwight.metainfo.xml /app/share/metainfo/io.github.marcinkoza0922.Padwight.metainfo.xml
+      - install -Dm644 flatpak/io.github.marcinkoza0922.Padwight.svg /app/share/icons/hicolor/scalable/apps/io.github.marcinkoza0922.Padwight.svg
+      - install -Dm644 dist/70-padwight-motion.rules /app/share/padwight/70-padwight-motion.rules
+      - install -Dm644 LICENSE /app/share/licenses/io.github.marcinkoza0922.Padwight/LICENSE
+    sources:
+      - type: dir
+        path: ..
+        skip:
+          - .git
+          - target
+          - .flatpak-builder
+          - build-dir
+          - repo
+      - cargo-sources.json

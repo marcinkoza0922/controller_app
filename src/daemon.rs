@@ -358,6 +358,9 @@ pub fn run() -> Result<()> {
 
 fn bind_socket() -> Result<UnixListener> {
     let path = ipc::socket_path();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
     if path.exists() {
         if UnixStream::connect(&path).is_ok() {
             bail!("another daemon is already running ({})", path.display());

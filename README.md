@@ -53,6 +53,29 @@ sudo cp dist/70-padwight-motion.rules /etc/udev/rules.d/
 sudo udevadm control --reload && sudo udevadm trigger
 ```
 
+### Flatpak
+
+`flatpak/io.github.marcinkoza0922.Padwight.yml` builds the same binary as a Flatpak. Run these from the checkout:
+
+```sh
+flatpak install --user flathub org.freedesktop.Sdk//25.08 org.freedesktop.Sdk.Extension.rust-stable//25.08 org.flatpak.Builder
+flatpak run org.flatpak.Builder --user --force-clean --disable-rofiles-fuse --install-deps-from=flathub --repo=repo build-dir flatpak/io.github.marcinkoza0922.Padwight.yml
+flatpak remote-add --user --no-gpg-verify --if-not-exists padwight-local file://$PWD/repo
+flatpak install --user --reinstall padwight-local io.github.marcinkoza0922.Padwight
+flatpak run io.github.marcinkoza0922.Padwight          # open the GUI
+```
+
+`--disable-rofiles-fuse` is only needed when flatpak-builder itself runs inside a sandbox. `cargo-sources.json` lists the crates the build downloads; regenerate it with flatpak-builder-tools' `flatpak-cargo-generator.py` when `Cargo.lock` changes.
+
+To run the daemon at login, copy `dist/padwight-flatpak.service` to `~/.config/systemd/user/` and enable it. Things that differ from the native install:
+
+- Settings live in `~/.var/app/io.github.marcinkoza0922.Padwight/config/padwight/`. To keep your existing games, copy `~/.config/padwight/config.toml` there.
+- The motion-sensor rule is a host file, so install it with the `sudo` commands above; the app can't run `sudo`.
+- Game detection reads Steam and Lutris libraries read-only. Other library folders need `flatpak override --user --filesystem=/path:ro io.github.marcinkoza0922.Padwight`.
+- The sandbox has its own process list, so a window is identified by its class and title only, not by its executable. Focus tracking works through KWin. Hyprland's socket is shared in but untested; Sway's isn't reachable.
+- Screenshot and recording actions run host programs (grim, gpu-screen-recorder, …), which the sandbox doesn't include, so they may not work.
+- `--device=all` is needed so the sandbox can reach `/dev/uinput`. That makes the app able to read and send input on the machine, the same as the native daemon.
+
 ## Profiles
 
 Each profile maps:
