@@ -40,6 +40,7 @@ use crate::{
 };
 
 mod logs;
+mod touchpad;
 
 const TICK: Duration = Duration::from_millis(4);
 /// How often a fading info overlay is redrawn.
@@ -70,6 +71,7 @@ enum Msg {
     Focus(FocusEvent),
     Motion { id: u64, sample: MotionSample },
     MotionGone { id: u64 },
+    TouchpadGone { id: u64 },
     WatchOverlay(Sender<OverlayFrame>),
     /// Something to say in a toast, from a background task (e.g. a screenshot finishing).
     Toast(Vec<String>),
@@ -97,6 +99,8 @@ struct Managed {
     uniq: Option<String>,
     /// Motion-sensor device feeding this controller's gyro, once found.
     motion: Option<PathBuf>,
+    /// Touchpad node of this controller, once found (and taken from the desktop).
+    touchpad: Option<PathBuf>,
     motion_frame: MotionFrame,
     /// Drift per raw sensor axis (the controller's own frame), subtracted before remapping.
     gyro_bias: [f32; 3],
@@ -123,15 +127,16 @@ struct Calibration {
     samples: u32,
 }
 
-/// A controller's motion-sensor input device, waiting to be paired with its gamepad.
-struct MotionNode {
+/// A controller's extra input device (motion sensors, touchpad), waiting to be paired with its
+/// gamepad.
+struct PairedNode {
     path: PathBuf,
     name: String,
     parent: Option<PathBuf>,
     uniq: Option<String>,
 }
 
-impl MotionNode {
+impl PairedNode {
     /// Same physical controller: same parent HID device or same unique ID (e.g. Bluetooth
     /// MAC). Only when the parent can't be compared does the driver's naming ("<pad> Motion
     /// Sensors", "<pad> IMU") count, since two identical controllers share a name.
@@ -228,7 +233,9 @@ struct Daemon {
     skipped: HashSet<NodeKey>,
     /// Gamepads we have seen, managed or not, for status reporting.
     gamepads: HashMap<NodeKey, SeenGamepad>,
-    motion_nodes: HashMap<NodeKey, MotionNode>,
+    motion_nodes: HashMap<NodeKey, PairedNode>,
+    /// Controller touchpads, waiting to be paired with their gamepad.
+    touch_nodes: HashMap<NodeKey, PairedNode>,
     /// Controller motion sensors we lack permission to open (names), for the GUI to explain.
     motion_denied: HashMap<NodeKey, String>,
     /// Clients streaming live input (the GUI's controller view).
@@ -292,9 +299,7 @@ pub fn run() -> Result<()> {
     let ipc_tx = tx.clone();
     thread::spawn(move || ipc_server(&listener, &ipc_tx));
 
-    let kbm = VirtualKbm::new().context(
-        "creating virtual keyboard/mouse (do you have write access to /dev/uinput?)",
-    )?;
+    let kbm = VirtualKbm::new().context("creating virtual keyboard/mouse (do you have write access to /dev/uinput?)")?;
     let mut daemon = Daemon {
         scope: config.scope(),
         config,
@@ -304,6 +309,7 @@ pub fn run() -> Result<()> {
         skipped: HashSet::new(),
         gamepads: HashMap::new(),
         motion_nodes: HashMap::new(),
+        touch_nodes: HashMap::new(),
         motion_denied: HashMap::new(),
         watchers: Vec::new(),
         last_active: None,
@@ -858,6 +864,9 @@ impl Daemon {
             .iter()
             .map(|(o, opacity)| crate::info::InfoView { opacity: *opacity, ..crate::info::resolve(o, &values) })
             .collect();
+        if self.recording.is_some() {
+            info.push(crate::info::recording_view());
+        }
         let now = Instant::now();
         let toast = self.toast.as_ref().and_then(|t| Some((t.view(now)?, t.next_redraw(now, FADE_FRAME))));
         match toast {
@@ -982,6 +991,8 @@ impl Daemon {
             layers: self.active_layers(),
             family: pad.and_then(|d| d.family).unwrap_or(self.config.info_glyphs),
             system: self.sampler.stats.clone(),
+            controller_battery: pad.and_then(|d| d.parent.as_deref()).and_then(crate::info::controller_battery),
+            form: crate::info::form_factor(),
             inputs: crate::inputlog::Inputs::default(),
         }
     }
@@ -1078,6 +1089,11 @@ impl Daemon {
                     dev.motion = None;
                 }
             }
+            Msg::TouchpadGone { id } => {
+                if let Some(dev) = self.devices.get_mut(&id) {
+                    dev.touchpad = None;
+                }
+            }
             Msg::Watch(watcher) => {
                 let current = self.last_active.and_then(|id| self.devices.get(&id));
                 if watcher.send(current.map(|d| d.view.snapshot(&d.name))).is_ok() {
@@ -1160,7 +1176,7 @@ impl Daemon {
             .iter()
             .filter(|(_, d)| d.motion.is_none())
             .filter_map(|(id, d)| {
-                let taken = |n: &MotionNode| self.devices.values().any(|o| o.motion.as_ref() == Some(&n.path));
+                let taken = |n: &PairedNode| self.devices.values().any(|o| o.motion.as_ref() == Some(&n.path));
                 let node = self.motion_nodes.values().find(|n| !taken(n) && n.belongs_to(d))?;
                 Some((*id, node.path.clone(), node.name.clone()))
             })
@@ -1754,6 +1770,38 @@ impl Daemon {
         }
     }
 
+    /// Notes a controller's motion sensor we may not open, so the GUI can say how to fix it.
+    fn note_denied_sensor(&mut self, key: NodeKey, path: &Path) {
+        if !self.motion_denied.contains_key(&key)
+            && let Some(name) = input::inaccessible_motion_sensor(path)
+        {
+            log!("gyro: no permission to read {name}; install dist/70-padwight-motion.rules");
+            self.motion_denied.insert(key, name);
+        }
+    }
+
+    /// Keeps a controller's motion-sensor or touchpad node to pair with its gamepad later.
+    /// False for any other node.
+    fn remember_sibling(&mut self, key: NodeKey, path: &Path, dev: &Device, name: &str) -> bool {
+        if is_uinput(path) {
+            return false;
+        }
+        let node = || PairedNode {
+            path: path.to_path_buf(),
+            name: name.to_string(),
+            parent: hid_parent(path),
+            uniq: dev.unique_name().map(str::to_string),
+        };
+        if input::is_touchpad(dev) {
+            self.touch_nodes.insert(key, node());
+        } else if input::is_motion_sensor(dev) {
+            self.motion_nodes.insert(key, node());
+        } else {
+            return false;
+        }
+        true
+    }
+
     /// Looks for new gamepads in /dev/input and grabs the ones we should manage.
     fn scan(&mut self) {
         let Ok(entries) = std::fs::read_dir("/dev/input") else { return };
@@ -1770,6 +1818,7 @@ impl Daemon {
 
             if self.skipped.contains(&key)
                 || self.motion_nodes.contains_key(&key)
+                || self.touch_nodes.contains_key(&key)
                 || self.devices.values().any(|d| d.path == path)
             {
                 continue;
@@ -1781,19 +1830,12 @@ impl Daemon {
             }
             // Permission errors are not cached: udev may grant access a moment later.
             let Ok(dev) = Device::open(&path) else {
-                if !self.motion_denied.contains_key(&key)
-                    && let Some(name) = input::inaccessible_motion_sensor(&path)
-                {
-                    log!("gyro: no permission to read {name}; install dist/70-padwight-motion.rules");
-                    self.motion_denied.insert(key, name);
-                }
+                self.note_denied_sensor(key, &path);
                 continue;
             };
             self.motion_denied.remove(&key);
             let name = dev.name().unwrap_or("Unknown").to_string();
-            if !is_uinput(&path) && input::is_motion_sensor(&dev) {
-                let uniq = dev.unique_name().map(str::to_string);
-                self.motion_nodes.insert(key, MotionNode { path: path.clone(), name, parent: hid_parent(&path), uniq });
+            if self.remember_sibling(key.clone(), &path, &dev, &name) {
                 continue;
             }
             if name.starts_with(VIRTUAL_PREFIX) || is_uinput(&path) || !input::is_gamepad(&dev) {
@@ -1809,10 +1851,12 @@ impl Daemon {
         }
         self.skipped.retain(|k| present.contains(k));
         self.motion_nodes.retain(|k, _| present.contains(k));
+        self.touch_nodes.retain(|k, _| present.contains(k));
         self.motion_denied.retain(|k, _| present.contains(k));
         self.check_overlay_process();
         self.check_recorded_game();
         self.attach_motion();
+        self.attach_touchpad();
         self.scan_processes();
         self.gamepads.retain(|k, _| present.contains(k));
         self.announce_new_controllers(&known);
@@ -1912,6 +1956,7 @@ impl Daemon {
             parent,
             uniq,
             motion: None,
+            touchpad: None,
             motion_frame: MotionFrame::default(),
             gyro_bias: [0.0; 3],
             calibrating: None,
@@ -1997,9 +2042,22 @@ fn read_motion(id: u64, mut dev: Device, stop: &AtomicBool, tx: &Sender<Msg>) {
 
 fn read_device(id: u64, mut dev: Device, xbox_labels: bool, stop: &AtomicBool, tx: &Sender<Msg>) {
     let mut norm = Normalizer::new(&dev, xbox_labels);
+    read_input(id, &mut dev, stop, tx, |ev, out| norm.translate(ev, out));
+    // Dropping `dev` closes the fd, which also releases the grab.
+    let _ = tx.send(Msg::Gone { id });
+}
+
+/// Reads raw events from `dev` until `stop` is set or the device goes away. `translate` turns
+/// each event into inputs, which go to the controller `id` one batch at a time.
+fn read_input(
+    id: u64,
+    dev: &mut Device,
+    stop: &AtomicBool,
+    tx: &Sender<Msg>,
+    mut translate: impl FnMut(evdev::InputEvent, &mut Vec<InputEvent>),
+) {
     if let Err(e) = dev.set_nonblocking(true) {
         log!("set_nonblocking: {e}");
-        let _ = tx.send(Msg::Gone { id });
         return;
     }
     let mut pfd = libc::pollfd { fd: dev.as_raw_fd(), events: libc::POLLIN, revents: 0 };
@@ -2020,7 +2078,7 @@ fn read_device(id: u64, mut dev: Device, xbox_labels: bool, stop: &AtomicBool, t
             break;
         }
         match dev.fetch_events() {
-            Ok(evs) => evs.for_each(|ev| norm.translate(ev, &mut events)),
+            Ok(evs) => evs.for_each(|ev| translate(ev, &mut events)),
             Err(e) if e.kind() == ErrorKind::WouldBlock => {}
             Err(_) => break,
         }
@@ -2028,8 +2086,6 @@ fn read_device(id: u64, mut dev: Device, xbox_labels: bool, stop: &AtomicBool, t
             return;
         }
     }
-    // Dropping `dev` closes the fd, which also releases the grab.
-    let _ = tx.send(Msg::Gone { id });
 }
 
 fn layout_name(layout: Layout) -> &'static str {
@@ -2141,8 +2197,8 @@ fn describe(w: &WindowInfo) -> String {
 mod tests {
     use super::*;
 
-    fn node(name: &str, parent: Option<&str>, uniq: Option<&str>) -> MotionNode {
-        MotionNode {
+    fn node(name: &str, parent: Option<&str>, uniq: Option<&str>) -> PairedNode {
+        PairedNode {
             path: PathBuf::from("/dev/input/event99"),
             name: name.into(),
             parent: parent.map(PathBuf::from),

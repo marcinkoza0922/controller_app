@@ -164,6 +164,8 @@ pub enum FiredFrom {
     Trigger(Trigger),
     /// A stick zone.
     Stick(Stick),
+    /// The touchpad's click.
+    Touchpad,
 }
 
 /// The label for an action fired from `from`: nothing for a button passed straight through
@@ -220,6 +222,8 @@ impl InputLog {
                 self.axes[i] = v;
                 self.stick(stick, t.sticks[stick_index(stick)], now)
             }
+            // Touchpad clicks don't go in the log yet.
+            InputEvent::Touchpad(_) => false,
         }
     }
 

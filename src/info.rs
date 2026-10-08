@@ -5,12 +5,14 @@
 use std::{
     collections::{HashMap, HashSet},
     fs,
+    path::Path,
+    sync::OnceLock,
     time::{Duration, Instant},
 };
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::{Button, CurrentInput, InfoOverlay, Layer, OverlayStyle, Stick, Trigger};
+use crate::config::{Button, CurrentInput, InfoOverlay, Layer, OverlayStyle, ScreenPosition, Stick, Trigger};
 
 /// The `{token}` that draws `b`'s glyph, for buttons the pad has.
 fn button_token(b: Button) -> Option<&'static str> {
@@ -140,6 +142,22 @@ pub enum Stat {
     Layer,
 }
 
+/// A battery's level, shown as a percentage, or with `:icon` as a gauge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gauge {
+    SystemBattery,
+    ControllerBattery,
+}
+
+/// A token drawn as an icon.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IconToken {
+    /// The machine's form factor: monitor, laptop or handheld.
+    Pc,
+    /// The controller in use, drawn for its kind.
+    Controller,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Token {
     Button(Button),
@@ -148,6 +166,10 @@ pub enum Token {
     Stick(Stick),
     Dpad,
     Stat(Stat),
+    Icon(IconToken),
+    Gauge { gauge: Gauge, icon: bool },
+    /// Wi-Fi signal: its icon, then the percentage.
+    Wifi,
     /// The inputs just pressed, as the overlay's input settings say, except for what the
     /// token itself sets: `{current_input_device_N}` for one controller, then optionally
     /// `:gap_ms:stay_ms`.
@@ -187,7 +209,12 @@ pub const TOKENS: &[(&str, &str)] = &[
     ("cpu", "CPU usage"),
     ("ram", "Memory in use"),
     ("gpu", "GPU usage (AMD)"),
-    ("controller", "Controller name"),
+    ("system_battery", "Laptop or handheld battery charge (add :icon for a gauge)"),
+    ("controller_battery", "Charge of the controller in use (add :icon for a gauge; ~ means estimated)"),
+    ("wifi", "Wi-Fi signal: icon and strength"),
+    ("pc", "This machine: a monitor, or a laptop or handheld shape"),
+    ("controller", "Controller in use, drawn for its kind (Xbox, PlayStation, Nintendo)"),
+    ("controller:name", "Controller in use, by name"),
     ("current_input", "Buttons just pressed (set what it follows under Input, below the cells)"),
 ];
 
@@ -213,10 +240,36 @@ fn token(inner: &str) -> Option<Token> {
         let (gap_ms, stay_ms) = (num(0)?, num(1)?);
         return Some(Token::CurrentInput { device, gap_ms, stay_ms });
     }
+    let gauge = match name.as_str() {
+        "system_battery" => Some(Gauge::SystemBattery),
+        "controller_battery" => Some(Gauge::ControllerBattery),
+        _ => None,
+    };
+    if let Some(gauge) = gauge {
+        let icon = match args.as_slice() {
+            [] => false,
+            ["icon"] => true,
+            _ => return None,
+        };
+        return Some(Token::Gauge { gauge, icon });
+    }
+    if name == "wifi" && args.is_empty() {
+        return Some(Token::Wifi);
+    }
+    if name == "controller" && args == ["name"] {
+        return Some(Token::Stat(Stat::Controller));
+    }
     if !args.is_empty() {
         return None;
     }
-    Some(match name.as_str() {
+    plain_token(&name)
+}
+
+/// A token with no arguments.
+fn plain_token(name: &str) -> Option<Token> {
+    Some(match name {
+        "pc" => Token::Icon(IconToken::Pc),
+        "controller" => Token::Icon(IconToken::Controller),
         "south" => Token::Button(Button::South),
         "east" => Token::Button(Button::East),
         "west" => Token::Button(Button::West),
@@ -248,7 +301,6 @@ fn token(inner: &str) -> Option<Token> {
         "cpu" => Token::Stat(Stat::Cpu),
         "ram" => Token::Stat(Stat::Ram),
         "gpu" => Token::Stat(Stat::Gpu),
-        "controller" => Token::Stat(Stat::Controller),
         _ => return None,
     })
 }
@@ -263,6 +315,35 @@ pub enum Segment {
     Dpad([bool; 4]),
     /// A stick pressed in: a stick cap with a down arrow. `right` picks R over L.
     StickClick { right: bool },
+    /// A drawn icon: the form factor, the controller's kind, or a gauge.
+    Icon(Icon),
+}
+
+/// What an icon shows.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum Icon {
+    Form(FormFactor),
+    Controller(PadFamily),
+    Battery(Charge),
+    /// Wi-Fi signal, as a percentage.
+    Wifi(u8),
+}
+
+/// A battery's charge. `estimated` when the driver gives only a coarse level, which is turned
+/// into a rough percentage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Charge {
+    pub percent: u8,
+    pub estimated: bool,
+}
+
+/// What kind of machine this is, from its DMI data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum FormFactor {
+    #[default]
+    Desktop,
+    Laptop,
+    Handheld,
 }
 
 /// What the overlay window draws for one info overlay.
@@ -453,11 +534,22 @@ fn token_settings(base: &CurrentInput, device: Option<u8>, gap_ms: Option<u64>, 
 
 /// Whether an overlay shows anything that changes over time (so it needs refreshing).
 pub fn is_live(overlay: &InfoOverlay) -> bool {
-    overlay.rows.iter().flatten().any(|cell| parse(cell).iter().any(|p| matches!(p, Err(Token::Stat(_)))))
+    overlay.rows.iter().flatten().any(|cell| parse(cell).iter().any(|p| matches!(p, Err(Token::Stat(_) | Token::Gauge { .. }))))
 }
 
 pub fn glyph(label: &str, fill: Option<[u8; 3]>, round: bool) -> Segment {
     Segment::Glyph { label: label.to_string(), fill, round }
+}
+
+/// The badge shown while the screen is being recorded: a red "● REC" in the top left.
+pub fn recording_view() -> InfoView {
+    const RED: [u8; 3] = [0xc8, 0x3c, 0x3c];
+    InfoView {
+        style: OverlayStyle { position: ScreenPosition::TopLeft, ..OverlayStyle::indicator() },
+        title: None,
+        rows: vec![vec![vec![glyph("● REC", Some(RED), false)]]],
+        opacity: 1.0,
+    }
 }
 
 /// A button's glyph as the given family labels it. Face buttons are round and, for Xbox
@@ -532,6 +624,9 @@ pub struct Live {
     pub layers: Vec<String>,
     pub family: PadFamily,
     pub system: SystemStats,
+    /// Charge of the controller in use, where it reports one.
+    pub controller_battery: Option<Charge>,
+    pub form: FormFactor,
     /// Recent input, for `{current_input}`.
     pub inputs: crate::inputlog::Inputs,
 }
@@ -547,7 +642,15 @@ impl Live {
             controller: format!("{family} controller"),
             layers: vec!["Hotkeys".into()],
             family,
-            system: SystemStats { cpu: Some(23.0), ram: Some((7.4, 31.2)), gpu: Some(61.0) },
+            system: SystemStats {
+                cpu: Some(23.0),
+                ram: Some((7.4, 31.2)),
+                gpu: Some(61.0),
+                battery: Some(Charge { percent: 78, estimated: false }),
+                wifi: Some(72),
+            },
+            controller_battery: Some(Charge { percent: 64, estimated: true }),
+            form: FormFactor::Laptop,
             inputs: crate::inputlog::Inputs::sample(),
         }
     }
@@ -596,6 +699,19 @@ fn cell_segments(overlay: &InfoOverlay, cell: &str, live: &Live) -> Vec<Segment>
             Err(Token::Stick(Stick::Right)) => glyph("RS", None, true),
             Err(Token::Dpad) => glyph("✚", None, false),
             Err(Token::Stat(s)) => Segment::Text(stat(s, live)),
+            Err(Token::Icon(IconToken::Pc)) => Segment::Icon(Icon::Form(live.form)),
+            Err(Token::Icon(IconToken::Controller)) => Segment::Icon(Icon::Controller(live.family)),
+            Err(Token::Gauge { gauge, icon }) => match (gauge_reading(gauge, live), icon) {
+                (Some(reading), true) => Segment::Icon(reading),
+                (Some(reading), false) => Segment::Text(reading_text(&reading)),
+                (None, _) => Segment::Text("n/a".into()),
+            },
+            Err(Token::Wifi) => {
+                // Without a signal the bars stay dim, next to "n/a".
+                let signal = live.system.wifi;
+                segments.push(Segment::Icon(Icon::Wifi(signal.unwrap_or(0))));
+                Segment::Text(signal.map_or("n/a".into(), |p| format!("{p}%")))
+            }
         };
         // Live values join the text around them.
         match (segments.last_mut(), segment) {
@@ -604,6 +720,23 @@ fn cell_segments(overlay: &InfoOverlay, cell: &str, live: &Live) -> Vec<Segment>
         }
     }
     segments
+}
+
+/// A gauge's reading as an icon, if there is one.
+fn gauge_reading(gauge: Gauge, live: &Live) -> Option<Icon> {
+    match gauge {
+        Gauge::SystemBattery => live.system.battery.map(Icon::Battery),
+        Gauge::ControllerBattery => live.controller_battery.map(Icon::Battery),
+    }
+}
+
+/// A gauge's reading as text: "78%", or "~75%" when estimated.
+fn reading_text(reading: &Icon) -> String {
+    match reading {
+        Icon::Battery(Charge { percent, estimated: true }) => format!("~{percent}%"),
+        Icon::Battery(Charge { percent, .. }) | Icon::Wifi(percent) => format!("{percent}%"),
+        Icon::Form(_) | Icon::Controller(_) => String::new(),
+    }
 }
 
 /// Formats the local time with a `strftime` pattern.
@@ -631,6 +764,10 @@ pub struct SystemStats {
     pub ram: Option<(f32, f32)>,
     /// Percent busy, where the driver reports it (amdgpu).
     pub gpu: Option<f32>,
+    /// Charge of the first system battery, where there is one.
+    pub battery: Option<Charge>,
+    /// Wi-Fi signal of the first wireless interface, as a percentage.
+    pub wifi: Option<u8>,
 }
 
 /// Samples CPU, memory and GPU load from /proc and /sys. CPU load is the change since the
@@ -654,6 +791,8 @@ impl Sampler {
         self.last_cpu = cpu;
         self.stats.ram = memory();
         self.stats.gpu = gpu_busy();
+        self.stats.battery = battery();
+        self.stats.wifi = wifi_strength();
         self.sampled_at = Some(Instant::now());
     }
 }
@@ -687,6 +826,79 @@ fn gpu_busy() -> Option<f32> {
         .filter(|e| e.file_name().to_str().is_some_and(|n| n.starts_with("card") && !n.contains('-')))
         .find_map(|e| fs::read_to_string(e.path().join("device/gpu_busy_percent")).ok())
         .and_then(|v| v.trim().parse().ok())
+}
+
+/// The charge of the first system battery (a laptop's or handheld's) under
+/// /sys/class/power_supply. Controllers' batteries are skipped: they are scoped "Device".
+fn battery() -> Option<Charge> {
+    let supplies = fs::read_dir("/sys/class/power_supply").ok()?;
+    supplies.flatten().map(|e| e.path()).find_map(|dir| {
+        let scope = fs::read_to_string(dir.join("scope")).unwrap_or_default();
+        (scope.trim() != "Device").then_some(())?;
+        battery_charge(&dir)
+    })
+}
+
+/// The charge of the battery a controller reports, from its HID device's power_supply entries
+/// (where the kernel's drivers register them).
+pub fn controller_battery(hid: &Path) -> Option<Charge> {
+    let supplies = fs::read_dir(hid.join("power_supply")).ok()?;
+    supplies.flatten().map(|e| e.path()).find_map(|dir| battery_charge(&dir))
+}
+
+/// A power supply's charge, if it is a battery. Drivers that report only a coarse level (the
+/// Switch controllers' say "High", say) give an estimate.
+fn battery_charge(dir: &Path) -> Option<Charge> {
+    let kind = fs::read_to_string(dir.join("type")).ok()?;
+    (kind.trim() == "Battery").then_some(())?;
+    if let Some(percent) = fs::read_to_string(dir.join("capacity")).ok().and_then(|c| c.trim().parse().ok()) {
+        return Some(Charge { percent, estimated: false });
+    }
+    let level = fs::read_to_string(dir.join("capacity_level")).ok()?;
+    let percent = match level.trim() {
+        "Full" => 100,
+        "High" => 75,
+        "Normal" | "Medium" => 50,
+        "Low" => 25,
+        "Critical" => 10,
+        _ => return None,
+    };
+    Some(Charge { percent, estimated: true })
+}
+
+/// Signal of the first wireless interface, from /proc/net/wireless.
+fn wifi_strength() -> Option<u8> {
+    parse_wireless(&fs::read_to_string("/proc/net/wireless").ok()?)
+}
+
+/// Link quality (out of 70, as drivers report it) of the first interface listed.
+fn parse_wireless(text: &str) -> Option<u8> {
+    let (_, rest) = text.lines().skip(2).find_map(|line| line.split_once(':'))?;
+    let link: f32 = rest.split_whitespace().nth(1)?.trim_end_matches('.').parse().ok()?;
+    Some((link * 100.0 / 70.0).round().min(100.0) as u8)
+}
+
+/// The form factor from DMI data: product and vendor name the handhelds whose chassis type
+/// doesn't say so; the chassis type (SMBIOS) says the rest.
+pub fn form_factor() -> FormFactor {
+    static FORM: OnceLock<FormFactor> = OnceLock::new();
+    *FORM.get_or_init(|| {
+        let dmi = |field: &str| fs::read_to_string(Path::new("/sys/class/dmi/id").join(field)).unwrap_or_default();
+        detect_form(dmi("product_name").trim(), dmi("sys_vendor").trim(), dmi("chassis_type").trim())
+    })
+}
+
+fn detect_form(product: &str, vendor: &str, chassis: &str) -> FormFactor {
+    let handheld = (vendor == "Valve" && (product.starts_with("Jupiter") || product.starts_with("Galileo")))
+        || (vendor.starts_with("ASUS") && product.starts_with("RC7"))
+        || (vendor == "LENOVO" && product == "83E1");
+    match chassis.parse::<u8>() {
+        _ if handheld => FormFactor::Handheld,
+        // Handheld PC, then portable, laptop, notebook, sub-notebook, convertible, detachable.
+        Ok(11) => FormFactor::Handheld,
+        Ok(8 | 9 | 10 | 14 | 31 | 32) => FormFactor::Laptop,
+        _ => FormFactor::Desktop,
+    }
 }
 
 #[cfg(test)]
@@ -746,6 +958,7 @@ mod tests {
                 Segment::Glyph { label, .. } => Some(label.as_str()),
                 Segment::Dpad(_) => Some("dpad"),
                 Segment::StickClick { .. } => Some("stick"),
+                Segment::Icon(_) => None,
                 Segment::Text(_) => None,
             })
             .collect();
@@ -785,6 +998,19 @@ mod tests {
         assert_eq!(v.rows[0][2], vec![Segment::Text("pid 4242".into())]);
         assert!(!is_live(&overlay(&[&["{south} Jump"]])));
         assert_eq!(local_time("%Y").len(), 4);
+        let batteries = overlay(&[&["{system_battery} {controller_battery}"]]);
+        assert_eq!(
+            resolve(&batteries, &Live::sample(PadFamily::Xbox)).rows[0][0],
+            vec![Segment::Text("78% ~64%".into())]
+        );
+        let mut live = Live::sample(PadFamily::Xbox);
+        live.system.battery = None;
+        live.controller_battery = None;
+        assert_eq!(resolve(&batteries, &live).rows[0][0], vec![Segment::Text("n/a n/a".into())]);
+
+        let rec = recording_view();
+        assert_eq!(rec.style.position, ScreenPosition::TopLeft);
+        assert_eq!(rec.rows[0][0], vec![glyph("● REC", Some([0xc8, 0x3c, 0x3c]), false)]);
 
         let layer = overlay(&[&["Layer: {layer}"]]);
         let mut live = Live::sample(PadFamily::Xbox);
@@ -850,6 +1076,49 @@ mod tests {
         assert_eq!(t.opacity("Loaded", now + s(4.0)), 0.0);
         t.clear();
         assert!(!t.timed("Sheet"));
+    }
+
+    #[test]
+    fn controller_battery_reads_the_hid_devices_power_supply() {
+        let hid = std::env::temp_dir().join(format!("controller-battery-test-{}", std::process::id()));
+        let supply = hid.join("power_supply/ps-controller-battery-1");
+        fs::create_dir_all(&supply).unwrap();
+        fs::write(supply.join("type"), "Battery\n").unwrap();
+        fs::write(supply.join("capacity"), "64\n").unwrap();
+        assert_eq!(controller_battery(&hid), Some(Charge { percent: 64, estimated: false }));
+        assert_eq!(controller_battery(&hid.join("missing")), None);
+        // A Switch controller reports only a level, which becomes an estimate.
+        fs::remove_file(supply.join("capacity")).unwrap();
+        fs::write(supply.join("capacity_level"), "High\n").unwrap();
+        assert_eq!(controller_battery(&hid), Some(Charge { percent: 75, estimated: true }));
+        fs::remove_dir_all(&hid).unwrap();
+    }
+
+    #[test]
+    fn wifi_strength_is_link_quality_out_of_70() {
+        let text = "Inter-| sta-|   Quality        |\n face | tus | link level noise |\nwlp2s0: 0000   43.  -67.  -256 0 0\n";
+        assert_eq!(parse_wireless(text), Some(61));
+        assert_eq!(parse_wireless("Inter-| sta-|\n face | tus |\n"), None, "no wireless interface");
+    }
+
+    #[test]
+    fn form_factor_from_dmi() {
+        assert_eq!(detect_form("Jupiter", "Valve", "3"), FormFactor::Handheld);
+        assert_eq!(detect_form("RC71L", "ASUSTeK COMPUTER INC.", "10"), FormFactor::Handheld);
+        assert_eq!(detect_form("Laptop 15", "Acme", "10"), FormFactor::Laptop);
+        assert_eq!(detect_form("Convertible", "Acme", "31"), FormFactor::Laptop);
+        assert_eq!(detect_form("MS-7D25", "Micro-Star", "3"), FormFactor::Desktop);
+    }
+
+    #[test]
+    fn controller_and_pc_tokens_and_gauges_parse() {
+        assert_eq!(token("pc"), Some(Token::Icon(IconToken::Pc)));
+        assert_eq!(token("controller"), Some(Token::Icon(IconToken::Controller)));
+        assert_eq!(token("controller:name"), Some(Token::Stat(Stat::Controller)));
+        assert_eq!(token("wifi"), Some(Token::Wifi));
+        assert_eq!(token("wifi:icon"), None, "Wi-Fi always has its icon");
+        assert_eq!(token("controller_battery"), Some(Token::Gauge { gauge: Gauge::ControllerBattery, icon: false }));
+        assert_eq!(token("system_battery:bars"), None, "an unknown argument leaves the token as text");
     }
 
     #[test]
