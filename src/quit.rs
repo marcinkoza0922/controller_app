@@ -10,7 +10,7 @@ const GRACE: Duration = Duration::from_secs(3);
 const PROTECTED: &[&str] = &[
     "plasmashell", "kwin_wayland", "kwin_wayland_wrapper", "kwin_x11", "krunner", "xorg", "xwayland", "gnome-shell",
     "mutter", "sway", "hyprland", "weston", "labwc", "river", "niri", "cosmic-comp", "wayfire", "systemd", "sddm",
-    "gdm", "lightdm", "login", "pipewire", "wireplumber", "controller_app",
+    "gdm", "lightdm", "login", "pipewire", "wireplumber", "padwight",
 ];
 
 /// Whether a window of this executable is off limits to force quit.
@@ -112,7 +112,7 @@ mod tests {
 
     #[test]
     fn the_desktop_is_protected() {
-        for exe in ["plasmashell", "KWin_Wayland", "Hyprland", "", "controller_app"] {
+        for exe in ["plasmashell", "KWin_Wayland", "Hyprland", "", "padwight"] {
             assert!(protected(exe), "{exe}");
         }
         assert!(!protected("eldenring.exe") && !protected("firefox"));

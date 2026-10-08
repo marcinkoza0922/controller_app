@@ -81,7 +81,7 @@ fn is_app_id(id: &str) -> bool {
     !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()) && !id.trim_start_matches('0').is_empty()
 }
 
-/// True if this window belongs to controller_app itself (the settings GUI).
+/// True if this window belongs to padwight itself (the settings GUI).
 pub fn is_own_window(info: &WindowInfo) -> bool {
     let Ok(own) = std::env::current_exe() else { return false };
     fs::read_link(format!("/proc/{}/exe", info.pid)).is_ok_and(|exe| exe == own)

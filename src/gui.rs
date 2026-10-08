@@ -53,7 +53,7 @@ use widgets::*;
 
 pub fn run() -> iced::Result {
     let app = iced::application(App::boot, App::update, App::view)
-        .title("Controller App")
+        .title("Padwight")
         .subscription(App::subscription)
         .window_size((1100.0, 900.0));
     crate::font::BUNDLED.iter().fold(app, |app, b| app.font(b.bytes)).run()
@@ -747,7 +747,7 @@ impl App {
 
         let mut header = column![
             row![
-                text("Controller App").size(26),
+                text("Padwight").size(26),
                 space::horizontal(),
                 text(status_text).color(color),
             ]
@@ -767,7 +767,7 @@ impl App {
 
         if !running {
             header = header.push(
-                text("The daemon isn't running. Start it with `systemctl --user start controller_app` or `controller_app daemon`. You can still edit: changes are saved to the config file and apply once the daemon starts.")
+                text("The daemon isn't running. Start it with `systemctl --user start padwight` or `padwight daemon`. You can still edit: changes are saved to the config file and apply once the daemon starts.")
                     .size(13)
                     .color(MUTED_COLOR),
             );

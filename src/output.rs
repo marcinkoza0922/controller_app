@@ -18,7 +18,7 @@ use crate::{
 };
 
 /// Prefix of every device we create, so the daemon never grabs its own output.
-pub const VIRTUAL_PREFIX: &str = "Controller App Virtual";
+pub const VIRTUAL_PREFIX: &str = "Padwight Virtual";
 
 /// Abstract output produced by the mapping engine.
 #[derive(Debug, Clone, PartialEq)]

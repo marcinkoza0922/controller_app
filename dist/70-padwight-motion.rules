@@ -1,9 +1,9 @@
 # Lets the logged-in user read game controller motion sensors (gyro/accelerometer), which
-# controller_app uses for gyro aiming. systemd's uaccess rule only covers joysticks, and a
+# padwight uses for gyro aiming. systemd's uaccess rule only covers joysticks, and a
 # controller's motion sensors are a separate input device classified as an accelerometer.
 # Limited to the PlayStation and Nintendo controller drivers so laptop tilt sensors are untouched.
 #
 # Install:
-#   sudo cp 70-controller-app-motion.rules /etc/udev/rules.d/
+#   sudo cp 70-padwight-motion.rules /etc/udev/rules.d/
 #   sudo udevadm control --reload && sudo udevadm trigger
 SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_ACCELEROMETER}=="1", DRIVERS=="playstation|sony|nintendo", TAG+="uaccess"

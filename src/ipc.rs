@@ -171,8 +171,8 @@ pub struct InputSnapshot {
 
 pub fn socket_path() -> PathBuf {
     match dirs::runtime_dir() {
-        Some(dir) => dir.join("controller_app.sock"),
-        None => std::env::temp_dir().join(format!("controller_app-{}.sock", unsafe { libc::getuid() })),
+        Some(dir) => dir.join("padwight.sock"),
+        None => std::env::temp_dir().join(format!("padwight-{}.sock", unsafe { libc::getuid() })),
     }
 }
 
