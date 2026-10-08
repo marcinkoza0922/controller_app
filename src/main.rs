@@ -13,6 +13,7 @@ mod keyboard;
 mod launchers;
 mod library;
 mod media;
+mod offer;
 mod menu;
 mod monitor;
 mod output;

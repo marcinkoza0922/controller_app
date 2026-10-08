@@ -2398,6 +2398,9 @@ pub struct Config {
     /// `Game::adopt_guide_layer`), so a later edit back to the old binding stays.
     #[serde(default)]
     pub guide_layer_adopted: bool,
+    /// IDs of library packs the user asked never to be offered again (see `offer`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub declined_packs: Vec<String>,
 }
 
 impl Default for Config {
@@ -2416,6 +2419,7 @@ impl Default for Config {
             shared: Shared::default(),
             games: Vec::new(),
             guide_layer_adopted: true,
+            declined_packs: Vec::new(),
         }
     }
 }
@@ -2550,6 +2554,7 @@ impl Config {
             shared: Shared::default(),
             games: Vec::new(),
             guide_layer_adopted: false,
+            declined_packs: Vec::new(),
         };
         for p in &old.profiles {
             if ruled(&p.name) {

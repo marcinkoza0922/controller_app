@@ -50,6 +50,7 @@ pub enum OverlayView {
     Keyboard(KeyboardView),
     Menu(crate::menu::MenuView),
     Media(crate::media::MediaView),
+    Offer(crate::offer::OfferView),
 }
 
 /// Everything the overlay window shows at once: info overlays, plus the keyboard or a menu.
@@ -503,6 +504,7 @@ mod ui {
             Some(OverlayView::Keyboard(k)) => layers.push(draw::place(draw::keyboard_panel(k, font), &k.style)),
             Some(OverlayView::Menu(m)) => layers.push(draw::place(draw::menu_panel(m, font), &m.style)),
             Some(OverlayView::Media(m)) => layers.push(draw::place(draw::media_panel(m, font), &m.style)),
+            Some(OverlayView::Offer(o)) => layers.push(draw::place(draw::offer_panel(o, font), &o.style)),
             None => {}
         }
         stack(layers).into()
@@ -532,6 +534,7 @@ pub mod draw {
         keyboard, media,
         media::{MediaView, PlayState},
         menu::MenuView,
+        offer::OfferView,
     };
 
     const UNIT: f32 = 46.0;
@@ -880,6 +883,38 @@ pub mod draw {
                 .align_x(Alignment::Center),
         )
         .padding(18.0 * s)
+        .style(panel_style(c))
+        .into()
+    }
+
+    /// The offer to add a library game: the question and its answers, or the packs to pick from.
+    pub fn offer_panel<'a, M: 'a>(o: &OfferView, font: Font) -> Element<'a, M> {
+        let c = colors(&o.style, font);
+        let s = o.style.scale.clamp(0.5, 2.0);
+        let cell = |label: String, selected: bool| {
+            let fg = if selected { c.selected_text } else { c.item_text };
+            container(text(label).font(c.font).size(16.0 * s).color(fg))
+                .padding([8.0 * s, 16.0 * s])
+                .style(cell_style(c, selected))
+        };
+        let body: Element<'a, M> = if o.choices.is_empty() {
+            let answers = o.answers.iter().map(|(button, what)| cell(format!("{button}  {what}"), false).into());
+            row(answers).spacing(10.0 * s).into()
+        } else {
+            let items = o.choices.iter().enumerate().map(|(i, name)| cell(name.clone(), i == o.selected).width(Length::Fill).into());
+            column(items).spacing(6.0 * s).width(360.0 * s).into()
+        };
+        container(
+            column![
+                text(o.title.clone()).font(c.font).size(20.0 * s).color(c.background_text),
+                text(o.detail.clone()).font(c.font).size(14.0 * s).color(c.muted).width(520.0 * s).align_x(Alignment::Center),
+                body,
+                text(o.hint.clone()).font(c.font).size(12.0 * s).color(c.muted),
+            ]
+            .spacing(14.0 * s)
+            .align_x(Alignment::Center),
+        )
+        .padding(22.0 * s)
         .style(panel_style(c))
         .into()
     }

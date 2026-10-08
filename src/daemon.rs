@@ -33,6 +33,7 @@ use crate::{
     monitor::{self, InputView, OutputView, log},
     output::{FfCaps, OutEvent, VIRTUAL_PREFIX, VirtualKbm, VirtualPad},
     media::{MediaOutcome, MediaSession, MediaState},
+    offer::{OfferOutcome, OfferSession},
     menu::{MenuOutcome, MenuSession},
     overlay::{OverlayAction, OverlayController, OverlayFrame, OverlayView},
     rumble,
@@ -58,6 +59,8 @@ const RECENT_WINDOWS: usize = 8;
 
 /// How long a ForceQuit action has to be held.
 const FORCE_QUIT_HOLD: Duration = Duration::from_secs(2);
+/// A Guide press shorter than this, with nothing else pressed, is a tap.
+const GUIDE_TAP: Duration = Duration::from_millis(350);
 
 enum Msg {
     Input { id: u64, events: Vec<InputEvent> },
@@ -183,10 +186,23 @@ enum Active {
     Menu { session: MenuSession, device: u64 },
     /// The media controls at the top of the screen.
     Media(MediaSession),
+    /// The offer to add a library game's profiles.
+    Offer(OfferSession),
 }
 
 /// A device node identity; the inode changes when a node is recreated for a new device.
 type NodeKey = (PathBuf, u64);
+
+/// Where the offer to add a library game stands.
+#[derive(Default)]
+struct Offers {
+    /// When Guide went down, while nothing else has been pressed with it.
+    guide_tap: Option<Instant>,
+    /// The library entries the offer on screen is for.
+    shown: Vec<crate::library::Entry>,
+    /// Library packs answered "no" to since the app started.
+    declined: HashSet<String>,
+}
 
 struct Daemon {
     config: Config,
@@ -222,6 +238,7 @@ struct Daemon {
     /// The screen recorder's process, once running, and whether one is being started.
     recording: Option<u32>,
     recording_starting: bool,
+    offers: Offers,
     /// The game (or other program) that was in front when recording started, and its process:
     /// the recording ends when it does.
     recording_target: Option<(String, u32)>,
@@ -258,10 +275,8 @@ pub fn run() -> Result<()> {
     let config = Config::load()?;
     let (tx, rx) = mpsc::channel();
     let listener = bind_socket()?;
-    {
-        let tx = tx.clone();
-        thread::spawn(move || ipc_server(&listener, &tx));
-    }
+    let ipc_tx = tx.clone();
+    thread::spawn(move || ipc_server(&listener, &ipc_tx));
 
     let kbm = VirtualKbm::new().context(
         "creating virtual keyboard/mouse (do you have write access to /dev/uinput?)",
@@ -288,6 +303,7 @@ pub fn run() -> Result<()> {
         quit_hold: None,
         recording: None,
         recording_starting: false,
+        offers: Offers::default(),
         recording_target: None,
         layer_started: HashMap::new(),
         overlay_watchers: Vec::new(),
@@ -379,6 +395,7 @@ impl Daemon {
             Some(Active::Keyboard(k)) => k.next_deadline(),
             Some(Active::Menu { session, .. }) => session.next_deadline(),
             Some(Active::Media(m)) => m.next_deadline(),
+            Some(Active::Offer(o)) => o.next_deadline(),
             None => None,
         };
         self.devices
@@ -414,6 +431,7 @@ impl Daemon {
                     return self.close_overlay();
                 }
             }
+            Some(Active::Offer(o)) if o.expired(now) => return self.answer_offer(OfferOutcome::No),
             _ => {}
         }
         self.apply_keyboard(keyboard_actions);
@@ -594,7 +612,7 @@ impl Daemon {
         match &self.active {
             Some(Active::Keyboard(k)) if k.layout() == layout => return self.close_overlay(),
             Some(Active::Keyboard(_)) => self.close_overlay(),
-            Some(Active::Menu { .. } | Active::Media(_)) => return,
+            Some(Active::Menu { .. } | Active::Media(_) | Active::Offer(_)) => return,
             None => {}
         }
         if !self.ensure_overlay_process() {
@@ -702,6 +720,7 @@ impl Daemon {
             }
             Some(Active::Menu { .. }) => {}
             Some(Active::Media(_)) => log!("media controls closed"),
+            Some(Active::Offer(_)) => {}
             None => return,
         }
         // The overlay window goes back to idle (it stays running for next time).
@@ -781,6 +800,7 @@ impl Daemon {
             }
             Some(Active::Menu { session, .. }) => session.view(&self.scope.menus).map(OverlayView::Menu),
             Some(Active::Media(m)) => Some(OverlayView::Media(m.view())),
+            Some(Active::Offer(o)) => Some(OverlayView::Offer(o.view())),
             None => None,
         }
     }
@@ -1257,6 +1277,7 @@ impl Daemon {
 
     fn input(&mut self, id: u64, events: Vec<InputEvent>) {
         let logged = self.log_input(id, &events, Instant::now());
+        let tapped = self.guide_tapped(&events);
         if self.active.is_some() {
             return self.overlay_input(id, events);
         }
@@ -1313,6 +1334,89 @@ impl Daemon {
             self.log_changed();
         }
         self.check_info_changes();
+        if tapped {
+            self.offer_library_game();
+        }
+    }
+
+    /// Whether these events end a Guide tap: Guide down and up in a moment, nothing pressed
+    /// in between (a held Guide with another button is a shortcut, not a tap).
+    fn guide_tapped(&mut self, events: &[InputEvent]) -> bool {
+        use crate::config::Button;
+        let now = Instant::now();
+        let mut tapped = false;
+        for ev in events {
+            match *ev {
+                InputEvent::Button(Button::Guide, true) => self.offers.guide_tap = Some(now),
+                InputEvent::Button(Button::Guide, false) => {
+                    tapped |= self.offers.guide_tap.take().is_some_and(|t| now.duration_since(t) <= GUIDE_TAP);
+                }
+                InputEvent::Button(_, true) => self.offers.guide_tap = None,
+                _ => {}
+            }
+        }
+        tapped
+    }
+
+    /// Asks whether to add the focused game's profiles, when the library has some for it.
+    fn offer_library_game(&mut self) {
+        if self.active.is_some() || !self.config.enabled {
+            return;
+        }
+        let Some(window) = self.focused.clone() else { return };
+        let library = crate::library::entries();
+        let mut found = crate::offer::candidates(&self.config, &library, &window);
+        found.retain(|&i| !self.offers.declined.contains(&library[i].pack.pack.id));
+        if found.is_empty() || !self.ensure_overlay_process() {
+            return;
+        }
+        log!("offering library profiles for {}", describe(&window));
+        self.release_mappings();
+        self.offers.shown = found.iter().map(|&i| library[i].clone()).collect();
+        let session = OfferSession::new(&library, &found, Instant::now());
+        self.active = Some(Active::Offer(session));
+        self.broadcast_overlay();
+    }
+
+    /// Acts on the answer to the offer: adds the chosen pack, or remembers the refusal.
+    fn answer_offer(&mut self, outcome: OfferOutcome) {
+        let Some(Active::Offer(session)) = &self.active else { return };
+        let ids: Vec<String> = session.ids().map(str::to_owned).collect();
+        let offered = std::mem::take(&mut self.offers.shown);
+        self.close_overlay();
+        match outcome {
+            OfferOutcome::No => self.offers.declined.extend(ids),
+            OfferOutcome::Never => {
+                let mut config = self.config.clone();
+                config.declined_packs.extend(ids);
+                self.say(vec!["Won't ask again".into()]);
+                self.replace_config(config);
+            }
+            OfferOutcome::Add(i, profile) => {
+                let Some(entry) = offered.into_iter().nth(i) else { return };
+                let mut config = self.config.clone();
+                let profile = profile.and_then(|p| entry.pack.profiles.get(p)).map(|p| p.name.clone());
+                let plan = crate::pack::plan(&config, entry.pack, true);
+                let choices = crate::pack::Choices { replace: false, keep_mine: vec![true; plan.rule_clashes.len()] };
+                let name = crate::pack::apply(&mut config, &plan, &choices);
+                log!("added library game {name}");
+                // The chosen profile is the one this window's rules pick.
+                if let (Some(profile), Some(window), Some(game)) =
+                    (profile, &self.focused, config.games.iter_mut().find(|g| g.name == name))
+                {
+                    for rule in game.rules.iter_mut().filter(|r| crate::focus::rule_matches_any(r, std::slice::from_ref(window))) {
+                        rule.profile.clone_from(&profile);
+                    }
+                }
+                if let Response::Error(e) = self.replace_config(config) {
+                    return self.say(vec!["Couldn't add the game".into(), e]);
+                }
+                self.say(vec![format!("Added {name}")]);
+                if let Some(window) = self.focused.clone() {
+                    self.window_focused(&window);
+                }
+            }
+        }
     }
 
     /// While the overlay shows something, controller input drives it instead of the mappings.
@@ -1355,6 +1459,11 @@ impl Daemon {
                 Some(Active::Media(m)) => {
                     if m.handle(ev, now) == Some(MediaOutcome::Close) {
                         return self.close_overlay();
+                    }
+                }
+                Some(Active::Offer(o)) => {
+                    if let Some(outcome) = o.handle(ev, now) {
+                        return self.answer_offer(outcome);
                     }
                 }
                 None => return,
