@@ -50,7 +50,7 @@ screenshot, mouse clicks and so on).
 - **`ToggleRecording`.** The first press spawns gpu-screen-recorder writing to
   `~/Videos/Recordings/<game>/`; the next stops it with SIGINT. The daemon tracks the child
   so a second start can't happen, and stops it on exit. A toast and the overlay show that
-  recording is on (today only toasts say so; there is no lasting indicator). If the program that was in front when it started (a game, or any non-desktop window; the same target as ForceQuit) exits, the recording is ended and saved. If the tool isn't installed, the action toasts that instead of failing
+  recording is on (a red "● REC" badge sits in the top left while it runs). If the program that was in front when it started (a game, or any non-desktop window; the same target as ForceQuit) exits, the recording is ended and saved. If the tool isn't installed, the action toasts that instead of failing
   silently.
 - **`ForceQuit`.** Acts on the focused window's process: a game with a rule goes by the game's
   name, any other window by its title. It never touches the desktop (shell, compositor, display

@@ -858,6 +858,9 @@ impl Daemon {
             .iter()
             .map(|(o, opacity)| crate::info::InfoView { opacity: *opacity, ..crate::info::resolve(o, &values) })
             .collect();
+        if self.recording.is_some() {
+            info.push(crate::info::recording_view());
+        }
         let now = Instant::now();
         let toast = self.toast.as_ref().and_then(|t| Some((t.view(now)?, t.next_redraw(now, FADE_FRAME))));
         match toast {
@@ -982,6 +985,8 @@ impl Daemon {
             layers: self.active_layers(),
             family: pad.and_then(|d| d.family).unwrap_or(self.config.info_glyphs),
             system: self.sampler.stats.clone(),
+            controller_battery: pad.and_then(|d| d.parent.as_deref()).and_then(crate::info::controller_battery),
+            form: crate::info::form_factor(),
             inputs: crate::inputlog::Inputs::default(),
         }
     }
