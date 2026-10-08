@@ -435,7 +435,9 @@ impl Daemon {
         self.release_mappings();
         log!("on-screen {} open", layout_name(layout));
         let cursor = self.overlay_cursors.get(&layout).copied().unwrap_or(layout.home());
-        self.active = Some(Active::Keyboard(OverlayController::new(layout, cursor)));
+        let mut controller = OverlayController::new(layout, cursor);
+        controller.set_guide_held(self.devices.values().any(|d| d.view.buttons().any(|b| b == crate::config::Button::Guide)));
+        self.active = Some(Active::Keyboard(controller));
         self.broadcast_overlay();
     }
 

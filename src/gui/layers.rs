@@ -4,7 +4,7 @@
 //! only the layer's own combos). After each message, whatever changed there is written back
 //! into the layer as an override (see [`App::write_back`]).
 
-use iced::widget::{column, row};
+use iced::widget::{checkbox, column, row};
 
 use super::*;
 use crate::config::{Indicator, Layer};
@@ -94,11 +94,11 @@ impl App {
     pub(super) fn new_layer_for(&mut self, message: Message) -> Message {
         let Message::SetAction(target, mut action) = message else { return message };
         let mut wants = false;
-        action.walk(&mut |a| wants |= matches!(a, ButtonAction::Layer(n) if n == NEW_LAYER));
+        action.walk(&mut |a| wants |= matches!(a, ButtonAction::Layer(n) | ButtonAction::Shift { layer: n, .. } if n == NEW_LAYER));
         if wants {
             let name = self.add_layer();
             action.walk_mut(&mut |a| {
-                if let ButtonAction::Layer(n) = a
+                if let ButtonAction::Layer(n) | ButtonAction::Shift { layer: n, .. } = a
                     && n == NEW_LAYER
                 {
                     *n = name.clone();
@@ -150,6 +150,12 @@ impl App {
                 let i = self.layer;
                 if let Some(l) = self.game_mut().layers.get_mut(i) {
                     l.indicator = choice.0;
+                }
+            }
+            Message::SetSwallowUnbound(on) => {
+                let i = self.layer;
+                if let Some(l) = self.game_mut().layers.get_mut(i) {
+                    l.swallow_unbound = on;
                 }
             }
             Message::SetIndicatorStyle(style) => {
@@ -290,6 +296,15 @@ impl App {
             settings.push(preview(crate::overlay::draw::info_panel(&view, self.preview_font())));
         }
         settings.push(labeled(
+            "Unset buttons",
+            checkbox(layer.swallow_unbound)
+                .label("Do nothing while the layer is on")
+                .size(14)
+                .text_size(12)
+                .on_toggle(Message::SetSwallowUnbound)
+                .into(),
+        ));
+        settings.push(labeled(
             "Shown over",
             row![
                 dropdown(profiles, compared, Message::SetCompare).width(220),
@@ -405,7 +420,9 @@ mod tests {
     #[test]
     fn layers_are_copied_from_other_games_with_what_they_use() {
         let mut app = with_game();
-        let mut quake = Game::new("Quake", vec![Profile::passthrough("P")]);
+        let mut plain = Profile::passthrough("P");
+        plain.set_button(Button::Guide, ButtonAction::Gamepad(Button::Guide));
+        let mut quake = Game::new("Quake", vec![plain]);
         quake.macros.push(Macro { name: "Lean".into(), steps: vec![MacroStep::Wait(5)] });
         let mut lean = crate::config::Layer::new("Lean");
         lean.buttons.insert(Button::West, ButtonAction::Macro { name: "Lean".into(), repeat: false });

@@ -105,6 +105,8 @@ pub struct OverlayController {
     /// Direction being held and when it next repeats.
     repeat: Option<((i32, i32), Instant)>,
     east_since: Option<Instant>,
+    /// Guide is down: Guide + X closes the keyboard (Guide + Y the numpad), as it opened it.
+    guide_held: bool,
     /// Shift held down by the left trigger.
     trigger_shift: bool,
 }
@@ -129,6 +131,7 @@ impl OverlayController {
             stick_dir: None,
             repeat: None,
             east_since: None,
+            guide_held: false,
             trigger_shift: false,
         }
     }
@@ -154,6 +157,11 @@ impl OverlayController {
                 .map(|t| (now.duration_since(t).as_secs_f32() / HOLD_TO_CLOSE.as_secs_f32()).min(1.0))
                 .unwrap_or(0.0),
         }
+    }
+
+    /// Tells the controller Guide is already down as it opens (the chord that opened it).
+    pub fn set_guide_held(&mut self, held: bool) {
+        self.guide_held = held;
     }
 
     pub fn handle(&mut self, ev: InputEvent, now: Instant) -> Vec<OverlayAction> {
@@ -209,7 +217,13 @@ impl OverlayController {
             }
             return Vec::new();
         }
+        let closes_with = if self.layout == Layout::Keyboard { Button::West } else { Button::North };
         match (b, pressed) {
+            (Button::Guide, _) => {
+                self.guide_held = pressed;
+                Vec::new()
+            }
+            (b, true) if b == closes_with && self.guide_held => vec![OverlayAction::Close],
             (Button::South, true) => self.press_selected(),
             (Button::South, false) => self.release_selected(),
             (Button::West, true) => self.shortcut("KEY_BACKSPACE"),
@@ -1054,6 +1068,23 @@ mod tests {
         assert_eq!(c.handle(InputEvent::Button(Button::West, true), t0), tap(KeyCode::KEY_BACKSPACE));
         assert_eq!(c.handle(InputEvent::Button(Button::North, true), t0), tap(KeyCode::KEY_SPACE));
         assert_eq!(c.handle(InputEvent::Button(Button::Start, true), t0), tap(KeyCode::KEY_ENTER));
+    }
+
+    #[test]
+    fn guide_with_x_closes_the_keyboard_and_with_y_the_numpad() {
+        let t0 = Instant::now();
+        let mut keyboard = OverlayController::new(Layout::Keyboard, Layout::Keyboard.home());
+        keyboard.handle(InputEvent::Button(Button::Guide, true), t0);
+        assert_eq!(keyboard.handle(InputEvent::Button(Button::West, true), t0), vec![OverlayAction::Close]);
+        let mut keyboard = OverlayController::new(Layout::Keyboard, Layout::Keyboard.home());
+        assert_eq!(keyboard.handle(InputEvent::Button(Button::West, true), t0).len(), 2, "X alone is backspace");
+
+        let mut numpad = OverlayController::new(Layout::Numpad, Layout::Numpad.home());
+        numpad.set_guide_held(true);
+        assert!(!numpad.handle(InputEvent::Button(Button::West, true), t0).contains(&OverlayAction::Close), "X doesn't close the numpad");
+        assert_eq!(numpad.handle(InputEvent::Button(Button::North, true), t0), vec![OverlayAction::Close]);
+        numpad.handle(InputEvent::Button(Button::Guide, false), t0);
+        assert!(numpad.handle(InputEvent::Button(Button::North, true), t0).is_empty());
     }
 
     #[test]

@@ -1358,6 +1358,10 @@ impl App {
                     }
                     other => other.make(&name),
                 };
+                // A profile whose Guide holds the Guide layer needs the game to have it.
+                if profile.holds_guide_layer() {
+                    self.game_mut().ensure_guide_layer();
+                }
                 self.game_mut().profiles.push(profile);
                 self.editing = self.game().profiles.len() - 1;
             }

@@ -98,7 +98,7 @@ impl Names {
 /// Whether `action` holds a layer outside any Toggle, which a tap (a menu item) can't do.
 pub(super) fn holds_layer(action: &ButtonAction) -> bool {
     match action {
-        ButtonAction::Layer(_) => true,
+        ButtonAction::Layer(_) | ButtonAction::Shift { .. } => true,
         ButtonAction::Multi(list) => list.iter().any(holds_layer),
         ButtonAction::Turbo { action, .. } => holds_layer(action),
         _ => false,
@@ -136,10 +136,10 @@ pub(super) fn action_problem(action: &ButtonAction, names: &Names) -> Option<Str
             ButtonAction::ShowLog(name) if !names.logs.contains(name) => {
                 problem = Some(format!("missing log overlay {name:?}"));
             }
-            ButtonAction::Layer(_) if !names.layers_allowed => {
+            ButtonAction::Layer(_) | ButtonAction::Shift { .. } if !names.layers_allowed => {
                 problem = Some("shared items can't use layers".into());
             }
-            ButtonAction::Layer(name) if !names.layers.contains(name) => {
+            ButtonAction::Layer(name) | ButtonAction::Shift { layer: name, .. } if !names.layers.contains(name) => {
                 problem = Some(format!("missing layer {name:?}"));
             }
             _ => {}
@@ -213,7 +213,7 @@ pub(super) fn items_problem(macros: &[Macro], menus: &[Menu], info: &[InfoOverla
         }
         if m.steps.iter().filter_map(MacroStep::action).any(|a| {
             let mut layer = false;
-            a.walk(&mut |a| layer |= matches!(a, ButtonAction::Layer(_)));
+            a.walk(&mut |a| layer |= matches!(a, ButtonAction::Layer(_) | ButtonAction::Shift { .. }));
             layer
         }) {
             return Some(format!("Macro {:?}: macros can't hold layers.", m.name));
@@ -416,7 +416,7 @@ mod tests {
 
     #[test]
     fn problems_are_found_inside_nested_actions_and_flag_their_section() {
-        let names = Names { macros: vec!["Known".to_string()], ..Names::default() };
+        let names = Names { macros: vec!["Known".to_string()], layers: vec!["Guide".to_string()], layers_allowed: true, ..Names::default() };
         let nested = ButtonAction::Multi(vec![
             ButtonAction::Mouse(MouseButton::Left),
             ButtonAction::toggle(ButtonAction::Keys(vec!["KEY_NOPE".into()])),

@@ -233,6 +233,9 @@ pub enum ButtonAction {
     /// While held, the game's layer named here applies on top of the active profile (wrap in
     /// Toggle to keep it on).
     Layer(String),
+    /// Like `Layer`, for an input that is also used on its own: if it is let go without any
+    /// other input having been used meanwhile, `tap` is pressed and released.
+    Shift { layer: String, tap: Box<ButtonAction> },
 }
 
 /// A Toggle's inner action, and whether it switches on by itself when the game starts.
@@ -555,9 +558,9 @@ impl OverlayStyle {
 }
 
 impl OverlayStyle {
-    /// The on-screen numpad's default: out of the way in the bottom-right corner.
+    /// The on-screen numpad's default: bottom center, like the keyboard.
     pub fn numpad() -> Self {
-        OverlayStyle { position: ScreenPosition::BottomRight, ..OverlayStyle::default() }
+        OverlayStyle { position: ScreenPosition::BottomCenter, ..OverlayStyle::default() }
     }
 
     /// A layer's name label: top center, small and see-through.
@@ -768,6 +771,12 @@ impl ButtonAction {
             ButtonAction::Multi(actions) => actions.iter().flat_map(ButtonAction::wheel_directions).collect(),
             _ => Vec::new(),
         }
+    }
+
+    /// What the Guide button does by default: holds the Guide layer, and passes a lone tap on
+    /// to the game or Steam.
+    pub fn guide_shift() -> Self {
+        ButtonAction::Shift { layer: GUIDE_LAYER.into(), tap: Box::new(ButtonAction::Gamepad(Button::Guide)) }
     }
 
     pub fn key_names(&self) -> Vec<&String> {
@@ -1171,6 +1180,37 @@ pub struct Layer {
     pub right_trigger: Option<TriggerConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gyro: Option<GyroConfig>,
+    /// While on, buttons the layer doesn't set do nothing (instead of keeping the profile's
+    /// action), except ones that hold a layer themselves.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub swallow_unbound: bool,
+}
+
+/// The name of the layer Guide holds by default.
+pub const GUIDE_LAYER: &str = "Guide";
+
+impl Layer {
+    /// The default Guide layer: system shortcuts on the face buttons, D-pad and triggers, the
+    /// right stick as a mouse, and everything else swallowed.
+    pub fn guide() -> Self {
+        use ButtonAction::*;
+        let key = |k: &str| Keys(vec![k.into()]);
+        let mut layer = Self::new(GUIDE_LAYER);
+        layer.indicator = Indicator::Off;
+        layer.swallow_unbound = true;
+        layer.buttons = BTreeMap::from([
+            (Button::West, ToggleOverlay),
+            (Button::North, ToggleNumpad),
+            (Button::DpadUp, NextProfile),
+            (Button::DpadRight, key("KEY_ENTER")),
+            (Button::DpadDown, key("KEY_TAB")),
+            (Button::DpadLeft, key("KEY_ESC")),
+        ]);
+        layer.left_trigger = Some(TriggerAction::Button { action: Mouse(MouseButton::Right), threshold: 0.3 }.into());
+        layer.right_trigger = Some(TriggerAction::Button { action: Mouse(MouseButton::Left), threshold: 0.3 }.into());
+        layer.right_stick = Some(StickConfig::new(StickAction::mouse(1600.0), 0.1, 2.0));
+        layer
+    }
 }
 
 /// A combo's buttons in a canonical order, to compare combos.
@@ -1196,11 +1236,21 @@ impl Layer {
             left_trigger: None,
             right_trigger: None,
             gyro: None,
+            swallow_unbound: false,
         }
     }
 
     /// Puts this layer's overrides on top of `p`.
     pub fn apply(&self, p: &mut Profile) {
+        if self.swallow_unbound {
+            for b in Button::ALL {
+                let holds = matches!(p.button(b), ButtonAction::Layer(_) | ButtonAction::Shift { .. });
+                if !holds && !self.buttons.contains_key(&b) {
+                    p.buttons.insert(b, ButtonAction::Disabled);
+                    p.gestures.remove(&b);
+                }
+            }
+        }
         for (b, a) in &self.buttons {
             p.buttons.insert(*b, a.clone());
         }
@@ -1588,6 +1638,11 @@ impl Profile {
         }
     }
 
+    /// Whether Guide holds the Guide layer.
+    pub fn holds_guide_layer(&self) -> bool {
+        matches!(self.button(Button::Guide), ButtonAction::Shift { layer, .. } if layer == GUIDE_LAYER)
+    }
+
     /// This profile with `layers` on top, oldest first: later ones win.
     pub fn with_layers<'a>(&self, layers: impl IntoIterator<Item = &'a Layer>) -> Profile {
         let mut p = self.clone();
@@ -1597,13 +1652,13 @@ impl Profile {
         p
     }
 
-    /// 1:1 virtual gamepad. Guide cycles profiles.
+    /// 1:1 virtual gamepad. Guide is the shift key of the Guide layer.
     pub fn passthrough(name: &str) -> Self {
         let buttons = Button::ALL
             .iter()
             .map(|&b| {
                 let action = if b == Button::Guide {
-                    ButtonAction::NextProfile
+                    ButtonAction::guide_shift()
                 } else {
                     ButtonAction::Gamepad(b)
                 };
@@ -1650,7 +1705,7 @@ impl Profile {
                 (Button::DpadLeft, key("KEY_4")),
                 (Button::Start, key("KEY_ESC")),
                 (Button::Select, key("KEY_TAB")),
-                (Button::Guide, NextProfile),
+                (Button::Guide, ButtonAction::guide_shift()),
             ]),
             left_stick,
             right_stick: StickConfig::new(StickAction::mouse(1600.0), 0.1, 2.0),
@@ -1691,7 +1746,7 @@ impl Profile {
                 (Button::DpadLeft, key("KEY_4")),
                 (Button::Start, key("KEY_ESC")),
                 (Button::Select, key("KEY_TAB")),
-                (Button::Guide, NextProfile),
+                (Button::Guide, ButtonAction::guide_shift()),
             ]),
             left_stick: StickConfig::new(StickAction::mouse(1400.0), 0.12, 2.2),
             right_stick,
@@ -1724,7 +1779,7 @@ impl Profile {
                 (Button::DpadRight, key("KEY_RIGHT")),
                 (Button::Start, key("KEY_ENTER")),
                 (Button::Select, key("KEY_ESC")),
-                (Button::Guide, NextProfile),
+                (Button::Guide, ButtonAction::guide_shift()),
             ]),
             left_stick,
             right_stick: StickConfig::new(StickAction::Disabled, 0.15, 1.0),
@@ -1747,7 +1802,7 @@ impl Profile {
             (Button::RightBumper, Mouse(MouseButton::Forward)),
             (Button::Select, Keys(vec!["KEY_LEFTMETA".into()])),
             (Button::Start, key("KEY_ENTER")),
-            (Button::Guide, NextProfile),
+            (Button::Guide, ButtonAction::guide_shift()),
             (Button::LeftStick, Disabled),
             (Button::RightStick, Disabled),
             (Button::DpadUp, key("KEY_UP")),
@@ -1775,11 +1830,7 @@ impl Profile {
                 action: Keys(vec!["KEY_LEFTALT".into(), "KEY_TAB".into()]),
             }],
             combo_window_ms: default_combo_window_ms(),
-            // Hold Guide for the on-screen keyboard.
-            gestures: BTreeMap::from([(
-                Button::Guide,
-                Gestures { long_press: Some(ToggleOverlay), ..Gestures::default() },
-            )]),
+            gestures: BTreeMap::new(),
             tap_window_ms: default_tap_window_ms(),
             long_press_ms: default_long_press_ms(),
             gyro: GyroConfig::default(),
@@ -2007,8 +2058,10 @@ pub struct Game {
 }
 
 impl Game {
+    /// A game with these profiles. If any of them has Guide hold the Guide layer, the game
+    /// gets that layer too, so the binding never points at nothing.
     pub fn new(name: &str, profiles: Vec<Profile>) -> Self {
-        Game {
+        let mut game = Game {
             name: name.into(),
             pack: PackInfo::default(),
             origin: None,
@@ -2022,11 +2075,37 @@ impl Game {
             keyboard_style: None,
             numpad_style: None,
             overlay_font: None,
+        };
+        if game.profiles.iter().any(Profile::holds_guide_layer) {
+            game.ensure_guide_layer();
         }
+        game
     }
 
     pub fn profile(&self, name: &str) -> Option<&Profile> {
         self.profiles.iter().find(|p| p.name == name)
+    }
+
+    /// Adds the default Guide layer unless the game already has a layer of that name.
+    pub fn ensure_guide_layer(&mut self) {
+        if !self.layers.iter().any(|l| l.name == GUIDE_LAYER) {
+            self.layers.push(Layer::guide());
+        }
+    }
+
+    /// Makes Guide hold the Guide layer wherever it still has the old default (switching
+    /// profiles), and adds the layer. Guide bindings someone edited are left alone.
+    pub fn adopt_guide_layer(&mut self) {
+        let mut changed = false;
+        for p in &mut self.profiles {
+            if p.button(Button::Guide) == &ButtonAction::NextProfile && !p.gestures.contains_key(&Button::Guide) {
+                p.set_button(Button::Guide, ButtonAction::guide_shift());
+                changed = true;
+            }
+        }
+        if changed {
+            self.ensure_guide_layer();
+        }
     }
 
     /// Points every reference to the macro, menu or info overlay `old` (of `kind`) at `new`:
@@ -2136,7 +2215,7 @@ impl ItemKind {
             | (ItemKind::Menu, ButtonAction::OpenMenu(name))
             | (ItemKind::Info, ButtonAction::ShowInfo(name))
             | (ItemKind::Log, ButtonAction::ShowLog(name))
-            | (ItemKind::Layer, ButtonAction::Layer(name)) => Some(name),
+            | (ItemKind::Layer, ButtonAction::Layer(name) | ButtonAction::Shift { layer: name, .. }) => Some(name),
             _ => None,
         }
     }
@@ -2147,7 +2226,7 @@ impl ItemKind {
             | (ItemKind::Menu, ButtonAction::OpenMenu(name))
             | (ItemKind::Info, ButtonAction::ShowInfo(name))
             | (ItemKind::Log, ButtonAction::ShowLog(name))
-            | (ItemKind::Layer, ButtonAction::Layer(name)) => Some(name),
+            | (ItemKind::Layer, ButtonAction::Layer(name) | ButtonAction::Shift { layer: name, .. }) => Some(name),
             _ => None,
         }
     }
@@ -2259,6 +2338,10 @@ pub struct Config {
     pub shared: Shared,
     #[serde(default)]
     pub games: Vec<Game>,
+    /// Set once Guide has been moved from switching profiles to the Guide layer (see
+    /// `Game::adopt_guide_layer`), so a later edit back to the old binding stays.
+    #[serde(default)]
+    pub guide_layer_adopted: bool,
 }
 
 impl Default for Config {
@@ -2276,11 +2359,23 @@ impl Default for Config {
             general: Game::new("General", vec![Profile::passthrough("Gamepad"), Profile::desktop("Desktop")]),
             shared: Shared::default(),
             games: Vec::new(),
+            guide_layer_adopted: true,
         }
     }
 }
 
 impl Config {
+    /// Moves a config from before the Guide layer onto it, once.
+    fn adopt_guide_layer(&mut self) -> bool {
+        if self.guide_layer_adopted {
+            return false;
+        }
+        self.guide_layer_adopted = true;
+        self.general.adopt_guide_layer();
+        self.games.iter_mut().for_each(Game::adopt_guide_layer);
+        true
+    }
+
     pub fn path() -> PathBuf {
         dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
@@ -2300,20 +2395,30 @@ impl Config {
         }
         let text = std::fs::read_to_string(&path)
             .with_context(|| format!("reading {}", path.display()))?;
-        match toml::from_str(&text) {
-            Ok(config) => Ok(config),
+        match toml::from_str::<Config>(&text) {
+            Ok(mut config) => {
+                if config.adopt_guide_layer() {
+                    let backup = path.with_extension("toml.before-guide");
+                    if !backup.exists() {
+                        std::fs::copy(&path, &backup).with_context(|| format!("keeping a copy at {}", backup.display()))?;
+                    }
+                    config.save()?;
+                }
+                Ok(config)
+            }
             Err(e) => {
                 let old_format = toml::from_str::<toml::Table>(&text)
                     .is_ok_and(|t| t.contains_key("profiles") && !t.contains_key("general"));
                 if !old_format {
                     return Err(e).with_context(|| format!("parsing {}", path.display()));
                 }
-                let config = Config::from_legacy(&text).with_context(|| format!("converting {}", path.display()))?;
+                let mut config = Config::from_legacy(&text).with_context(|| format!("converting {}", path.display()))?;
                 let backup = (1..)
                     .map(|i| if i == 1 { path.with_extension("toml.old") } else { path.with_extension(format!("toml.old.{i}")) })
                     .find(|p| !p.exists())
                     .unwrap();
                 std::fs::copy(&path, &backup).with_context(|| format!("keeping a copy at {}", backup.display()))?;
+                config.adopt_guide_layer();
                 config.save()?;
                 Ok(config)
             }
@@ -2388,6 +2493,7 @@ impl Config {
             general: Game::new("General", Vec::new()),
             shared: Shared::default(),
             games: Vec::new(),
+            guide_layer_adopted: false,
         };
         for p in &old.profiles {
             if ruled(&p.name) {
@@ -2740,9 +2846,50 @@ mod tests {
             for k in keys {
                 assert!(evdev::KeyCode::from_str(k).is_ok(), "{}: bad key {k}", p.name);
             }
-            // Guide always cycles profiles, so no template can trap you in it.
-            assert_eq!(p.button(Button::Guide), &ButtonAction::NextProfile, "{}", p.name);
+            // Guide always opens the Guide layer, which can switch profiles, so no template can
+            // trap you in it.
+            assert_eq!(p.button(Button::Guide), &ButtonAction::guide_shift(), "{}", p.name);
         }
+    }
+
+    #[test]
+    fn default_config_has_the_guide_layer_and_roundtrips() {
+        let config = Config::default();
+        assert!(config.general.layers.iter().any(|l| l.name == GUIDE_LAYER));
+        let text = toml::to_string_pretty(&config).unwrap();
+        assert_eq!(toml::from_str::<Config>(&text).unwrap(), config);
+    }
+
+    #[test]
+    fn old_guide_bindings_move_to_the_guide_layer_once() {
+        let old_guide = |p: &mut Profile| p.set_button(Button::Guide, ButtonAction::NextProfile);
+        let mut config = Config { guide_layer_adopted: false, ..Config::default() };
+        config.general.layers.clear();
+        config.general.profiles.iter_mut().for_each(old_guide);
+        let mut doom = Game::new("Doom", vec![Profile::pc_action("Play"), Profile::desktop("Menus")]);
+        doom.profiles.iter_mut().for_each(old_guide);
+        // One of them was changed on purpose; a game with its own "Guide" layer keeps it.
+        doom.profiles[1].set_button(Button::Guide, ButtonAction::Keys(vec!["KEY_F12".into()]));
+        let mut mine = Game::new("Mine", vec![Profile::passthrough("P")]);
+        mine.profiles[0].set_button(Button::Guide, ButtonAction::NextProfile);
+        mine.layers = vec![Layer::new(GUIDE_LAYER)];
+        doom.layers.clear();
+        config.games = vec![doom, mine];
+
+        assert!(config.adopt_guide_layer());
+        assert!(config.general.profiles.iter().all(|p| p.button(Button::Guide) == &ButtonAction::guide_shift()));
+        assert_eq!(config.general.layers, [Layer::guide()]);
+        let doom = &config.games[0];
+        assert_eq!(doom.profiles[0].button(Button::Guide), &ButtonAction::guide_shift());
+        assert_eq!(doom.profiles[1].button(Button::Guide), &ButtonAction::Keys(vec!["KEY_F12".into()]));
+        assert_eq!(doom.layers, [Layer::guide()]);
+        assert_eq!(config.games[1].layers, [Layer::new(GUIDE_LAYER)], "an existing layer is left alone");
+        assert!(!config.adopt_guide_layer(), "only once");
+    }
+
+    #[test]
+    fn the_guide_layer_can_always_switch_profiles() {
+        assert_eq!(Layer::guide().buttons.get(&Button::DpadUp), Some(&ButtonAction::NextProfile));
     }
 
     #[test]
@@ -2912,7 +3059,7 @@ mod tests {
         assert_eq!(menu.kind, MenuKind::Directional { cluster: Cluster::DPad });
         assert_eq!(menu.style, OverlayStyle::default());
         assert_eq!(Config::default().keyboard_style.position, ScreenPosition::BottomCenter);
-        assert_eq!(Config::default().numpad_style.position, ScreenPosition::BottomRight);
+        assert_eq!(Config::default().numpad_style.position, ScreenPosition::BottomCenter);
         // A game follows the global styles until it sets its own.
         let mut config = Config::default();
         config.games.push(Game::new("Doom", vec![Profile::passthrough("Play")]));

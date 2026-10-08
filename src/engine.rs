@@ -111,6 +111,23 @@ enum ComboMember {
     Consumed,
 }
 
+/// A held `Shift` input: whether anything else was used while it was down, and which axes
+/// were already pushed when it went down (those don't count).
+#[derive(Default)]
+struct ShiftState {
+    used: bool,
+    already_pushed: Vec<Axis>,
+}
+
+/// How far a stick or trigger has to move, while a shift is held, to count as used.
+const SHIFT_STICK_USE: f32 = 0.3;
+const SHIFT_TRIGGER_USE: f32 = 0.5;
+
+fn pushed_past_use(axis: Axis, value: f32) -> bool {
+    let limit = if axis_stick(axis).is_some() { SHIFT_STICK_USE } else { SHIFT_TRIGGER_USE };
+    value.abs() > limit
+}
+
 #[derive(Default)]
 pub struct Engine {
     axes: HashMap<Axis, f32>,
@@ -133,6 +150,8 @@ pub struct Engine {
     zone_bounds: HashMap<(Analog, usize), (f32, f32)>,
     /// Layers held or toggled on, oldest first, with how many inputs hold each.
     layers: Vec<(String, u32)>,
+    /// Inputs holding a layer through `ButtonAction::Shift`.
+    shifts: HashMap<Source, ShiftState>,
     /// Set when `layers` changes; the daemon takes it.
     layers_changed: bool,
     mouse_acc: (f32, f32),
@@ -388,6 +407,7 @@ impl Engine {
     ) -> bool {
         let gyro = &profile.gyro;
         let before = self.gyro_controls_held(gyro);
+        self.mark_shifts_used(&ev);
         if let InputEvent::Button(b, pressed) = ev {
             if pressed {
                 self.raw_buttons.insert(b);
@@ -413,6 +433,23 @@ impl Engine {
             return self.update_stick_buttons(profile, s, now, out) | switch;
         }
         switch
+    }
+
+    /// Notes that something other than a held shift input was pressed or pushed, so letting
+    /// go of the shift isn't a tap.
+    fn mark_shifts_used(&mut self, ev: &InputEvent) {
+        if self.shifts.is_empty() {
+            return;
+        }
+        match *ev {
+            InputEvent::Button(_, true) => self.shifts.values_mut().for_each(|s| s.used = true),
+            InputEvent::Axis(axis, v) if pushed_past_use(axis, v) => {
+                for s in self.shifts.values_mut().filter(|s| !s.already_pushed.contains(&axis)) {
+                    s.used = true;
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Presses or releases a stick's direction buttons (e.g. `Button::LeftStickUp`) as it
@@ -682,6 +719,23 @@ impl Engine {
         }
     }
 
+    /// One more (or one fewer) input holding the layer `name`.
+    fn hold_layer(&mut self, name: &str, pressed: bool) {
+        let at = self.layers.iter().position(|(n, _)| n == name);
+        match (pressed, at) {
+            (true, Some(i)) => self.layers[i].1 += 1,
+            (true, None) => self.layers.push((name.to_string(), 1)),
+            (false, Some(i)) => {
+                self.layers[i].1 -= 1;
+                if self.layers[i].1 == 0 {
+                    self.layers.remove(i);
+                }
+            }
+            (false, None) => {}
+        }
+        self.layers_changed = true;
+    }
+
     /// Emits press/release for an action. `slot` is the position of this node among the
     /// Toggle/Turbo nodes of the input's action (see [`StateId`]). Returns true if it
     /// requests the next profile.
@@ -750,20 +804,17 @@ impl Engine {
                 self.menu_request = Some((name.clone(), Opener { toggled: self.toggling, ..src.opener() }));
             }
         }
-        ButtonAction::Layer(name) => {
-            let at = self.layers.iter().position(|(n, _)| n == name);
-            match (pressed, at) {
-                (true, Some(i)) => self.layers[i].1 += 1,
-                (true, None) => self.layers.push((name.clone(), 1)),
-                (false, Some(i)) => {
-                    self.layers[i].1 -= 1;
-                    if self.layers[i].1 == 0 {
-                        self.layers.remove(i);
-                    }
-                }
-                (false, None) => {}
+        ButtonAction::Layer(name) => self.hold_layer(name, pressed),
+        ButtonAction::Shift { layer, tap } => {
+            self.hold_layer(layer, pressed);
+            if pressed {
+                let already_pushed = self.axes.iter().filter(|(a, v)| pushed_past_use(**a, **v)).map(|(a, _)| *a).collect();
+                self.shifts.insert(src.clone(), ShiftState { used: false, already_pushed });
+            } else if self.shifts.remove(src).is_some_and(|s| !s.used) {
+                // Let go with nothing else used: a plain tap of the input.
+                let switch = self.emit(src, tap, true, slot, out);
+                return self.emit(src, tap, false, slot, out) | switch;
             }
-            self.layers_changed = true;
         }
             ButtonAction::Multi(actions) => {
                 // Child slots depend only on position, so reverse-order release matches.
@@ -1136,6 +1187,8 @@ impl Engine {
     /// profile switch, when an on-screen overlay takes the controller, or when the device goes
     /// away. With `keep_toggled_layers`, layers a Toggle switched on stay on (held ones end).
     pub fn release_all(&mut self, keep_toggled_layers: bool, out: &mut Vec<OutEvent>) {
+        // Letting go because everything is being released is not a tap.
+        self.shifts.values_mut().for_each(|s| s.used = true);
         let held: Vec<_> = self.held.drain().collect();
         for (src, action) in held {
             self.emit(&src, &action, false, 0, out);
@@ -1340,13 +1393,92 @@ mod tests {
     }
 
     #[test]
-    fn guide_requests_next_profile_only_on_press() {
-        let p = Profile::passthrough("p");
+    fn next_profile_is_requested_only_on_press() {
+        let mut p = Profile::passthrough("p");
+        p.set_button(Button::Guide, ButtonAction::NextProfile);
         let mut e = Engine::default();
         let mut out = Vec::new();
         assert!(e.handle(&p, InputEvent::Button(Button::Guide, true), Instant::now(), &mut out));
         assert!(!e.handle(&p, InputEvent::Button(Button::Guide, false), Instant::now(), &mut out));
         assert!(out.is_empty());
+    }
+
+    /// A profile whose Guide holds the default Guide layer, and that layer applied over it.
+    fn guide_setup() -> (Profile, Profile) {
+        let base = Profile::passthrough("p");
+        let on = layered(&base, &crate::config::Layer::guide());
+        (base, on)
+    }
+
+    fn pad_guide_events(out: &[OutEvent]) -> Vec<OutEvent> {
+        out.iter().filter(|o| matches!(o, OutEvent::PadButton(Button::Guide, _))).cloned().collect()
+    }
+
+    #[test]
+    fn guide_alone_is_a_tap_on_release() {
+        let (base, on) = guide_setup();
+        let mut e = Engine::default();
+        let mut out = Vec::new();
+        e.handle(&base, InputEvent::Button(Button::Guide, true), Instant::now(), &mut out);
+        assert_eq!(e.layers(), ["Guide"]);
+        assert!(out.is_empty(), "nothing reaches the game until it is let go");
+        e.handle(&on, InputEvent::Button(Button::Guide, false), Instant::now(), &mut out);
+        assert!(e.layers().is_empty());
+        assert_eq!(pad_guide_events(&out), [OutEvent::PadButton(Button::Guide, true), OutEvent::PadButton(Button::Guide, false)]);
+    }
+
+    #[test]
+    fn guide_used_with_another_input_is_not_a_tap() {
+        let (base, on) = guide_setup();
+        let mut e = Engine::default();
+        let mut out = Vec::new();
+        e.handle(&base, InputEvent::Button(Button::Guide, true), Instant::now(), &mut out);
+        e.handle(&on, InputEvent::Button(Button::West, true), Instant::now(), &mut out);
+        e.handle(&on, InputEvent::Button(Button::West, false), Instant::now(), &mut out);
+        e.handle(&on, InputEvent::Button(Button::Guide, false), Instant::now(), &mut out);
+        assert!(pad_guide_events(&out).is_empty());
+        assert!(e.take_overlay_toggle().is_some(), "X opened the keyboard");
+    }
+
+    #[test]
+    fn guide_chords_can_follow_each_other() {
+        let (base, on) = guide_setup();
+        let mut e = Engine::default();
+        let mut out = Vec::new();
+        e.handle(&base, InputEvent::Button(Button::Guide, true), Instant::now(), &mut out);
+        for b in [Button::DpadRight, Button::DpadDown] {
+            e.handle(&on, InputEvent::Button(b, true), Instant::now(), &mut out);
+            e.handle(&on, InputEvent::Button(b, false), Instant::now(), &mut out);
+        }
+        let keys: Vec<_> = out.iter().filter(|o| matches!(o, OutEvent::Key(_, true))).collect();
+        assert_eq!(keys, [&OutEvent::Key(KeyCode::KEY_ENTER, true), &OutEvent::Key(KeyCode::KEY_TAB, true)]);
+    }
+
+    #[test]
+    fn pushing_a_trigger_or_stick_uses_the_shift_unless_it_was_already_held() {
+        let (base, on) = guide_setup();
+        let mut e = Engine::default();
+        let mut out = Vec::new();
+        e.handle(&base, InputEvent::Axis(Axis::RightTrigger, 1.0), Instant::now(), &mut out);
+        e.handle(&base, InputEvent::Button(Button::Guide, true), Instant::now(), &mut out);
+        e.handle(&on, InputEvent::Button(Button::Guide, false), Instant::now(), &mut out);
+        assert_eq!(pad_guide_events(&out).len(), 2, "a trigger held before Guide doesn't count");
+
+        out.clear();
+        e.handle(&base, InputEvent::Button(Button::Guide, true), Instant::now(), &mut out);
+        e.handle(&on, InputEvent::Axis(Axis::RightX, 0.8), Instant::now(), &mut out);
+        e.handle(&on, InputEvent::Axis(Axis::RightX, 0.0), Instant::now(), &mut out);
+        e.handle(&on, InputEvent::Button(Button::Guide, false), Instant::now(), &mut out);
+        assert!(pad_guide_events(&out).is_empty(), "moving the mouse stick counts");
+    }
+
+    #[test]
+    fn a_layer_can_swallow_the_buttons_it_does_not_set() {
+        let (base, on) = guide_setup();
+        assert_eq!(on.button(Button::South), &ButtonAction::Disabled);
+        assert_eq!(on.button(Button::Guide), &ButtonAction::guide_shift(), "the shift itself stays");
+        assert_eq!(on.button(Button::West), &ButtonAction::ToggleOverlay);
+        assert_eq!(base.button(Button::South), &ButtonAction::Gamepad(Button::South));
     }
 
     #[test]

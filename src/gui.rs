@@ -379,6 +379,7 @@ enum Message {
     /// Which of the game's profiles the layer editor shows the layer over.
     SetCompare(String),
     SetIndicator(IndicatorChoice),
+    SetSwallowUnbound(bool),
     SetIndicatorStyle(OverlayStyle),
     ToggleIndicatorAppearance,
     /// Make the layer set this (a copy of the profile's, to edit).
@@ -836,7 +837,10 @@ mod tests {
     /// The app with a game "Doom" (profiles "Play" and "Menus") shown.
     pub(super) fn with_game() -> App {
         let mut app = app();
-        let mut game = Game::new("Doom", vec![Profile::pc_action("Play"), Profile::desktop("Menus")]);
+        // Guide plain, so the game starts without the Guide layer; tests add their own layers.
+        let mut profiles = vec![Profile::pc_action("Play"), Profile::desktop("Menus")];
+        profiles.iter_mut().for_each(|p| p.set_button(Button::Guide, ButtonAction::Gamepad(Button::Guide)));
+        let mut game = Game::new("Doom", profiles);
         game.rules.push(Rule::new(RuleKind::Executable, "doom.exe", "Play"));
         app.config.games.push(game);
         let _ = app.update(Message::SelectPage(Page::Game(Some("Doom".into()))));
