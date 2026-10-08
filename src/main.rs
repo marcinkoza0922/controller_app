@@ -30,7 +30,7 @@ use anyhow::{Result, bail};
 use ipc::{Request, Response};
 
 const USAGE: &str = "\
-usage: controller_app [command]
+usage: padwight [command]
 
 commands:
   gui              open the settings window (default)

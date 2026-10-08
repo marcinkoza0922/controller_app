@@ -6,15 +6,15 @@ use zbus::blocking::Connection;
 
 use super::{FocusEvent, Notify, identify};
 
-pub const BUS_NAME: &str = "io.github.marcinkoza0922.ControllerApp";
+pub const BUS_NAME: &str = "io.github.marcinkoza0922.Padwight";
 pub const OBJECT_PATH: &str = "/Focus";
-pub const INTERFACE: &str = "io.github.marcinkoza0922.ControllerApp.Focus";
+pub const INTERFACE: &str = "io.github.marcinkoza0922.Padwight.Focus";
 
 struct FocusService {
     notify: Notify,
 }
 
-#[zbus::interface(name = "io.github.marcinkoza0922.ControllerApp.Focus")]
+#[zbus::interface(name = "io.github.marcinkoza0922.Padwight.Focus")]
 impl FocusService {
     /// The pid is a string because the KWin script's callDBus would send JS numbers as doubles.
     fn window_activated(&self, class: String, pid: &str, title: String) {

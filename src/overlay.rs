@@ -1,7 +1,7 @@
 //! On-screen overlay: a keyboard you type on with the controller, and action menus. The
 //! daemon owns the state (`OverlayController` here, `menu::MenuSession`) and routes
 //! controller input to it while something is shown; the overlay process
-//! (`controller_app overlay`) only draws it, on a Wayland layer-shell surface that never
+//! (`padwight overlay`) only draws it, on a Wayland layer-shell surface that never
 //! takes keyboard focus, so typed keys reach the window underneath. The process stays
 //! running as an invisible 1×1 surface between uses so menus appear instantly.
 
@@ -439,7 +439,7 @@ mod ui {
     }
 
     fn namespace() -> String {
-        "controller_app_overlay".into()
+        "padwight_overlay".into()
     }
 
     fn update(state: &mut Overlay, message: Message) -> Task<Message> {

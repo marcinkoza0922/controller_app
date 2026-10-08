@@ -1,10 +1,10 @@
-# controller_app
+# padwight
 
 Background service that remaps gamepad inputs, or turns them into mouse and keyboard input, with an iced settings GUI.
 
 - **daemon**: grabs physical gamepads (evdev) so nothing else sees them, runs the active profile, and emits through virtual uinput devices (an Xbox 360-style pad plus a keyboard and a mouse).
-- **gui**: edits profiles and talks to the daemon over `$XDG_RUNTIME_DIR/controller_app.sock`.
-- **config**: `~/.config/controller_app/config.toml`. The daemon is the only writer while it runs; after editing by hand, run `controller_app reload`. A config from before games existed is converted on first load, and the original is kept as `config.toml.old`. Each profile that an auto-switch rule pointed to becomes a game of its own with those rules; the rest go to General. Macros, menus and info overlays limited to one game's profiles move into that game, and the others become shared.
+- **gui**: edits profiles and talks to the daemon over `$XDG_RUNTIME_DIR/padwight.sock`.
+- **config**: `~/.config/padwight/config.toml`. The daemon is the only writer while it runs; after editing by hand, run `padwight reload`. A config from before games existed is converted on first load, and the original is kept as `config.toml.old`. Each profile that an auto-switch rule pointed to becomes a game of its own with those rules; the rest go to General. Macros, menus and info overlays limited to one game's profiles move into that game, and the others become shared.
 
 ## Games
 
@@ -25,9 +25,9 @@ The library is `packs/*.padpack` in this repository, embedded at build time; see
 ```sh
 cargo install --path .
 mkdir -p ~/.config/systemd/user
-cp dist/controller_app.service ~/.config/systemd/user/
-systemctl --user enable --now controller_app
-controller_app            # open the GUI
+cp dist/padwight.service ~/.config/systemd/user/
+systemctl --user enable --now padwight
+padwight            # open the GUI
 ```
 
 Controllers can be unplugged, reconnected or swapped while it runs. A disconnect releases everything that controller held and closes a menu it had open, and a toast names the controller that left or arrived. The profile stays as it was, so reconnecting the same pad picks up where it left off. If the pad that comes back (or replaces it) lacks something the active profile is marked as needing, such as gyro, the game's first profile that doesn't need it takes over (or the default profile, if none does), with a toast saying so. When a pad with the feature is connected again, the profile you were on returns, unless you've changed it since. The change is made once the controllers have looked the same for two 2-second scans, so a motion sensor that shows up a moment after its pad doesn't make the profile flicker.
@@ -37,7 +37,7 @@ On most desktops (systemd-logind with `uaccess`), your user can already open `/d
 For **gyro** on PlayStation and Switch controllers, also install the motion-sensor rule. Their motion sensors are a separate device that `uaccess` doesn't cover:
 
 ```sh
-sudo cp dist/70-controller-app-motion.rules /etc/udev/rules.d/
+sudo cp dist/70-padwight-motion.rules /etc/udev/rules.d/
 sudo udevadm control --reload && sudo udevadm trigger
 ```
 
@@ -87,7 +87,7 @@ Each pass of a macro ends by releasing anything it still holds. Wrap a repeating
 
 ## On-screen overlay
 
-The "On-screen keyboard" action (also a button on the Overview tab, and `controller_app overlay-toggle`) opens a keyboard over everything, including fullscreen games. It is a Wayland layer-shell surface that never takes keyboard focus, so keys go to the window underneath. While it's open the controller drives it:
+The "On-screen keyboard" action (also a button on the Overview tab, and `padwight overlay-toggle`) opens a keyboard over everything, including fullscreen games. It is a Wayland layer-shell surface that never takes keyboard focus, so keys go to the window underneath. While it's open the controller drives it:
 
 | Control | Action |
 |---|---|
@@ -100,11 +100,11 @@ The "On-screen keyboard" action (also a button on the Overview tab, and `control
 
 New Desktop profiles open it with a long press of Guide. It needs a compositor with layer-shell (KDE Plasma, Sway, Hyprland, …).
 
-The "On-screen numpad" action (or `controller_app numpad-toggle`) opens a smaller pad with the digits 0–9 and a dot, for codes and number fields: move with the D-pad or left stick, A presses a number, X is backspace, Start presses Enter, and holding B closes it. It types the top-row number keys, so it works whatever the Num Lock state. Both pads have their own position, size and colors on the Settings page, and opening one closes the other.
+The "On-screen numpad" action (or `padwight numpad-toggle`) opens a smaller pad with the digits 0–9 and a dot, for codes and number fields: move with the D-pad or left stick, A presses a number, X is backspace, Start presses Enter, and holding B closes it. It types the top-row number keys, so it works whatever the Num Lock state. Both pads have their own position, size and colors on the Settings page, and opening one closes the other.
 
 ## Menus
 
-A game's Menus tab holds on-screen **action menus**. Open one from any button, gesture, combo, trigger or stick direction with the "Open menu…" action (or `controller_app menu <name>`). A menu is on screen only while that input is held, and letting go closes it. To keep a menu up without holding, wrap the action in "Toggle…": the menu then stays until the input is pressed again. Choosing an item taps its action like a button press, so items can be keys, macros, toggles or the keyboard, and the menu stays up for more picks.
+A game's Menus tab holds on-screen **action menus**. Open one from any button, gesture, combo, trigger or stick direction with the "Open menu…" action (or `padwight menu <name>`). A menu is on screen only while that input is held, and letting go closes it. To keep a menu up without holding, wrap the action in "Toggle…": the menu then stays until the input is pressed again. Choosing an item taps its action like a button press, so items can be keys, macros, toggles or the keyboard, and the menu stays up for more picks.
 
 - **Radial**: aim a stick at an item; whatever is aimed at when you let go is chosen.
 - **Directional**: four slots on the D-pad or face buttons.
@@ -147,7 +147,7 @@ Each game's rules (on its Details tab) switch to one of its profiles when the ga
 
 A game's Details tab lists recently focused windows with a one-click "+ Rule". Switching with Guide or the GUI stays in effect until focus changes again. Focusing the settings window never switches profiles.
 
-Focus tracking depends on the desktop; the daemon picks the right one by itself and logs which one it uses (`controller_app status` shows it):
+Focus tracking depends on the desktop; the daemon picks the right one by itself and logs which one it uses (`padwight status` shows it):
 
 - **KDE Plasma** (Wayland or X11): a small KWin script.
 - **Sway**: the compositor's IPC socket (`$SWAYSOCK`).
@@ -167,11 +167,11 @@ Problems that would block saving (unknown keys, missing macros, incomplete combo
 
 ## CLI
 
-`controller_app status | enable | disable | profile <name> | next-profile | reload | overlay-toggle | numpad-toggle | menu <name> | daemon`
+`padwight status | enable | disable | profile <name> | next-profile | reload | overlay-toggle | numpad-toggle | menu <name> | daemon`
 
 `profile <name>` looks in the active game, then General, then the first game with a profile of that name. `menu <name>` opens one of the active game's menus, or a shared one.
 
-When `controller_app daemon` runs in a terminal, it keeps a live status line showing each controller's input and what is being output.
+When `padwight daemon` runs in a terminal, it keeps a live status line showing each controller's input and what is being output.
 
 ## Notes
 

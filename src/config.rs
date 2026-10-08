@@ -2497,7 +2497,7 @@ impl Config {
     pub fn path() -> PathBuf {
         dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("controller_app")
+            .join("padwight")
             .join("config.toml")
     }
 
