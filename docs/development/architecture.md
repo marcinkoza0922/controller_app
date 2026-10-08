@@ -157,7 +157,7 @@ Library packs are read at build time (`build.rs`) and checked by `cargo test` (`
 | `cargo nextest run` | The same tests under nextest. `.config/nextest.toml` has a quiet `agent` profile. |
 | `cargo test -- --ignored rumble` | The end-to-end rumble check. It needs `/dev/uinput`, so it is opt-in. |
 | `python3 scripts/check-project.py` | Checks that the docs match the code: CLI commands, the pack format number, links and anchors, `flatpak/cargo-sources.json` against `Cargo.lock`, and bundled font licenses. CI runs it. |
-| `scripts/kernel-test-docker.sh` | Runs the kernel-level uinput test in a Docker container, so the account needs no `input` group membership. Needs `/dev/uinput` on the host. |
+| `scripts/kernel-test-docker.sh` | Runs the kernel-level tests in a Docker container, so the account needs no `input` group membership: `nothing_stays` (uinput) and `daemon_` (the daemon-exit tests, which also need `/dev/uhid`). |
 | `cargo audit` | Known vulnerabilities in `Cargo.lock`. CI runs it. |
 
 A few conventions to know:

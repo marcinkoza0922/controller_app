@@ -182,6 +182,11 @@ impl PressState {
         }
     }
 
+    /// Forgets every press; the next sync releases each key that was sent.
+    fn release_all(&mut self) {
+        self.held.clear();
+    }
+
     /// Sends each key whose state differs from what was sent, in code order. Stops at the first
     /// failed write, and the rest stay pending for the next call.
     fn sync(&mut self, mut write: impl FnMut(KeyCode, bool) -> Result<()>) -> Result<()> {
@@ -251,6 +256,12 @@ impl VirtualKbm {
 
     pub fn mouse_button(&mut self, b: MouseButton, pressed: bool) -> Result<()> {
         self.press.press(mouse_code(b), pressed);
+        self.sync()
+    }
+
+    /// Releases every key and button, including ones the on-screen keyboard holds.
+    pub fn release_all(&mut self) -> Result<()> {
+        self.press.release_all();
         self.sync()
     }
 

@@ -70,6 +70,8 @@ const FORCE_QUIT_HOLD: Duration = Duration::from_secs(2);
 const GUIDE_TAP: Duration = Duration::from_millis(350);
 
 enum Msg {
+    /// SIGTERM or SIGINT: release what is held, then exit.
+    Stop,
     Input { id: u64, events: Vec<InputEvent> },
     Gone { id: u64 },
     Ipc { req: Request, reply: Sender<Response> },
@@ -339,6 +341,7 @@ fn log_path() -> PathBuf {
 pub fn run() -> Result<()> {
     let config = Config::load()?;
     let (tx, rx) = mpsc::channel();
+    stop_on_signals(tx.clone())?;
     let listener = bind_socket()?;
     let ipc_tx = tx.clone();
     thread::spawn(move || ipc_server(&listener, &ipc_tx));
@@ -393,6 +396,57 @@ pub fn run() -> Result<()> {
     daemon.scan();
     daemon.run(&rx);
     Ok(())
+}
+
+/// The write end of the pipe that SIGTERM and SIGINT wake the daemon through; -1 until set up.
+static WAKE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+
+/// Makes SIGTERM and SIGINT send `Msg::Stop`, so the daemon can release what it holds before it
+/// exits. The handler only writes a byte to a pipe, the one thing a signal handler can do safely;
+/// a thread reads the byte and passes the message on, so the loop wakes straight away.
+fn stop_on_signals(tx: Sender<Msg>) -> Result<()> {
+    let mut fds = [0 as libc::c_int; 2];
+    // SAFETY: pipe2 writes two descriptors into the array it is given.
+    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+        bail!("creating the signal pipe: {}", std::io::Error::last_os_error());
+    }
+    let (read_fd, write_fd) = (fds[0], fds[1]);
+    WAKE.store(write_fd, std::sync::atomic::Ordering::Relaxed);
+    for signal in [libc::SIGTERM, libc::SIGINT] {
+        // SAFETY: a zeroed sigaction is a valid starting point; the fields set below are the ones used.
+        let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+        action.sa_sigaction = on_stop_signal as *const () as libc::sighandler_t;
+        action.sa_flags = libc::SA_RESTART;
+        // SAFETY: the handler stays valid for the life of the process.
+        if unsafe { libc::sigemptyset(&mut action.sa_mask) } != 0 || unsafe { libc::sigaction(signal, &action, std::ptr::null_mut()) } != 0 {
+            bail!("installing the handler for signal {signal}: {}", std::io::Error::last_os_error());
+        }
+    }
+    thread::spawn(move || {
+        let mut byte = [0u8; 1];
+        loop {
+            // SAFETY: reads at most one byte into a local buffer, from the pipe read end we own.
+            let n = unsafe { libc::read(read_fd, byte.as_mut_ptr().cast(), 1) };
+            if n == 1 {
+                if tx.send(Msg::Stop).is_err() {
+                    return;
+                }
+            } else if std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR) {
+                return;
+            }
+        }
+    });
+    Ok(())
+}
+
+/// Signal handler: writes one byte to the wake pipe. Only async-signal-safe calls are made.
+extern "C" fn on_stop_signal(_signal: libc::c_int) {
+    let fd = WAKE.load(std::sync::atomic::Ordering::Relaxed);
+    if fd >= 0 {
+        let byte = 1u8;
+        // SAFETY: write is async-signal-safe. Its result is ignored: a full pipe already wakes the reader.
+        unsafe { libc::write(fd, (&byte as *const u8).cast(), 1) };
+    }
 }
 
 /// Binds the control socket so that only this user can connect: its directory must belong to
@@ -818,12 +872,24 @@ impl Daemon {
             tray::Command::OpenSettings => self.open_settings(),
             tray::Command::Quit => {
                 log!("quit from the tray");
-                if let Some(mut overlay) = self.overlay_process.take() {
-                    let _ = overlay.kill();
-                }
-                std::process::exit(0);
+                self.shut_down();
             }
         }
+    }
+
+    /// Releases every key, button and pad input the daemon holds, then exits. Without this the
+    /// keys stay down until the desktop notices the virtual devices have gone, which not every
+    /// desktop does.
+    fn shut_down(&mut self) -> ! {
+        if let Some(mut overlay) = self.overlay_process.take() {
+            let _ = overlay.kill();
+        }
+        self.release_mappings();
+        if let Err(e) = self.kbm.release_all() {
+            log!("output error at shutdown: {e:#}");
+        }
+        log!("released what was held; exiting");
+        std::process::exit(0);
     }
 
     fn open_settings(&mut self) {
@@ -1201,6 +1267,7 @@ impl Daemon {
 
     fn handle(&mut self, msg: Msg) {
         match msg {
+            Msg::Stop => self.shut_down(),
             Msg::Input { id, events } => self.input(id, events),
             Msg::Gone { id } => self.device_gone(id),
             Msg::Ipc { req, reply } => {
