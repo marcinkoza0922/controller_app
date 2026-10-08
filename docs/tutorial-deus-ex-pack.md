@@ -6,6 +6,8 @@ The pack targets a plain **XInput** pad (an Xbox-style controller). It uses no g
 
 **How to read the "why" notes.** Some notes come from what the pack or the app's code says, and some are my reading of the mapping. Where it's a reading, it's marked *(inferred)*. The pack has a description and an in-game overlay, but no design notes, so check the inferred ones against the game.
 
+**About the screenshots.** They show the finished Deus Ex pack from the library, so each one is the end state of a step. Your own game will look emptier until you've built it. The window is shown without the daemon running, so the live controller drawing shows labels but no button presses.
+
 ## What you'll end up with
 
 One game, **Deus Ex**, with three profiles:
@@ -20,6 +22,8 @@ The game also gets two radial menus (belt and augmentations), a Controls overlay
 
 ## Before you start
 
+![The Overview page, with the Padwight settings window and the sidebar of games](images/overview.png)
+
 1. Make sure the daemon is running (`padwight status` should list your controller). Open the settings window with `padwight`.
 2. Launch Deus Ex once. Padwight needs to see the game to fill in the rule values, and the game's **Details** tab lists the windows it has seen.
 3. If your controller is also visible to Steam, turn off Steam Input for it (see the README's Notes), or the game may see two pads.
@@ -28,6 +32,10 @@ The game also gets two radial menus (belt and augmentations), a Controls overlay
 
 1. In the sidebar, click **+ Add game**, then pick an empty game from the picker (**Empty game from a template…**). Pick the blank option, so you start with no preset mappings.
 2. Name it **Deus Ex**. The game's name becomes the pack's name when you export it.
+
+![The Add a game picker, with the Empty game from a template dropdown and the library's built-in games](images/add-game.png)
+
+*The picker. The dropdown at the top left holds the blank template. The list below it is the library, which is where the finished pack comes from in these screenshots.*
 
 A new game has a **Guide** layer only if one of its profiles holds Guide down, so the layer will appear as you build it (Step 8).
 
@@ -43,6 +51,10 @@ Open the game's **Profiles** tab.
 **Combo window** is set to 120 ms but the pack has **no combos**. A combo makes each of its buttons wait for the rest of the combo, which delays every press. The pack avoids combos on purpose and uses the Guide layer instead (Step 8). The window does nothing here.
 
 ## Step 3: Face buttons and the D-pad
+
+![The Buttons sub-tab of the Deus Ex profile, with the controller drawing labelling each input](images/profile-buttons.png)
+
+*The drawing labels each input with its action: for example "Space" on A, "Right click" on B, and `Menu "Belt" +` on LB.*
 
 On the profile's **Buttons** sub-tab, set each button:
 
@@ -71,6 +83,10 @@ On the profile's **Buttons** sub-tab, set each button:
 
 Bumpers hold a menu open, and the right stick chooses an item. Both menus have ten items.
 
+![The Belt menu on the Menus tab: a radial preview with ten slots and the items list below](images/menus-belt.png)
+
+*The Belt menu, expanded. The preview shows where each slot sits around the right stick, and the list under it sets each slot's key.*
+
 1. **LB → Open menu "Belt"**, **RB → Open menu "Augmentations"** (on the Buttons tab, pick "Open menu…").
 2. On the **Menus** tab, click **Add a menu** for each one:
    - **Belt**: kind **Radial**, stick **Right**. Ten items labelled `Belt 1` through `Belt 9` and `Belt 0`, with keys `1` to `9` and `0`.
@@ -85,6 +101,10 @@ Bumpers hold a menu open, and the right stick chooses an item. Both menus have t
 - **Double-tap gestures on the bumpers** (Step 7) give quick actions that don't open a menu: holster on LB, and no RB gesture.
 
 ## Step 5: The sticks
+
+![The Sticks & triggers sub-tab, showing the left stick set to direction keys W, A, S and D](images/profile-sticks.png)
+
+*The Sticks & triggers sub-tab. The left stick is set to direction keys; the zone and the right stick settings sit below.*
 
 ### Left stick: walking and running
 
@@ -159,6 +179,10 @@ Guide is the shift key. Holding it changes what the other buttons do, so you can
    - **Swallow unbound**: on.
    - **Bindings**: East (B) = force quit, North (Y) = numpad, West (X) = keyboard, RB = screenshot, L3 = start/stop recording, D-pad Up = next profile, D-pad Down = Tab, D-pad Left = Esc, D-pad Right = Enter, RT = left click, LT = right click, right stick = mouse at 1600.
 
+![The Guide layer on the Layers tab: name, the bindings indicator, and the controller drawing with the layer's bindings](images/layers-guide.png)
+
+*The Guide layer. "On screen while on" is set to show its bindings, and "Do nothing while the layer is on" is ticked, which is the swallow-unbound option.*
+
 **Why the Guide design is this way:**
 
 - **Swallow unbound.** While Guide is held, a button the layer doesn't set does nothing. Without this, Guide + A would still press Space and make you jump while you're in the keyboard. *(This is the layer option's stated purpose in the [Guide design notes](development/guide.md).)*
@@ -169,6 +193,10 @@ Guide is the shift key. Holding it changes what the other buttons do, so you can
 **Pack check:** the library check requires every profile's Guide button to hold a layer named Guide, and requires the pack to contain that layer. The Deus Ex pack contains its own copy.
 
 ### The Controls overlay
+
+![The Controls info overlay, expanded: its heading, the Shown options, and a preview of the nine-row grid](images/info-overlays.png)
+
+*The Controls overlay as it appears while Guide is held. The D-pad Down row reads "Drop / throw", the mismatch Step 3 asks you to check in game.*
 
 On the **Info overlays** tab, create one named **Controls**:
 
@@ -195,6 +223,10 @@ Before you go further, test the mapping in the game:
 If something doesn't work, check the rule first (is the executable right?), then the profile is active (the Overview shows which), and then the mapping.
 
 ## Step 10: The gyro profile: "Deus Ex + Gyro"
+
+![The Gyro tab of the base Deus Ex profile, set to Off, with the Can't be played without gyro checkbox unticked](images/profile-gyro.png)
+
+*The base profile's Gyro tab, with gyro off. The steps below set these controls on the copy.*
 
 Gyro is an extra here. The profile works without it, so it doesn't need the requirement.
 
@@ -237,6 +269,10 @@ A flick stick turns the camera by flicking the right stick, instead of holding i
 > **Calibration.** Turn size is the one value that depends on your game settings. Set it with Test turn, and expect to change it if you change the game's sensitivity.
 
 ## Step 12: Describe the pack and export it
+
+![The Details tab: the game's name, the auto-switch rules for DeusEx.exe and Steam App ID 6910, and the on-screen keyboard settings](images/details-rules.png)
+
+*The Details tab. The auto-switch rules are what Padwight matched when you launched the game in "Before you start".*
 
 1. Open the game's **Details** tab.
 2. Fill in:
