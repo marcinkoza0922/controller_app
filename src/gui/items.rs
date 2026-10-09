@@ -72,7 +72,7 @@ pub(super) fn fit_items(menu: &mut Menu) {
         MenuKind::Directional { .. } => {
             menu.items.truncate(4);
             while menu.items.len() < 4 {
-                menu.items.push(MenuItem { label: String::new(), action: ButtonAction::Disabled, button: None });
+                menu.items.push(MenuItem { label: String::new(), action: ButtonAction::Disabled, button: None, weight: 1.0 });
             }
         }
         MenuKind::Grid { columns } => {
@@ -98,9 +98,15 @@ fn menu_kind_row<'a>(mi: usize, menu: &Menu) -> Element<'a, Message> {
         .spacing(8)
         .align_y(Alignment::Center);
     match menu.kind {
-        MenuKind::Radial { stick } => {
+        MenuKind::Radial { stick, boxes } => {
             kind_row = kind_row.push(text("aim with")).push(
-                dropdown([Stick::Left, Stick::Right], Some(stick), move |s| Message::SetMenuKind(mi, MenuKind::Radial { stick: s })).width(150),
+                dropdown([Stick::Left, Stick::Right], Some(stick), move |s| Message::SetMenuKind(mi, MenuKind::Radial { stick: s, boxes }))
+                    .width(150),
+            );
+            kind_row = kind_row.push(
+                checkbox(boxes)
+                    .label("Use boxes")
+                    .on_toggle(move |b| Message::SetMenuKind(mi, MenuKind::Radial { stick, boxes: b })),
             );
         }
         MenuKind::Directional { cluster } => {
@@ -542,7 +548,7 @@ impl App {
                 let mut menu = Menu { name, kind, items: Vec::new(), cancel: None, style: OverlayStyle::default() };
                 fit_items(&mut menu);
                 if menu.items.is_empty() {
-                    menu.items.push(MenuItem { label: "Item 1".into(), action: ButtonAction::Keys(Vec::new()), button: None });
+                    menu.items.push(MenuItem { label: "Item 1".into(), action: ButtonAction::Keys(Vec::new()), button: None, weight: 1.0 });
                 }
                 // New menus go first, right under the button that made them, already open.
                 self.menus_mut().insert(0, menu);
@@ -588,7 +594,7 @@ impl App {
                     && item_limit(m.kind).is_none_or(|limit| m.items.len() < limit)
                 {
                     let label = format!("Item {}", m.items.len() + 1);
-                    m.items.push(MenuItem { label, action: ButtonAction::Keys(Vec::new()), button: None });
+                    m.items.push(MenuItem { label, action: ButtonAction::Keys(Vec::new()), button: None, weight: 1.0 });
                 }
             }
             Message::RemoveMenuItem(i, item) => {
@@ -614,6 +620,11 @@ impl App {
             Message::SetMenuItemButton(i, item, choice) => {
                 if let Some(it) = self.menus_mut().get_mut(i).and_then(|m| m.items.get_mut(item)) {
                     it.button = choice.0;
+                }
+            }
+            Message::SetMenuItemWeight(i, item, weight) => {
+                if let Some(it) = self.menus_mut().get_mut(i).and_then(|m| m.items.get_mut(item)) {
+                    it.weight = weight;
                 }
             }
             Message::InsertMotion(mi, motion) => {
@@ -1180,6 +1191,8 @@ impl App {
         let quick = matches!(menu.kind, MenuKind::Buttons);
         // Items open only other menus of the same kind; radial menus open none.
         let radial = matches!(menu.kind, MenuKind::Radial { .. });
+        // A radial menu's arcs are sized by weight, unless its items are boxes.
+        let weighted = matches!(menu.kind, MenuKind::Radial { boxes: false, .. });
         let item_kinds = if radial { RADIAL_ITEM_KINDS } else { MENU_ITEM_KINDS };
         let item_names = Names {
             macros: names.macros.clone(),
@@ -1204,6 +1217,13 @@ impl App {
             ]
             .spacing(8)
             .align_y(Alignment::Start);
+            if weighted {
+                line = line.push(tooltip(
+                    slider(0.25..=4.0, item.weight, move |w| Message::SetMenuItemWeight(mi, i, w)).step(0.25_f32).width(110),
+                    container(text(format!("Arc size: {:.2}× an equal share", item.weight)).size(13)).padding(8).style(style::tooltip),
+                    tooltip::Position::Top,
+                ));
+            }
             if quick {
                 let mut options = vec![QuickChoice(None)];
                 options.extend(Button::ALL.into_iter().map(|b| QuickChoice(Some(b))));

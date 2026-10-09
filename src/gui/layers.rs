@@ -434,7 +434,7 @@ mod tests {
         app.config.shared.menus.push(Menu {
             name: "Everywhere".into(),
             kind: MenuKind::List,
-            items: vec![MenuItem { label: "x".into(), action: ButtonAction::toggle(ButtonAction::Layer("Hotkeys".into())), button: None }],
+            items: vec![MenuItem { label: "x".into(), action: ButtonAction::toggle(ButtonAction::Layer("Hotkeys".into())), button: None, weight: 1.0 }],
             cancel: None,
             style: OverlayStyle::default(),
         });

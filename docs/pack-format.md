@@ -227,14 +227,14 @@ Menu kinds (`menus.kind`):
 
 | Kind | TOML | Notes |
 |---|---|---|
-| Radial | `[menus.kind.radial] stick = "Right"` | Aim the stick at an item; release to pick it. |
+| Radial | `[menus.kind.radial] stick = "Right"` | Aim the stick at an item; release to pick it. Items are arcs of a circle, each sized by its `weight` (default 1). `boxes = true` puts them in boxes at equal angles instead. |
 | Directional | `[menus.kind.directional] cluster = "DPad"` (or `"FaceButtons"`) | Four slots, up/right/down/left. |
 | List | `kind = "list"` | D-pad or left stick moves; A picks. |
 | Button | `kind = "buttons"` | A list whose items can also be picked with their own `button`. |
 | Carousel | `[menus.kind.carousel] controls = "Bumpers"` | Cycles with `Bumpers`, `Triggers`, `DPad`, `LeftStick` or `RightStick`. |
 | Grid | `[menus.kind.grid] columns = 4` | Up to 6 columns and 6 rows. |
 
-A menu item's `action` can be `open_menu = "Name"`, which opens a submenu. Radial menus can't open submenus. `style` also has `items` and `selected` paints, as in the example above.
+A menu item's `action` can be `open_menu = "Name"`, which opens a submenu. Radial menus can't open submenus. `style` also has `items` and `selected` paints, as in the example above. `corners` (0–1, default 0.4) sets how round boxes, keys and panels are: 0 is square and 1 is a circle wherever the shape allows.
 
 ## Macros
 

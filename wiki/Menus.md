@@ -16,7 +16,7 @@ A quick tap can't hold a menu up. A menu opened by a tap, such as on a double ta
 
 ## Menu kinds
 
-- **Radial**: aim a stick at an item. Whatever is aimed at when you let go is chosen.
+- **Radial**: aim a stick at an item. Whatever is aimed at when you let go is chosen. The items are arcs of a circle, evenly sized unless you change an item's arc size; **Use boxes** puts them in boxes at equal angles instead.
 - **Directional**: four slots, on the D-pad or the face buttons.
 - **List**: move with the D-pad or left stick. A chooses.
 - **Button menu**: a list where each item can also be chosen with its own button.

@@ -22,6 +22,7 @@ mod output;
 mod overlay;
 mod pack;
 mod pad_svg;
+mod radial;
 mod quit;
 mod record;
 mod rumble;

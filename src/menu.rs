@@ -56,6 +56,9 @@ pub struct ItemView {
     /// The keyword the row's action starts with (Macro, Turbo…), drawn as its icon in front of the label.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keyword: Option<Keyword>,
+    /// The share of a radial menu's circle its arc takes.
+    #[serde(default = "crate::config::default_weight")]
+    pub weight: f32,
 }
 
 /// What kind of row an item is. The overlay tints each kind differently, so a row that adds to
@@ -212,7 +215,7 @@ impl MenuSession {
             _ => {}
         }
         if let Some(menu) = self.top(menus).cloned()
-            && let MenuKind::Radial { stick } = menu.kind
+            && let MenuKind::Radial { stick, .. } = menu.kind
         {
             self.aim(&menu, stick);
         }
@@ -277,6 +280,7 @@ impl MenuSession {
                     (None, None) => None,
                 },
                 submenu: matches!(item.action, ButtonAction::OpenMenu(_)),
+                weight: item.weight,
                 buttons: Vec::new(),
                 tone: Tone::Normal,
                 keyword: None,
@@ -296,7 +300,7 @@ impl MenuSession {
             }
         };
         let hint = match menu.kind {
-            MenuKind::Radial { stick } => {
+            MenuKind::Radial { stick, .. } => {
                 let stick = if stick == Stick::Left { "left stick" } else { "right stick" };
                 format!("Aim the {stick} · {close}")
             }
@@ -425,7 +429,7 @@ impl MenuSession {
             return None;
         }
         match menu.kind {
-            MenuKind::Radial { stick } => {
+            MenuKind::Radial { stick, .. } => {
                 let (ax, ay) = stick_axes(stick);
                 if axis == ax || axis == ay {
                     self.aim(menu, stick);
@@ -497,12 +501,13 @@ impl MenuSession {
         if x.hypot(y) < STICK_PRESS {
             return;
         }
-        let n = menu.items.len().max(1);
         // Clockwise from straight up; y is positive down.
         let angle = x.atan2(-y).to_degrees().rem_euclid(360.0);
-        let slice = 360.0 / n as f32;
-        let i = ((angle + slice / 2.0) / slice) as usize % n;
-        if let Some(frame) = self.stack.last_mut() {
+        let weights: Vec<f32> = menu.items.iter().map(|item| item.weight).collect();
+        let boxes = matches!(menu.kind, MenuKind::Radial { boxes: true, .. });
+        if let Some(i) = crate::radial::index_at(&crate::radial::for_menu(boxes, &weights), angle)
+            && let Some(frame) = self.stack.last_mut()
+        {
             frame.cursor = Some(i);
         }
     }
@@ -686,7 +691,7 @@ mod tests {
     }
 
     fn item(label: &str, action: ButtonAction) -> MenuItem {
-        MenuItem { label: label.into(), action, button: None }
+        MenuItem { label: label.into(), action, button: None, weight: 1.0 }
     }
 
     fn menu(name: &str, kind: MenuKind, items: Vec<MenuItem>) -> Menu {
@@ -717,7 +722,7 @@ mod tests {
 
     #[test]
     fn radial_aims_with_the_stick_and_chooses_on_release() {
-        let menus = [menu("Weapons", MenuKind::Radial { stick: Stick::Right }, numbers(4))];
+        let menus = [menu("Weapons", MenuKind::Radial { stick: Stick::Right, boxes: false }, numbers(4))];
         let mut s = MenuSession::open(&menus, "Weapons", held_by(Button::LeftBumper)).unwrap();
         let now = Instant::now();
         // Right on the stick is the second of four items (1 at the top, clockwise).
@@ -735,7 +740,7 @@ mod tests {
 
     #[test]
     fn radial_released_without_aiming_just_closes_and_trigger_openers_work() {
-        let menus = [menu("W", MenuKind::Radial { stick: Stick::Right }, numbers(8))];
+        let menus = [menu("W", MenuKind::Radial { stick: Stick::Right, boxes: false }, numbers(8))];
         let mut s = MenuSession::open(&menus, "W", held_by(Button::LeftBumper)).unwrap();
         assert_eq!(s.handle(&menus, InputEvent::Button(Button::LeftBumper, false), Instant::now()), Some(MenuOutcome::Close));
 
@@ -904,7 +909,7 @@ mod tests {
     fn submenus_must_match_and_radial_menus_open_none() {
         let menus = [
             menu("List", MenuKind::List, vec![item("Wheel", ButtonAction::OpenMenu("Wheel".into()))]),
-            menu("Wheel", MenuKind::Radial { stick: Stick::Right }, vec![item("Back", ButtonAction::OpenMenu("List".into()))]),
+            menu("Wheel", MenuKind::Radial { stick: Stick::Right, boxes: false }, vec![item("Back", ButtonAction::OpenMenu("List".into()))]),
         ];
         let mut s = MenuSession::open(&menus, "List", held_by(Button::LeftBumper)).unwrap();
         assert_eq!(press(&mut s, &menus, Button::South), None);
@@ -918,7 +923,7 @@ mod tests {
 
     #[test]
     fn toggled_menu_closes_on_the_next_press() {
-        let menus = [menu("W", MenuKind::Radial { stick: Stick::Right }, numbers(4))];
+        let menus = [menu("W", MenuKind::Radial { stick: Stick::Right, boxes: false }, numbers(4))];
         let opener = Opener { buttons: vec![Button::LeftBumper], toggled: true, ..Opener::default() };
         let mut s = MenuSession::open(&menus, "W", opener).unwrap();
         let now = Instant::now();

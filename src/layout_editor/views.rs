@@ -65,11 +65,11 @@ pub(super) fn top_item(row: Top, config: &Config) -> ItemView {
 
 /// A row with a button's chip in front of its label.
 pub(super) fn badged(badge: &str, label: String) -> ItemView {
-    ItemView { label, button: Some(badge.into()), submenu: false, buttons: Vec::new(), tone: Tone::Normal, keyword: None }
+    ItemView { label, button: Some(badge.into()), submenu: false, buttons: Vec::new(), tone: Tone::Normal, keyword: None, weight: 1.0 }
 }
 
 pub(super) fn item(label: String) -> ItemView {
-    ItemView { label, button: None, submenu: false, buttons: Vec::new(), tone: Tone::Normal, keyword: None }
+    ItemView { label, button: None, submenu: false, buttons: Vec::new(), tone: Tone::Normal, keyword: None, weight: 1.0 }
 }
 
 /// A row for a button: its glyph in front of the label.

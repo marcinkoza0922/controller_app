@@ -531,15 +531,18 @@ mod ui {
 /// same thing as a live preview.
 pub mod draw {
     mod log_panel;
+    mod radial;
 
     use std::f32::consts::TAU;
 
     pub use log_panel::log_panel;
 
+    use radial::radial;
+
     use iced::{
         Alignment, Border, Color, Element, Length, Shadow, Vector,
         alignment::{Horizontal, Vertical},
-        widget::{column, container, pin, progress_bar, row, space, stack, text},
+        widget::{column, container, progress_bar, row, space, text},
     };
     use iced::Font;
 
@@ -584,7 +587,12 @@ pub mod draw {
         item_text: Color,
         selected: Color,
         selected_text: Color,
+        /// 0 square .. 1 round, from the style's corners setting.
+        corners: f32,
     }
+
+    /// Panels round to this radius at full corners; their size depends on their content.
+    const PANEL_CORNER: f32 = 40.0;
 
     fn paint(p: &Paint, fallback: [u8; 3]) -> Color {
         let [r, g, b] = p.rgb().unwrap_or(fallback);
@@ -613,6 +621,7 @@ pub mod draw {
                 item_text: f(self.item_text),
                 selected: f(self.selected),
                 selected_text: f(self.selected_text),
+                corners: self.corners,
             }
         }
     }
@@ -634,6 +643,7 @@ pub mod draw {
             item_text: text_on(item),
             selected,
             selected_text: text_on(selected),
+            corners: style.corners,
         }
     }
 
@@ -655,7 +665,7 @@ pub mod draw {
     fn panel_style(c: Colors) -> impl Fn(&iced::Theme) -> container::Style {
         move |_| container::Style {
             background: Some(c.background.into()),
-            border: Border { width: 1.0, radius: 14.0.into(), color: Color { a: 0.15, ..c.background_text } },
+            border: Border { width: 1.0, radius: (c.corners * PANEL_CORNER).into(), color: Color { a: 0.15, ..c.background_text } },
             shadow: Shadow { color: Color { a: 0.35 * c.background.a, ..Color::BLACK }, offset: Vector::new(0.0, 6.0), blur_radius: 18.0 },
             ..container::Style::default()
         }
@@ -677,12 +687,14 @@ pub mod draw {
         Colors { item, item_text: text_on(item), ..c }
     }
 
-    fn cell_style(c: Colors, selected: bool) -> impl Fn(&iced::Theme) -> container::Style {
+    /// An item's box, `height` tall: its corners round by half of that at full corners, so a
+    /// square cell becomes a circle.
+    fn cell_style(c: Colors, selected: bool, height: f32) -> impl Fn(&iced::Theme) -> container::Style {
         move |_| container::Style {
             background: Some(if selected { c.selected } else { c.item }.into()),
             border: Border {
                 width: if selected { 2.0 } else { 1.0 },
-                radius: 9.0.into(),
+                radius: (c.corners * height / 2.0).into(),
                 color: if selected { c.selected_text } else { Color { a: 0.12, ..c.item_text } },
             },
             ..container::Style::default()
@@ -832,12 +844,13 @@ pub mod draw {
                 } else {
                     (c.item, c.item_text, Color { a: 0.12, ..c.item_text })
                 };
+                let round = c.corners * unit / 2.0;
                 let cap = container(text(key.label).font(c.font).size(if selected { label_size + 2.0 } else { label_size } * s).color(fg))
                     .center_x(width)
                     .center_y(unit)
                     .style(move |_| container::Style {
                         background: Some(bg.into()),
-                        border: Border { width: if selected { 2.0 } else { 1.0 }, radius: (7.0 * s).into(), color: border },
+                        border: Border { width: if selected { 2.0 } else { 1.0 }, radius: round.into(), color: border },
                         ..container::Style::default()
                     });
                 line = line.push(cap);
@@ -1058,7 +1071,7 @@ pub mod draw {
             let fg = if selected { c.selected_text } else { c.item_text };
             container(text(label).font(c.font).size(16.0 * s).color(fg))
                 .padding([8.0 * s, 16.0 * s])
-                .style(cell_style(c, selected))
+                .style(cell_style(c, selected, 36.0 * s))
         };
         let body: Element<'a, M> = if o.choices.is_empty() {
             let answers = o.answers.iter().map(|(button, what)| cell(format!("{button}  {what}"), false).into());
@@ -1121,57 +1134,6 @@ pub mod draw {
         (item_text(c, item, &item.label, size, fg), selected)
     }
 
-    fn radial<'a, M: 'a>(m: &MenuView, c: Colors, s: f32) -> Element<'a, M> {
-        let (cell_w, cell_h) = (120.0 * s, 44.0 * s);
-        let n = m.items.len().max(1) as f32;
-        let radius = radial_radius(m.items.len(), 120.0, 44.0) * s;
-        let size = 2.0 * radius + 120.0 * s;
-        let mut layers: Vec<Element<'a, M>> = vec![space().width(size).height(size).into()];
-        for i in 0..m.items.len() {
-            // First item at the top, then clockwise.
-            let angle = i as f32 / n * TAU;
-            let (x, y) = (size / 2.0 + radius * angle.sin(), size / 2.0 - radius * angle.cos());
-            let (label, selected) = item_cell(m, i, c, 15.0 * s);
-            let content = container(label).center_x(cell_w).center_y(cell_h).style(cell_style(c, selected));
-            layers.push(pin(content).x(x - cell_w / 2.0).y(y - cell_h / 2.0).into());
-        }
-        // The middle names the stick that aims the menu.
-        let stick = match m.kind {
-            MenuKind::Radial { stick: crate::config::Stick::Left } => "LS",
-            _ => "RS",
-        };
-        let hub = 48.0 * s;
-        let center = container(text(stick).font(c.font).size(16.0 * s).color(c.item_text))
-            .center_x(hub)
-            .center_y(hub)
-            .style(move |_: &iced::Theme| container::Style {
-                background: Some(c.item.into()),
-                border: Border { width: 1.0, radius: (hub / 2.0).into(), color: Color { a: 0.25, ..c.item_text } },
-                ..container::Style::default()
-            });
-        layers.push(pin(center).x(size / 2.0 - hub / 2.0).y(size / 2.0 - hub / 2.0).into());
-        stack(layers).width(size).height(size).into()
-    }
-
-    /// The smallest ring (at least 150) on which neighbouring `w`×`h` cells don't touch.
-    fn radial_radius(n: usize, w: f32, h: f32) -> f32 {
-        let gap = 8.0;
-        let step = TAU / n.max(1) as f32;
-        let overlaps = |r: f32| {
-            (0..n).any(|i| {
-                let (a, b) = (i as f32 * step, (i + 1) as f32 * step);
-                let dx = (r * a.sin() - r * b.sin()).abs();
-                let dy = (r * a.cos() - r * b.cos()).abs();
-                n > 1 && dx < w + gap && dy < h + gap
-            })
-        };
-        let mut r = 150.0;
-        while overlaps(r) && r < 600.0 {
-            r += 5.0;
-        }
-        r
-    }
-
     fn directional<'a, M: 'a>(m: &MenuView, c: Colors, s: f32) -> Element<'a, M> {
         let (w, h) = (190.0 * s, 52.0 * s);
         let slot = |i: usize| -> Element<'a, M> {
@@ -1179,7 +1141,7 @@ pub mod draw {
                 Some(item) => container(item_text(c, item, &item.label, 16.0 * s, c.item_text))
                     .center_x(w)
                     .center_y(h)
-                    .style(cell_style(c, false))
+                    .style(cell_style(c, false, h))
                     .into(),
                 None => space().width(w).height(h).into(),
             }
@@ -1203,7 +1165,7 @@ pub mod draw {
             let mut line = row![].spacing(8.0 * s);
             for i in start..(start + columns).min(m.items.len()) {
                 let (label, selected) = item_cell(m, i, c, 16.0 * s);
-                line = line.push(container(label).center_x(w).center_y(h).padding([0.0, 6.0 * s]).style(cell_style(c, selected)));
+                line = line.push(container(label).center_x(w).center_y(h).padding([0.0, 6.0 * s]).style(cell_style(c, selected, h)));
             }
             rows = rows.push(line);
         }
@@ -1226,7 +1188,7 @@ pub mod draw {
                 _ => item.label.clone(),
             };
             let content = item_text(ci, item, &label, 17.0 * s, fg);
-            container(content).padding([10.0 * s, 14.0 * s]).width(Length::Fill).style(cell_style(ci, selected)).into()
+            container(content).padding([10.0 * s, 14.0 * s]).width(Length::Fill).style(cell_style(ci, selected, 40.0 * s)).into()
         };
         let marker = |t: &'static str| text(t).font(c.font).size(13.0 * s).color(c.muted);
         let start = crate::menu::list_start(cursor, len);
@@ -1266,7 +1228,7 @@ pub mod draw {
                 container(item_text(c, item, &item.label, if big { 19.0 } else { 14.0 } * s, fg))
                     .center_x(if big { 170.0 } else { 120.0 } * s)
                     .center_y(if big { 80.0 } else { 60.0 } * s)
-                    .style(cell_style(c, big)),
+                    .style(cell_style(c, big, if big { 80.0 } else { 60.0 } * s)),
             );
         }
         line.push(arrow("▶")).into()

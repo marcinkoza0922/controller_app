@@ -338,13 +338,30 @@ pub struct MenuItem {
     /// Quick-select button (button menus).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub button: Option<Button>,
+    /// Share of a radial menu's circle this item's arc takes, relative to the others.
+    #[serde(default = "default_weight", skip_serializing_if = "is_default_weight")]
+    pub weight: f32,
+}
+
+pub fn default_weight() -> f32 {
+    1.0
+}
+
+fn is_default_weight(weight: &f32) -> bool {
+    (weight - 1.0).abs() < f32::EPSILON
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MenuKind {
     /// Shown while the opening input is held: aim `stick` at an item, release to choose it.
-    Radial { stick: Stick },
+    /// Items are arcs of a circle (sized by their weights) unless `boxes` puts them in boxes
+    /// at equal angles.
+    Radial {
+        stick: Stick,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        boxes: bool,
+    },
     /// Four slots (up, right, down, left) on the D-pad or face buttons. A slot fires its
     /// action; give it "Open menu" to make it a submenu.
     #[serde(alias = "cascade")]
@@ -366,7 +383,7 @@ pub const GRID_MAX: usize = 6;
 impl MenuKind {
     pub fn default_for(kind: MenuKindTag) -> Self {
         match kind {
-            MenuKindTag::Radial => MenuKind::Radial { stick: Stick::Right },
+            MenuKindTag::Radial => MenuKind::Radial { stick: Stick::Right, boxes: false },
             MenuKindTag::Directional => MenuKind::Directional { cluster: Cluster::DPad },
             MenuKindTag::List => MenuKind::List,
             MenuKindTag::Buttons => MenuKind::Buttons,
@@ -538,10 +555,21 @@ pub struct OverlayStyle {
     pub items: Paint,
     #[serde(default = "default_selected")]
     pub selected: Paint,
+    /// How round the corners are, 0..1: 0 is square, 1 is a circle wherever the shape allows.
+    #[serde(default = "default_corners", skip_serializing_if = "is_default_corners")]
+    pub corners: f32,
 }
 
 fn default_scale() -> f32 {
     1.0
+}
+
+fn default_corners() -> f32 {
+    0.4
+}
+
+fn is_default_corners(corners: &f32) -> bool {
+    (corners - default_corners()).abs() < f32::EPSILON
 }
 
 fn default_background() -> Paint {
@@ -564,6 +592,7 @@ impl Default for OverlayStyle {
             background: default_background(),
             items: default_items(),
             selected: default_selected(),
+            corners: default_corners(),
         }
     }
 }
@@ -2883,6 +2912,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn overlay_corners_and_radial_options_are_optional() {
+        // Older configs have none of the new keys: they load with today's look.
+        let style: OverlayStyle = toml::from_str("position = \"center\"\n").unwrap();
+        assert_eq!(style.corners, 0.4);
+        let item: MenuItem = toml::from_str("label = \"x\"\naction = { keys = [\"KEY_X\"] }\n").unwrap();
+        assert_eq!(item.weight, 1.0);
+        #[derive(Deserialize)]
+        struct Holder {
+            kind: MenuKind,
+        }
+        let holder: Holder = toml::from_str("[kind.radial]\nstick = \"Right\"\n").unwrap();
+        assert_eq!(holder.kind, MenuKind::Radial { stick: Stick::Right, boxes: false });
+        // Defaults are left out of what gets written, so existing files and packs don't change.
+        let written = toml::to_string(&OverlayStyle::default()).unwrap();
+        assert!(!written.contains("corners"), "{written}");
+        assert!(!toml::to_string(&MenuItem { weight: 1.0, ..item.clone() }).unwrap().contains("weight"));
+        assert!(toml::to_string(&MenuKind::Radial { stick: Stick::Right, boxes: true }).unwrap().contains("boxes = true"));
+    }
+
+    #[test]
     fn log_overlays_roundtrip_and_old_configs_load_without_them() {
         let mut config = Config::default();
         let mut log = LogOverlay::new("Inputs");
@@ -3211,12 +3260,12 @@ key_threshold = 0.2
 
     #[test]
     fn menus_roundtrip_and_pick_a_sensible_cancel_button() {
-        let item = |label: &str, action| MenuItem { label: label.into(), action, button: None };
+        let item = |label: &str, action| MenuItem { label: label.into(), action, button: None, weight: 1.0 };
         let shared = Shared {
             menus: vec![
             Menu {
                 name: "Weapons".into(),
-                    kind: MenuKind::Radial { stick: Stick::Right },
+                    kind: MenuKind::Radial { stick: Stick::Right, boxes: false },
                 items: (1..=4).map(|n| item(&format!("Slot {n}"), ButtonAction::Keys(vec![format!("KEY_{n}")]))).collect(),
                 cancel: None,
                 style: OverlayStyle::default(),
@@ -3450,7 +3499,7 @@ key_threshold = 0.2
         game.menus.push(Menu {
             name: "M".into(),
             kind: MenuKind::List,
-            items: vec![MenuItem { label: "x".into(), action: ButtonAction::Macro { name: "Old".into(), repeat: false }, button: None }],
+            items: vec![MenuItem { label: "x".into(), action: ButtonAction::Macro { name: "Old".into(), repeat: false }, button: None, weight: 1.0 }],
             cancel: None,
             style: OverlayStyle::default(),
         });

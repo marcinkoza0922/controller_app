@@ -682,7 +682,7 @@ mod tests {
         Menu {
             name: name.into(),
             kind: MenuKind::List,
-            items: items.into_iter().map(|action| MenuItem { label: "x".into(), action, button: None }).collect(),
+            items: items.into_iter().map(|action| MenuItem { label: "x".into(), action, button: None, weight: 1.0 }).collect(),
             cancel: None,
             style: OverlayStyle::default(),
         }

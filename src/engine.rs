@@ -2611,7 +2611,7 @@ mod tests {
         let menu = Menu {
             name: "M".into(),
             kind: crate::config::MenuKind::List,
-            items: vec![crate::config::MenuItem { label: "x".into(), action: starting(ButtonAction::Keys(vec!["KEY_M".into()])), button: None }],
+            items: vec![crate::config::MenuItem { label: "x".into(), action: starting(ButtonAction::Keys(vec!["KEY_M".into()])), button: None, weight: 1.0 }],
             cancel: None,
             style: Default::default(),
         };

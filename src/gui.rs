@@ -407,6 +407,7 @@ enum Message {
     MoveMenuItem(usize, usize, bool),
     SetMenuItemLabel(usize, usize, String),
     SetMenuItemButton(usize, usize, QuickChoice),
+    SetMenuItemWeight(usize, usize, f32),
     OpenKeyPicker(KeyField, Vec<String>, bool),
     PickerKey(&'static str),
     PickerClear,

@@ -236,9 +236,9 @@ impl SystemMenu {
                 title: "Unsaved changes".into(),
                 kind: crate::config::MenuKind::List,
                 items: vec![
-                    ItemView { label: "Save and close".into(), button: None, submenu: false, buttons: Vec::new(), tone: Tone::Normal, keyword: None },
-                    ItemView { label: "Discard and close".into(), button: None, submenu: false, buttons: Vec::new(), tone: Tone::Normal, keyword: None },
-                    ItemView { label: "Keep editing".into(), button: None, submenu: false, buttons: Vec::new(), tone: Tone::Normal, keyword: None },
+                    ItemView { label: "Save and close".into(), button: None, submenu: false, buttons: Vec::new(), tone: Tone::Normal, keyword: None, weight: 1.0 },
+                    ItemView { label: "Discard and close".into(), button: None, submenu: false, buttons: Vec::new(), tone: Tone::Normal, keyword: None, weight: 1.0 },
+                    ItemView { label: "Keep editing".into(), button: None, submenu: false, buttons: Vec::new(), tone: Tone::Normal, keyword: None, weight: 1.0 },
                 ],
                 selected: Some(self.cursor),
                 crumbs: vec!["Menu".into()],
@@ -248,7 +248,7 @@ impl SystemMenu {
             Screen::Quick => MenuView {
                 title: "Quick Settings".into(),
                 kind: crate::config::MenuKind::List,
-                items: quick_rows(config).into_iter().map(|row| ItemView { label: label(row, config), button: None, submenu: false, buttons: Vec::new(), tone: Tone::Normal, keyword: None }).collect(),
+                items: quick_rows(config).into_iter().map(|row| ItemView { label: label(row, config), button: None, submenu: false, buttons: Vec::new(), tone: Tone::Normal, keyword: None, weight: 1.0 }).collect(),
                 selected: Some(self.cursor),
                 crumbs: vec!["Menu".into()],
                 hint: "◀ ▶ change · A toggle or next · B back".into(),
@@ -432,8 +432,8 @@ pub fn main_page(style: OverlayStyle, cursor: usize) -> MenuView {
         title: "Menu".into(),
         kind: crate::config::MenuKind::List,
         items: vec![
-            ItemView { label: "Quick Settings".into(), button: None, submenu: true, buttons: Vec::new(), tone: Tone::Normal, keyword: None },
-            ItemView { label: "Edit Controls".into(), button: None, submenu: false, buttons: Vec::new(), tone: Tone::Normal, keyword: None },
+            ItemView { label: "Quick Settings".into(), button: None, submenu: true, buttons: Vec::new(), tone: Tone::Normal, keyword: None, weight: 1.0 },
+            ItemView { label: "Edit Controls".into(), button: None, submenu: false, buttons: Vec::new(), tone: Tone::Normal, keyword: None, weight: 1.0 },
         ],
         selected: Some(cursor),
         crumbs: Vec::new(),
