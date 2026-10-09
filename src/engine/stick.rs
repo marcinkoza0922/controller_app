@@ -424,6 +424,39 @@ mod tests {
     }
 
     #[test]
+    fn rings_cover_the_whole_circle_without_gaps() {
+        // Every direction is in some sector, each sector is hit, and each direction is in the
+        // sector whose slice it falls in: no gaps and no overlaps, for each ring size and start.
+        for sectors in [4u8, 8, 12] {
+            for start in [0.0f32, 45.0, 17.5] {
+                let n = usize::from(sectors);
+                let width = 360.0 / n as f32;
+                let direction = |deg: f32| (deg.to_radians().sin(), -deg.to_radians().cos());
+                let sector_at = |deg: f32| {
+                    let (x, y) = direction(deg);
+                    ring_sector_at((x, y), sectors, start, 0.5)
+                };
+
+                // The middle of each sector is in that sector.
+                for i in 0..n {
+                    assert_eq!(sector_at(start + i as f32 * width), Some(i), "{sectors} sectors from {start}: centre of {i}");
+                }
+
+                // A fine sweep: every direction is in a sector, and within half a width of its centre.
+                let mut seen = vec![false; n];
+                for step in 0..3600 {
+                    let deg = step as f32 / 10.0;
+                    let s = sector_at(deg).unwrap_or_else(|| panic!("{sectors} sectors from {start}: no sector at {deg}"));
+                    seen[s] = true;
+                    let off = angle_diff(deg, start + s as f32 * width).abs();
+                    assert!(off <= width / 2.0 + 1e-3, "{sectors} sectors from {start}: {deg} is {off} from sector {s}'s centre");
+                }
+                assert!(seen.iter().all(|&hit| hit), "{sectors} sectors from {start}: a sector is never picked");
+            }
+        }
+    }
+
+    #[test]
     fn ring_needs_the_inner_radius_and_keeps_a_sector_a_little_longer() {
         let p = ring_profile();
         let mut e = Engine::default();
