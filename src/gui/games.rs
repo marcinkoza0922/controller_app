@@ -149,7 +149,8 @@ impl App {
             Message::SetAppearance(appearance) => self.config.appearance = appearance,
             Message::SetNintendoLayout(on) => self.config.nintendo_layout = on,
             Message::SetGameNintendoLayout(choice) => self.game_mut().nintendo_layout = choice,
-            Message::SetGameMenuSounds(sounds) => self.game_mut().menu_sounds = Some(sounds),
+            Message::SetGameSounds(sounds) => self.game_mut().sounds = Some(sounds),
+            Message::ClearGameSounds => self.game_mut().sounds = None,
             Message::PreviewSound(spec) => self.sounds.play(&spec),
             Message::SetKeyboardStyle(style) => self.config.keyboard_style = style,
             Message::SetOverlayFont(font) => self.config.overlay_font = font,
@@ -393,38 +394,19 @@ impl App {
         )
     }
 
-    /// The setup's menu sounds: on or off, and what the cursor's steps and the picks sound like.
-    fn view_menu_sounds(&self) -> Element<'_, Message> {
-        let current = self.game().menu_sounds.unwrap_or_default();
-        let toggle = toggler(current.enabled)
-            .label("Play sounds as the menus are used")
-            .on_toggle(move |on| Message::SetGameMenuSounds(MenuSounds { enabled: on, ..current }));
-        let cue = |label: &'static str, spec: SoundSpec, put: fn(MenuSounds, SoundSpec) -> MenuSounds| {
-            row![
-                text(label).size(14).width(60),
-                dropdown(SoundKind::ALL, Some(spec.kind), move |kind| Message::SetGameMenuSounds(put(current, SoundSpec { kind, ..spec }))).width(120),
-                slider(0.0..=100.0, spec.volume * 100.0, move |v| Message::SetGameMenuSounds(put(current, SoundSpec { volume: v / 100.0, ..spec })))
-                    .step(5.0_f32)
-                    .width(120),
-                text(format!("{:.0}%", spec.volume * 100.0)).size(13).width(44),
-                slider(50.0..=200.0, spec.pitch * 100.0, move |v| Message::SetGameMenuSounds(put(current, SoundSpec { pitch: v / 100.0, ..spec })))
-                    .step(5.0_f32)
-                    .width(120),
-                text(format!("pitch {:.0}%", spec.pitch * 100.0)).size(13).width(100),
-                button(text("Play").size(13)).style(style::secondary).on_press(Message::PreviewSound(spec)),
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center)
-            .into()
-        };
-        let mut rows: Vec<Element<'_, Message>> = vec![toggle.into()];
-        if current.enabled {
-            rows.push(cue("Step", current.step, |m, s| MenuSounds { step: s, ..m }));
-            rows.push(cue("Pick", current.pick, |m, s| MenuSounds { pick: s, ..m }));
+    /// The setup's overlay sounds: each overlay's cues, on or off, and what its steps and picks sound like.
+    fn view_game_sounds(&self) -> Element<'_, Message> {
+        let own = self.game().sounds;
+        let set = own.unwrap_or_default();
+        let mut rows: Vec<Element<'_, Message>> = SoundOverlay::ALL.iter().map(|&overlay| overlay_sounds(set, overlay)).collect();
+        let mut buttons = row![button(text("Turn every sound off").size(13)).style(style::secondary).on_press(Message::SetGameSounds(set.silenced()))].spacing(8);
+        if own.is_some() {
+            buttons = buttons.push(button(text("Use the default sounds").size(13)).style(style::secondary).on_press(Message::ClearGameSounds));
         }
+        rows.push(buttons.into());
         section(
-            "Menu sounds",
-            Some("A faint tick as the cursor moves, and a sound when an item is chosen. Each setup has its own.".into()),
+            "Overlay sounds",
+            Some("A faint sound as the cursor moves in an overlay, and another when something is picked. Each kind of overlay has its own, and each setup has its own set. Any can be turned off.".into()),
             rows,
         )
     }
@@ -740,7 +722,7 @@ impl App {
             ),
             self.view_game_overlays(),
             self.view_game_nintendo_layout(),
-            self.view_menu_sounds(),
+            self.view_game_sounds(),
             self.view_game_motion(),
             section("Pack", None, pack_rows),
         ]
@@ -863,6 +845,56 @@ impl App {
         )
     }
 
+}
+
+/// One overlay's sounds: on or off, and (when on) the step and pick cues.
+fn overlay_sounds<'a>(set: SoundSet, overlay: SoundOverlay) -> Element<'a, Message> {
+    let current = set.get(overlay);
+    let put = move |sounds: OverlaySounds| {
+        let mut next = set;
+        next.set(overlay, sounds);
+        Message::SetGameSounds(next)
+    };
+    let toggle = toggler(current.enabled).label(overlay.label()).on_toggle(move |on| put(OverlaySounds { enabled: on, ..current }));
+    let mut block = column![toggle].spacing(8);
+    if current.enabled {
+        block = block.push(cue_row("Step", current.step, move |step| put(OverlaySounds { step, ..current })));
+        block = block.push(cue_row("Pick", current.pick, move |pick| put(OverlaySounds { pick, ..current })));
+    }
+    block.into()
+}
+
+/// One cue's controls: its label, kind and preview, then its volume, pitch and length.
+fn cue_row<'a>(label: &'static str, spec: SoundSpec, put: impl Fn(SoundSpec) -> Message + Copy + 'a) -> Element<'a, Message> {
+    let knob = |name: &'static str, value: f32, range: std::ops::RangeInclusive<f32>, shown: String, set: fn(&mut SoundSpec, f32)| {
+        row![
+            text(name).size(13).width(50),
+            slider(range, value, move |v| {
+                let mut next = spec;
+                set(&mut next, v);
+                put(next)
+            })
+            .step(5.0_f32)
+            .width(100),
+            text(shown).size(13).width(48),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center)
+    };
+    let head = row![
+        text(label).size(14).width(44),
+        dropdown(SoundKind::ALL, Some(spec.kind), move |kind| put(SoundSpec { kind, ..spec })).width(120),
+        button(text("Play").size(13)).style(style::secondary).on_press(Message::PreviewSound(spec)),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+    let dials = row![
+        knob("volume", spec.volume * 100.0, 0.0..=100.0, format!("{:.0}%", spec.volume * 100.0), |s, v| s.volume = v / 100.0),
+        knob("pitch", spec.pitch * 100.0, 50.0..=200.0, format!("{:.0}%", spec.pitch * 100.0), |s, v| s.pitch = v / 100.0),
+        knob("length", spec.length * 100.0, 50.0..=200.0, format!("{:.0}%", spec.length * 100.0), |s, v| s.length = v / 100.0),
+    ]
+    .spacing(16);
+    column![head, dials].padding(iced::Padding::ZERO.left(44)).spacing(6).into()
 }
 
 #[cfg(test)]

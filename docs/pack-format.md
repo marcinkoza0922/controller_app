@@ -1,6 +1,6 @@
 # `.padpack` format reference
 
-A pack is one game in one file: TOML, in the same shapes the app writes to `config.toml`. This page describes **format 11**, the format the current app writes. For a walkthrough of building one, see [tutorial-deus-ex-pack.md](tutorial-deus-ex-pack.md). The shipped examples are in `packs/`.
+A pack is one game in one file: TOML, in the same shapes the app writes to `config.toml`. This page describes **format 12**, the format the current app writes. For a walkthrough of building one, see [tutorial-deus-ex-pack.md](tutorial-deus-ex-pack.md). The shipped examples are in `packs/`.
 
 The easiest way to write a pack is in the app, then **Details → Export…**. Read this page when you want to edit the file by hand, check a value, or understand what the export produced.
 
@@ -320,18 +320,37 @@ opacity = 0.94
 
 `keyboard_style`, `numpad_style`, `media_style` and `menu_style` use the same shape as an overlay's `style`. `overlay_font` names a bundled font (`assets/fonts`) or an installed family.
 
-## Menu sounds
+## Overlay sounds
 
-`[menu_sounds]` sets the sounds played as a menu's cursor moves and when an item is chosen. Every key is optional.
+`[sounds.<overlay>]` sets the sounds an overlay makes as its cursor moves (`step`) and when something is picked (`pick`). Each overlay has its own table, and every key is optional. A missing overlay uses the defaults.
 
 ```toml
-[menu_sounds]
-enabled = true                # false silences both
-step = { kind = "click", volume = 0.12, pitch = 1.2 }
-pick = { kind = "pop", volume = 0.3, pitch = 1.0 }
+[sounds.menu]
+enabled = true                # false silences both cues
+step = { kind = "knock", volume = 0.07, pitch = 1.0, length = 0.8 }
+pick = { kind = "thud", volume = 0.3, pitch = 0.8, length = 1.4 }
 ```
 
-`kind` is `click`, `pop`, `chime`, `thud` or `crunch`. `volume` is 0–1 and `pitch` is 0.5–2 (an octave either way), both relative to the kind's own sound.
+The overlays are `keyboard` (the on-screen keyboard), `numpad`, `menu` (every menu layout, and the Guide + Start menu), `media` (the media controls) and `offer` (library offers). Input logs and info overlays have no cursor, so they make no sounds.
+
+| `kind` | Sounds like |
+|---|---|
+| `click` | A dry tick. |
+| `tick` | A small, bright wooden tick. |
+| `pop` | A soft bubble that drops in pitch. |
+| `blip` | A short retro bleep that rises. |
+| `chime` | A bright two-note bell. |
+| `clink` | A high metal ping with a rattle. |
+| `thud` | A low, short thump. |
+| `knock` | A knuckle on wood. |
+| `crunch` | A few crisp bursts of noise. |
+| `swish` | A breath of air that brightens as it passes. |
+| `keys` | A key going down on a mechanical keyboard. |
+| `typewriter` | A typebar striking paper: a hard strike, a metal ring, and the platen's thud. |
+| `piano` | A piano key struck: a warm note that dies away. |
+| `beep` | A clean, flat electronic beep. |
+
+`volume` is 0–1, `pitch` is 0.5–2 (an octave either way) and `length` is 0.5–2 (half as long, or twice as long). All three are relative to the kind's own sound.
 
 ## Overlay motion
 
@@ -361,7 +380,7 @@ The kinds are `keyboard`, `numpad`, `menu` (every menu layout), `media` (the med
 
 ## Versioning
 
-- `format` is an integer. The app writes `11` and reads up to `11`. A pack with a newer `format` is refused with "update the app to import it". Older formats are upgraded when read.
+- `format` is an integer. The app writes `12` and reads up to `12`. A pack with a newer `format` is refused with "update the app to import it". Older formats are upgraded when read.
 - Format history:
   - 2 added layers.
   - 3 added toggles that start on.
@@ -371,8 +390,9 @@ The kinds are `keyboard`, `numpad`, `menu` (every menu layout), `media` (the med
   - 7 added the Guide actions (`screenshot`, `toggle_recording`, `force_quit`), layer indicators with generated bindings, extra info overlays and a delay.
   - 8 moved controller needs from the pack to each profile (`requires`).
   - 9 added the media controls and in-game menu looks (`media_style`, `menu_style`).
-  - 10 added menu sounds, radial arcs and corner rounding (`menu_sounds`).
+  - 10 added menu sounds, radial arcs and corner rounding.
   - 11 added how each overlay moves (`motion`).
+  - 12 replaced the menu sounds with a set of sounds for each overlay (`[sounds.<overlay>]`).
 - Bump `format` only for a breaking change to the shape. Adding an optional key with a default doesn't need it.
 
 ## Checks

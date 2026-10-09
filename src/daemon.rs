@@ -214,6 +214,29 @@ enum Active {
     Settings(SystemMenu),
 }
 
+/// The sounds of the on-screen keyboard or the numpad, whichever is up.
+fn keyboard_sound(layout: Layout) -> sound::SoundOverlay {
+    match layout {
+        Layout::Keyboard => sound::SoundOverlay::Keyboard,
+        Layout::Numpad => sound::SoundOverlay::Numpad,
+    }
+}
+
+/// What a press does on the media controls: a step for the volume and seek, a pick for the
+/// buttons that act.
+fn media_feedback(ev: InputEvent) -> Option<sound::Feedback> {
+    use crate::config::Button;
+    match ev {
+        InputEvent::Button(Button::DpadUp | Button::DpadDown | Button::DpadLeft | Button::DpadRight, true) => {
+            Some(sound::Feedback::Step)
+        }
+        InputEvent::Button(Button::South | Button::North | Button::LeftBumper | Button::RightBumper, true) => {
+            Some(sound::Feedback::Pick)
+        }
+        _ => None,
+    }
+}
+
 /// A device node identity; the inode changes when a node is recreated for a new device.
 type NodeKey = (PathBuf, u64);
 
@@ -581,12 +604,18 @@ impl Daemon {
             self.broadcast_overlay();
         }
         let (mut keyboard_actions, mut changed) = (Vec::new(), false);
+        // A held direction that repeats moves the cursor, and sounds like any other step.
+        let mut repeated_step = None;
         match &mut self.active {
             Some(Active::Keyboard(k)) if k.next_deadline().is_some_and(|d| d <= now) => {
+                let (overlay, before) = (keyboard_sound(k.layout()), k.cursor());
                 (keyboard_actions, changed) = k.tick(now);
+                repeated_step = (k.cursor() != before).then_some(overlay);
             }
             Some(Active::Menu { session, .. }) if session.next_deadline().is_some_and(|d| d <= now) => {
+                let before = session.cursor();
                 changed = session.tick(&self.scope.menus, now);
+                repeated_step = (session.cursor() != before).then_some(sound::SoundOverlay::Menu);
             }
             Some(Active::Media(m)) if m.next_deadline().is_some_and(|d| d <= now) => {
                 m.tick(now);
@@ -596,6 +625,9 @@ impl Daemon {
             }
             Some(Active::Offer(o)) if o.expired(now) => return self.answer_offer(OfferOutcome::No),
             _ => {}
+        }
+        if let Some(overlay) = repeated_step {
+            self.overlay_sound(overlay, Some(sound::Feedback::Step));
         }
         self.apply_keyboard(keyboard_actions);
         if changed {
@@ -1702,10 +1734,16 @@ impl Daemon {
         // Outside any game, General is what a change would land in: keep a copy so the change
         // can move into a new pack instead.
         let general = self.config.active_ref().game.is_none().then(|| self.config.general.clone());
-        let outcome = match &mut self.active {
-            Some(Active::Settings(menu)) => menu.handle(ev, &mut self.config),
-            _ => None,
+        let (outcome, moved) = match &mut self.active {
+            Some(Active::Settings(menu)) => {
+                let before = menu.cursor();
+                let outcome = menu.handle(ev, &mut self.config);
+                (outcome, menu.cursor() != before)
+            }
+            _ => (None, false),
         };
+        let picked = matches!(outcome, Some(SystemOutcome::Changed | SystemOutcome::EditControls | SystemOutcome::Switch(_)));
+        self.overlay_sound(sound::SoundOverlay::Menu, sound::Feedback::of(picked, moved && outcome.is_none()));
         match outcome {
             Some(SystemOutcome::Close) => {
                 self.close_overlay();
@@ -1835,16 +1873,45 @@ impl Daemon {
         }
     }
 
-    /// The cue for a menu input: a pick when something is chosen, a step when the cursor moved.
-    fn menu_sound(&self, sounds: sound::MenuSounds, outcome: &Option<MenuOutcome>, moved: bool) {
-        if !sounds.enabled {
-            return;
+    /// Plays the active game's cue for an input in `overlay`, if it has one.
+    fn overlay_sound(&self, overlay: sound::SoundOverlay, feedback: Option<sound::Feedback>) {
+        if let Some(spec) = feedback.and_then(|f| self.scope.sounds.cue(overlay, f)) {
+            self.sounds.play(&spec);
         }
-        match outcome {
-            Some(MenuOutcome::Choose { .. }) => self.sounds.play(&sounds.pick),
-            None if moved => self.sounds.play(&sounds.step),
-            _ => {}
+    }
+
+    /// Feeds an input to the on-screen keyboard or numpad, and sounds its step or key press.
+    fn keyboard_input(&mut self, id: u64, ev: InputEvent, now: Instant) {
+        let Some(Active::Keyboard(k)) = &mut self.active else { return };
+        let (overlay, before) = (keyboard_sound(k.layout()), k.cursor());
+        let actions = k.handle(ev, now);
+        let picked = actions.iter().any(|a| matches!(a, OverlayAction::Key(_, true)));
+        let feedback = sound::Feedback::of(picked, k.cursor() != before);
+        self.overlay_sound(overlay, feedback);
+        self.log_keyboard(id, ev, &actions);
+        self.apply_keyboard(actions);
+    }
+
+    /// Feeds an input to the media controls, and sounds it. Returns whether they close.
+    fn media_input(&mut self, ev: InputEvent, now: Instant) -> bool {
+        let Some(Active::Media(m)) = &mut self.active else { return false };
+        let outcome = m.handle(ev, now);
+        if outcome.is_none() {
+            self.overlay_sound(sound::SoundOverlay::Media, media_feedback(ev));
         }
+        outcome == Some(MediaOutcome::Close)
+    }
+
+    /// Feeds an input to the library offer, and sounds its step or pick.
+    fn offer_input(&mut self, ev: InputEvent, now: Instant) -> Option<OfferOutcome> {
+        let Some(Active::Offer(o)) = &mut self.active else { return None };
+        let before = o.position();
+        let outcome = o.handle(ev, now);
+        let picked = outcome.is_some() || o.position().0 != before.0;
+        let moved = !picked && o.position() != before;
+        let feedback = sound::Feedback::of(picked, moved);
+        self.overlay_sound(sound::SoundOverlay::Offer, feedback);
+        outcome
     }
 
     /// While the overlay shows something, controller input drives it instead of the mappings.
@@ -1859,17 +1926,14 @@ impl Daemon {
         }
         for ev in events {
             match &mut self.active {
-                Some(Active::Keyboard(k)) => {
-                    let actions = k.handle(ev, now);
-                    self.log_keyboard(id, ev, &actions);
-                    self.apply_keyboard(actions);
-                }
+                Some(Active::Keyboard(_)) => self.keyboard_input(id, ev, now),
                 Some(Active::Menu { session, device }) => {
                     let device = *device;
-                    let (sounds, before) = (self.scope.sounds, session.cursor());
+                    let before = session.cursor();
                     let outcome = session.handle(&self.scope.menus, ev, now);
-                    let moved = session.cursor() != before;
-                    self.menu_sound(sounds, &outcome, moved);
+                    let picked = matches!(outcome, Some(MenuOutcome::Choose { .. }));
+                    let moved = outcome.is_none() && session.cursor() != before;
+                    self.overlay_sound(sound::SoundOverlay::Menu, sound::Feedback::of(picked, moved));
                     match outcome {
                         Some(MenuOutcome::Choose { menu, item, action, close }) => {
                             self.log_menu_choice(id, ev, &action);
@@ -1893,13 +1957,13 @@ impl Daemon {
                         return;
                     }
                 }
-                Some(Active::Media(m)) => {
-                    if m.handle(ev, now) == Some(MediaOutcome::Close) {
+                Some(Active::Media(_)) => {
+                    if self.media_input(ev, now) {
                         return self.close_overlay();
                     }
                 }
-                Some(Active::Offer(o)) => {
-                    if let Some(outcome) = o.handle(ev, now) {
+                Some(Active::Offer(_)) => {
+                    if let Some(outcome) = self.offer_input(ev, now) {
                         return self.answer_offer(outcome);
                     }
                 }

@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use crate::{motion::MotionSet, sound::MenuSounds};
+use crate::{motion::MotionSet, sound::SoundSet};
 
 mod log;
 mod store;
@@ -2351,10 +2351,10 @@ pub struct Game {
     /// `Config::nintendo_layout`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nintendo_layout: Option<bool>,
-    /// Sounds played as the menus' cursor moves and picks, while this game is active; the
+    /// The sounds of each overlay's cursor steps and picks, while this game is active; the
     /// defaults when unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub menu_sounds: Option<MenuSounds>,
+    pub sounds: Option<SoundSet>,
     /// How each overlay moves while this game is active; the global set (`Config::motion`)
     /// applies when unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2382,7 +2382,7 @@ impl Game {
             menu_style: None,
             overlay_font: None,
             nintendo_layout: None,
-            menu_sounds: None,
+            sounds: None,
             motion: None,
         };
         if game.profiles.iter().any(Profile::holds_guide_layer) {
@@ -2581,8 +2581,8 @@ pub struct Scope {
     pub logs: Vec<LogOverlay>,
     /// The game's own (layers are never shared).
     pub layers: Vec<Layer>,
-    /// The active game's menu sounds.
-    pub sounds: MenuSounds,
+    /// The active game's overlay sounds.
+    pub sounds: SoundSet,
 }
 
 /// Like [`Scope`], borrowed: what a game's profiles (or the shared items) can refer to.
@@ -2918,7 +2918,7 @@ impl Config {
             info: s.info.into_iter().cloned().collect(),
             logs: s.logs.into_iter().cloned().collect(),
             layers: s.layers.into_iter().cloned().collect(),
-            sounds: self.active_game().menu_sounds.unwrap_or_default(),
+            sounds: self.active_game().sounds.unwrap_or_default(),
         }
     }
 

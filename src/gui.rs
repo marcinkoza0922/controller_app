@@ -36,7 +36,7 @@ use crate::{
     launchers, library,
     menu::MenuSession,
     pack, pad_svg,
-    sound::{MenuSounds, SoundKind, SoundSpec},
+    sound::{OverlaySounds, SoundKind, SoundOverlay, SoundSet, SoundSpec},
     style,
 };
 
@@ -370,7 +370,10 @@ enum Message {
     SetAppearance(Appearance),
     SetNintendoLayout(bool),
     SetGameNintendoLayout(Option<bool>),
-    SetGameMenuSounds(MenuSounds),
+    /// The shown game's own overlay sounds, replacing its set.
+    SetGameSounds(SoundSet),
+    /// The shown game goes back to the default sounds.
+    ClearGameSounds,
     PreviewSound(SoundSpec),
     NewLog,
     ToggleLog(usize),

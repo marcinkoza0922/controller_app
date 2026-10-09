@@ -1,4 +1,4 @@
-format = 11
+format = 12
 macros = []
 overlay_font = "Rajdhani"
 
@@ -638,10 +638,25 @@ opacity = 0.95
 color = "#7d9a72"
 opacity = 1.0
 
-[menu_sounds]
-enabled = true
-step = { kind = "click", volume = 0.1, pitch = 1.4 }
-pick = { kind = "pop", volume = 0.3, pitch = 1.0 }
+[sounds.keyboard]
+step = { kind = "swish", volume = 0.06, pitch = 0.8 }
+pick = { kind = "thud", volume = 0.28, pitch = 0.6, length = 1.4 }
+
+[sounds.numpad]
+step = { kind = "swish", volume = 0.05, pitch = 0.7 }
+pick = { kind = "thud", volume = 0.26, pitch = 0.6, length = 1.2 }
+
+[sounds.menu]
+step = { kind = "swish", volume = 0.07, pitch = 0.8, length = 1.2 }
+pick = { kind = "thud", volume = 0.3, pitch = 0.55, length = 1.6 }
+
+[sounds.media]
+step = { kind = "swish", volume = 0.05, pitch = 0.9 }
+pick = { kind = "thud", volume = 0.24, pitch = 0.7 }
+
+[sounds.offer]
+step = { kind = "swish", volume = 0.07, pitch = 0.7 }
+pick = { kind = "thud", volume = 0.32, pitch = 0.5, length = 1.8 }
 
 [motion]
 keyboard = "brutal"
