@@ -462,6 +462,39 @@ impl fmt::Display for MenuKindTag {
     }
 }
 
+/// How menus move. Off keeps them still.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MenuMotion {
+    #[default]
+    Off,
+    /// A quick fade-in when a menu opens, and the highlight sliding from item to item.
+    Subtle,
+    /// Subtle, with a little overshoot: the menu settles in and the highlight pops past its place.
+    Playful,
+    /// Subtle, with the items fading in one after another.
+    Stagger,
+}
+
+impl MenuMotion {
+    pub const ALL: [MenuMotion; 4] = [MenuMotion::Off, MenuMotion::Subtle, MenuMotion::Playful, MenuMotion::Stagger];
+
+    pub fn is_off(&self) -> bool {
+        *self == MenuMotion::Off
+    }
+}
+
+impl fmt::Display for MenuMotion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            MenuMotion::Off => "Off",
+            MenuMotion::Subtle => "Subtle",
+            MenuMotion::Playful => "Playful",
+            MenuMotion::Stagger => "Stagger",
+        })
+    }
+}
+
 /// Where on screen an overlay sits, relative to the screen so it suits any size or shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -2639,6 +2672,9 @@ pub struct Config {
     /// Light, dark or the desktop's choice, for the settings window.
     #[serde(default, skip_serializing_if = "Appearance::is_auto")]
     pub appearance: Appearance,
+    /// Small motion in menus: a fade-in when one opens, and the highlight gliding between items.
+    #[serde(default, skip_serializing_if = "MenuMotion::is_off")]
+    pub motion: MenuMotion,
     /// Font of every overlay, menu and keyboard (a bundled or installed family); the system's
     /// own when unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2669,6 +2705,7 @@ impl Default for Config {
             auto_switch: AutoSwitch::default(),
             colourblind_tones: false,
             appearance: Appearance::Auto,
+            motion: MenuMotion::Off,
             gyro_calibration: BTreeMap::new(),
             keyboard_style: OverlayStyle::keyboard(),
             numpad_style: OverlayStyle::numpad(),

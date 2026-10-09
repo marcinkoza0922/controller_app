@@ -75,6 +75,7 @@ impl App {
     /// glyphs are drawn for when none is detected.
     pub(super) fn menu_look(&self) -> crate::overlay::draw::MenuLook {
         crate::overlay::draw::MenuLook {
+            anim: Default::default(),
             colourblind: self.config.colourblind_tones,
             family: self.config.info_glyphs,
             nintendo_layout: self.nintendo_layout(),
@@ -87,6 +88,20 @@ impl App {
             "Menu colours",
             Some("Rows that add to a list are tinted, and rows that remove from one are tinted red. Colour-blind mode uses blue and orange instead, and puts a + or − in front of each row.".into()),
             vec![iced::widget::toggler(self.config.colourblind_tones).label("Colour-blind mode").on_toggle(Message::SetColourblindTones).into()],
+        )
+    }
+
+    /// How menus move: none, or one of the motions in `Motion`.
+    pub(super) fn view_motion_card(&self) -> Element<'_, Message> {
+        section(
+            "Menu motion",
+            Some("A little movement when a menu opens and as the highlight moves. Off by default. Subtle fades menus in and slides the highlight; Playful adds an overshoot; Stagger fades items in one after another.".into()),
+            vec![
+                labeled(
+                    "Motion",
+                    dropdown(MenuMotion::ALL, Some(self.config.motion), Message::SetMotion).width(160).into(),
+                ),
+            ],
         )
     }
 

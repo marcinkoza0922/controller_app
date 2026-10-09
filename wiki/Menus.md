@@ -50,3 +50,11 @@ Each menu is a collapsible card on the Menus tab, with a live preview. Under **A
 Text switches between light and dark to stay readable against the background.
 
 The overlay process stays running, invisibly, between uses, so menus appear immediately.
+
+## Menu motion
+
+Under **Settings → Menu motion** (off by default), menus can move a little. **Subtle** fades a menu in and slides the highlight from item to item. **Playful** adds an overshoot, so the menu settles in and the highlight pops past its place. **Stagger** fades the items in one after another. Motion is global, not per setup.
+
+## Menu sounds
+
+Each setup can play a faint tick as the cursor moves and a different sound when an item is picked. Set them on the setup's **Details** tab, where each sound can be previewed with **Play**.
