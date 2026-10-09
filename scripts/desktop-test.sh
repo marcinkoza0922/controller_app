@@ -46,7 +46,10 @@ for line in lines:
         break
     if seen:
         out.append(line.replace("[general.profiles.", "["))
-print("\n".join(out).replace('name = "Gamepad"', 'name = "Console Pad"', 1))
+text = "\n".join(out).replace('name = "Gamepad"', 'name = "Console Pad"', 1)
+south = '[buttons.South]\ngamepad = "South"'
+assert south in text, "the default Gamepad profile maps South to a gamepad button"
+print(text.replace(south, '[buttons.South]\nkeys = ["KEY_A"]', 1))
 PY
 
 echo "== syncing the checkout to $host"
@@ -75,12 +78,14 @@ bin=$HOME/controller_app/target/release/padwight
 config=$HOME/.config/padwight
 desktop=$1
 
+# The window runs a shell that reads one key and records it, so a pad press shows where it went.
+read_key='read -n1 key; printf %s "$key" > /tmp/desktop-test-key; sleep 120'
 case $desktop in
-gnome) window=kgx; class=org.gnome.Console; tracker="GNOME Shell" ;;
-kde) window=konsole; class=org.kde.konsole; tracker=KWin ;;
-sway) window=foot; class=foot; tracker=Sway ;;
-hyprland) window=kitty; class=kitty; tracker=Hyprland ;;
-labwc) window=foot; class=foot; tracker=wlroots ;;
+gnome) window=kgx; class=org.gnome.Console; tracker="GNOME Shell"; launch=(kgx -- sh -c "$read_key") ;;
+kde) window=konsole; class=org.kde.konsole; tracker=KWin; launch=(konsole -e sh -c "$read_key") ;;
+sway) window=foot; class=foot; tracker=Sway; launch=(foot sh -c "$read_key") ;;
+hyprland) window=kitty; class=kitty; tracker=Hyprland; launch=(kitty sh -c "$read_key") ;;
+labwc) window=foot; class=foot; tracker=wlroots; launch=(foot sh -c "$read_key") ;;
 esac
 
 failures=0
@@ -104,6 +109,22 @@ done
 if [ ! -w /dev/uinput ]; then
     sudo -n chmod 0666 /dev/uinput || { echo "/dev/uinput is not writable and sudo needs a password"; exit 1; }
 fi
+if [ ! -w /dev/uhid ]; then
+    sudo -n chmod 0666 /dev/uhid || { echo "/dev/uhid is not writable and sudo needs a password"; exit 1; }
+fi
+
+# A simulated gamepad, made before the daemon starts so the daemon finds it on its first scan.
+pad=/tmp/desktop-test-pad.fifo
+pad_command() { timeout 3 sh -c "echo $1 > '$pad'" 2>/dev/null; }
+stop_pad() { pad_command quit || true; sleep 1; }
+stop_pad
+rm -f "$pad"
+(setsid nohup python3 "$HOME/controller_app/scripts/fake-pad.py" "$pad" >/tmp/desktop-test-pad.log 2>&1 </dev/null &)
+if eventually grep -q "pad created" /tmp/desktop-test-pad.log; then
+    pass "a simulated gamepad is created through uhid"
+else
+    fail "a simulated gamepad is created through uhid"
+fi
 
 # The daemon makes the config on its first start, and that start would clear setups written before
 # it, so make the config first.
@@ -113,8 +134,12 @@ if [ ! -f "$config/config.toml" ]; then
     eventually log_has "daemon started" || true
     stop_daemon
 fi
-rm -rf "$config/setups/001-desktop-test"
-setup="$config/setups/001-desktop-test"
+# The first setup whose rule matches the window wins, so remove the other setups (this VM is
+# throwaway). The daemon names a setup's folder after the setup, so clear them all.
+for old in "$config"/setups/*; do
+    [ -d "$old" ] && rm -rf "$old"
+done
+setup="$config/setups/001-Desktop test"
 mkdir -p "$setup/profiles"
 printf 'name = "Desktop test"\n\n[[rules]]\nkind = "window_class"\nvalue = "%s"\nprofile = "Console Pad"\n' "$class" >"$setup/setup.toml"
 echo "$PROFILE_B64" | base64 -d >"$setup/profiles/001-Console-Pad.toml"
@@ -122,7 +147,9 @@ echo "$PROFILE_B64" | base64 -d >"$setup/profiles/001-Console-Pad.toml"
 : >/tmp/desktop-test-daemon.log
 (setsid nohup "$bin" daemon >/tmp/desktop-test-daemon.log 2>&1 </dev/null &)
 
-if eventually log_has "focus tracking: focused window ($tracker)"; then
+# The daemon retries the tracker every 10 seconds, so give it a little longer than that.
+tracker_up() { for _ in $(seq 1 40); do log_has "focus tracking: focused window ($tracker)" && return 0; sleep 1; done; return 1; }
+if tracker_up; then
     pass "daemon tracks focus through $tracker"
 else
     fail "daemon tracks focus through $tracker"
@@ -137,7 +164,7 @@ if [ "$desktop" = gnome ]; then
     fi
 fi
 
-(setsid nohup "$window" >/tmp/desktop-test-window.log 2>&1 </dev/null &)
+(setsid nohup "${launch[@]}" >/tmp/desktop-test-window.log 2>&1 </dev/null &)
 if eventually focused_is "$class"; then
     pass "a focused $window window is reported"
 else
@@ -148,6 +175,40 @@ if eventually on_profile "Console Pad"; then
     pass "the rule switches to Console Pad while $window has focus"
 else
     fail "the rule switches to Console Pad while $window has focus"
+fi
+
+# A press is dropped until the daemon has the pad, so press again until the key arrives.
+pressed_key() { [ "$(cat /tmp/desktop-test-key 2>/dev/null)" = a ]; }
+press_until_key() { for _ in $(seq 1 8); do pad_command press; sleep 2; pressed_key && return 0; done; return 1; }
+if press_until_key; then
+    pass "a pad press reaches the focused $window window as the mapped key"
+else
+    fail "a pad press reaches the focused $window window as the mapped key"
+fi
+
+# The on-screen keyboard is a layer-shell surface, which GNOME doesn't have.
+overlay_running() { pgrep -f 'padwight overlay$' >/dev/null; }
+if [ "$desktop" = gnome ]; then
+    echo "SKIP the on-screen overlay (GNOME has no layer-shell)"
+else
+    "$bin" overlay-toggle >/dev/null 2>&1 || true
+    if eventually overlay_running; then
+        sleep 3
+        if overlay_running; then
+            pass "the on-screen overlay opens and stays up"
+        else
+            fail "the on-screen overlay opens and stays up"
+        fi
+    else
+        fail "the on-screen overlay opens and stays up"
+    fi
+    "$bin" overlay-toggle >/dev/null 2>&1 || true
+    # The overlay process stays running and goes back to idle, so the daemon's log is what says it closed.
+    if eventually log_has "on-screen keyboard closed"; then
+        pass "the on-screen overlay closes again"
+    else
+        fail "the on-screen overlay closes again"
+    fi
 fi
 
 pkill -x "$window" 2>/dev/null || true
@@ -164,6 +225,7 @@ else
 fi
 
 stop_daemon
+stop_pad
 rm -rf "$setup"
 echo "== $failures failure(s)"
 exit "$failures"
