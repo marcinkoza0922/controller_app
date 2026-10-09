@@ -227,14 +227,14 @@ pub(super) fn controller_drawing<'a>(
     let mut layers: Vec<Element<'a, Message>> =
         vec![svg(handle).width(pad_svg::WIDTH).height(pad_svg::HEIGHT).opacity(if greyed { 0.3_f32 } else { 1.0 }).into()];
 
-    for o in pad_svg::overlays(input, glyphs) {
+    for o in pad_svg::overlays(input, model, glyphs) {
         let [r, g, b] = o.color;
         let letter = container(text(o.text).size(12).color(Color::from_rgb8(r, g, b)))
             .center_x(24)
             .center_y(20);
         layers.push(pin(letter).x(o.x - 12.0).y(o.y - 10.0).into());
     }
-    for l in pad_svg::place_labels(&labels) {
+    for l in pad_svg::place_labels(&labels, model) {
         let label = text(l.text).size(pad_svg::LABEL_TEXT_SIZE).wrapping(text::Wrapping::None);
         let pill = container(label.color(Color::from_rgb8(0xe6, 0xed, 0xf3)))
             .padding([2, 6])
