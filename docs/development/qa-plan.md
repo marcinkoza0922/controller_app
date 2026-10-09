@@ -7,8 +7,8 @@ What to check beyond `cargo test`, and what a human reviewer should look at. Aut
 | # | Issue | Status |
 |---|---|---|
 | F1 | `README.md` said the pack format is **8**; the code and `docs/pack-format.md` say **9**. | Fixed. Enforced by check A-2. |
-| F2 | The IPC socket fell back to a file in the shared `/tmp` with no permissions set, so the daemon's control socket could be reached by other users. | Fixed. The socket is `0600`, in a directory the daemon checks is owned by this user and sets to `0700`. The `/tmp` fallback now uses a per-user directory. Covered by `daemon::tests::the_control_socket_is_private_to_this_user`. Not yet exercised on a machine without `XDG_RUNTIME_DIR`. |
-| F3 | No CI: nothing ran check, clippy, the tests or the audit automatically. | Fixed in the repo with `.github/workflows/ci.yml`. **Not yet run on GitHub.** The apt package list is a best guess and may need changes on the first run. |
+| F2 | The IPC socket fell back to a file in the shared `/tmp` with no permissions set, so the daemon's control socket could be reached by other users. | Fixed. The socket is `0600`, in a directory the daemon checks is owned by this user and sets to `0700`. The `/tmp` fallback now uses a per-user directory. Covered by `daemon::tests::the_control_socket_is_private_to_this_user` and, without `XDG_RUNTIME_DIR`, by `tests/socket_fallback.rs` (I-9). |
+| F3 | No CI: nothing ran check, clippy, the tests or the audit automatically. | Fixed: `.github/workflows/ci.yml` runs on every pull request. Its first run found a problem in the install check, since fixed. |
 | F4 | Packs might be able to trigger host programs. | Corrected. A pack can't name an arbitrary program. The only host-program paths reachable from a pack are the built-in Screenshot and ToggleRecording actions, which run fixed tools (`grim` or a recorder). No code change; whether an import preview should list these is still a reviewer's call (H-SEC-2). |
 | F5 | `unwrap()` calls on daemon paths could panic and leave the pad grabbed. | Audited. The daemon had one production `unwrap()`, in `release_devices`; it is now a `let ... else`. The remaining production `unwrap`/`expect` calls are invariants or bundled assets: `config.rs` (legacy conversion), `icon.rs` (the bundled icon) and `monitor.rs` (a mutex). |
 | F6 | `scripts/long-files.sh` lists files over 400 lines. | Unchanged. It's a maintainability note, not a defect. |
@@ -16,11 +16,11 @@ What to check beyond `cargo test`, and what a human reviewer should look at. Aut
 
 ## 2. Automated checks
 
-Scripted checks live in `scripts/check-project.py`, and the Rust tests use the commands in `CLAUDE.md`. CI runs all of them (see `.github/workflows/ci.yml`).
+Scripted checks live in `scripts/check-project.py` and `scripts/check-install.sh`, and the Rust tests use the commands in `CLAUDE.md`. CI runs the default tests, clippy, the audit and both scripts. The container tests need `/dev/uinput` and `/dev/uhid`, and run through `scripts/kernel-test-docker.sh`, not in CI.
 
 | # | Check | Status | Where |
 |---|---|---|---|
-| A-0 | CI on push and pull request | Done (not yet run on GitHub) | `.github/workflows/ci.yml` |
+| A-0 | CI on push and pull request | Done | `.github/workflows/ci.yml`: build-and-test, project-checks, install-files, audit |
 | A-1 | CLI commands in the docs exist | Done | `check-project.py`, against the dispatch in `src/main.rs` |
 | A-2 | Pack format number agrees across code and docs | Done | `check-project.py` |
 | A-3 | Links and `#anchors` resolve; GitHub `blob/main` links point at real files and headings | Done | `check-project.py` |
@@ -30,8 +30,8 @@ Scripted checks live in `scripts/check-project.py`, and the Rust tests use the c
 | A-7 | `cargo-sources.json` matches `Cargo.lock` | Done | `check-project.py` |
 | A-8 | Damaged pack and config text is refused or handled without panicking | Done, as a deterministic sweep (truncations, deleted and replaced characters). Not coverage-guided fuzzing; that would need `cargo-fuzz`. | `library::tests::damaged_packs_…`, `config::tests::damaged_configs_…` |
 | A-9 | Engine outputs stay in range | Partly done. Pad-axis outputs are checked to be finite and within -1..=1 over random input. Ring sector coverage is not checked. | `engine::release_tests` |
-| A-10 | No stuck keys, buttons or mouse buttons after releasing everything | Partly done. Engine-level: random input sequences on four profiles, followed by `release_all`, leave nothing held (`engine::release_tests`; checked by breaking `release_all` on purpose). Kernel-level: written (`daemon::kernel_tests::nothing_stays_pressed_in_the_kernel`, ignored, needs `/dev/uinput`). It runs the engine's output through the daemon's `dispatch` into the real virtual keyboard and mouse, reads what the kernel reports, and checks it against an independent count, with an unplug-style release every 50 steps. A write the kernel refuses is no longer dropped: the press state keeps what was not sent, and the daemon's periodic scan sends it again (`output::tests`, which fail when the old error handling is put back). Run in a container with `scripts/kernel-test-docker.sh`, where it passes (twice). It also runs on a host where the account is in the `input` group: `cargo test -- --ignored nothing_stays`.
-| A-11 | Virtual devices and grabs are released when the daemon exits or is killed; keys it holds are released before it exits | Done for SIGTERM, SIGINT, SIGKILL, and the tray's Quit path (the tray is not exercised by the test; it needs a session). `tests/daemon_exit.rs` runs the real daemon against a fake controller made with uhid (`/dev/uhid`, a real HID path; the daemon ignores uinput devices). It holds a key and a mouse button, then stops the daemon. SIGTERM and SIGINT release what the daemon holds before it exits (a handler writes to a pipe, and the loop releases and exits). SIGKILL can't be handled: the test checks only that the grab is released and the virtual devices disappear. Run with `scripts/kernel-test-docker.sh daemon_`. |
+| A-10 | No stuck keys, buttons or mouse buttons after releasing everything | Partly done. Engine-level: random input sequences on four profiles, followed by `release_all`, leave nothing held (`engine::release_tests`; checked by breaking `release_all` on purpose). Kernel-level: written (`daemon::kernel_tests::nothing_stays_pressed_in_the_kernel`, ignored, needs `/dev/uinput`). It runs the engine's output through the daemon's `dispatch` into the real virtual keyboard and mouse, reads what the kernel reports, and checks it against an independent count, with an unplug-style release every 50 steps. A write the kernel refuses is no longer dropped: the press state keeps what was not sent, and the daemon's periodic scan sends it again (`output::tests`, which fail when the old error handling is put back). Run in a container with `scripts/kernel-test-docker.sh`, where it passes (twice). It also runs on a host where the account is in the `input` group: `cargo test -- --ignored nothing_stays`. | | `engine::release_tests`, `daemon::kernel_tests` (container), `output::tests` |
+| A-11 | Virtual devices and grabs are released when the daemon exits or is killed; keys it holds are released before it exits | Done for SIGTERM, SIGINT, SIGKILL, and the tray's Quit path (the tray is not exercised by the test; it needs a session). `tests/daemon_exit.rs` runs the real daemon against a fake controller made with uhid (`/dev/uhid`, a real HID path; the daemon ignores uinput devices). It holds a key and a mouse button, then stops the daemon. SIGTERM and SIGINT release what the daemon holds before it exits (a handler writes to a pipe, and the loop releases and exits). SIGKILL can't be handled: the test checks only that the grab is released and the virtual devices disappear. Run with `scripts/kernel-test-docker.sh daemon_`. | | `tests/daemon_exit.rs` (container) |
 | A-12 | Known vulnerabilities in dependencies | Done in CI. Currently four unmaintained or unsound warnings from transitive crates (for example `ttf-parser`, `lru`) and no vulnerabilities, so the job passes. | `cargo audit` in CI |
 | A-13 | Each bundled font has a license file | Done | `check-project.py` |
 
@@ -124,5 +124,71 @@ These need a person with the controller in hand. Record the values used, so a ch
 | I-6 | Suspend and resume with a pad connected. | The pad comes back and works. |
 | I-7 | Log in and out. Check the service starts at login. | Works. |
 | I-8 | Read the daemon logs (`src/daemon/logs.rs`) after a full session. | No errors or panics. Messages are clear to a user. |
-| I-9 | Without `XDG_RUNTIME_DIR` the socket is private to its user: the directory is 0700 and owned by the user, the socket is 0600, another user is refused, and the daemon refuses a directory it doesn't own | Done, in the container. `tests/socket_fallback.rs` runs the daemon with no runtime dir and checks the modes and ownership; a second user (via `setpriv`) is refused with "Permission denied", after a positive control. It also checks the daemon refuses a fallback directory owned by someone else. Removing the 0600 step makes the first test fail. Run with `scripts/kernel-test-docker.sh socket_fallback`. |
+| I-9 | On a machine without `XDG_RUNTIME_DIR`, start the daemon and check the socket: `stat` on its directory shows `0700`, and on the socket `0600`. Run `padwight status` from another user's shell and check it is refused. | Only this user can reach the daemon (F2). |
 | I-10 | Install files are valid: systemd units, udev rule, desktop entry, metainfo, Flatpak manifest | Done in CI. `scripts/check-install.sh` runs `systemd-analyze verify`, `udevadm verify`, `desktop-file-validate`, `appstreamcli validate` and checks the manifest's required keys. A missing validator is an error. Checked that a broken `command` in the manifest fails. |
+
+## 4. Security review (for a human)
+
+Automated checks can't judge these. Each needs a reviewer to decide what's acceptable.
+
+| # | Question |
+|---|---|
+| H-SEC-1 | **IPC socket (F2).** Fixed for permissions. Should any request be refused by a non-owner even with the socket reachable? Which requests (`SetConfig`, `TestRumble`, …) are most sensitive? |
+| H-SEC-2 | **Pack import (F4).** The only host-program actions a pack can contain are Screenshot and ToggleRecording. Should the import preview list them, so a player sees a pack can take screenshots or record the screen? |
+| H-SEC-3 | **Virtual input.** The app creates a keyboard and mouse that any local program can use. Is that clear to users? |
+| H-SEC-4 | **Flatpak sandbox.** `--device=all` lets the sandbox read and send input on the whole machine. Is the README's warning enough? |
+| H-SEC-5 | **Config file.** The daemon is the only writer while it runs. Is the file written atomically? Are its permissions `0600`? |
+| H-SEC-6 | **Dependencies.** Read the `cargo audit` warnings (four today, all in transitive crates) and the licenses of direct dependencies. |
+
+## 5. Judgement calls for a reviewer
+
+- Are the shipped packs' mappings sensible for the games they cover? The tests only check the format, not whether the mapping is good.
+- Are the defaults right: Gamepad passthrough, the Desktop mouse mapping, the 60 ms combo window, and the turbo range?
+- Does the copy make sense to a new user? Read the GUI text as someone who hasn't seen the app.
+- Is the scope of the wiki right? It repeats the README in several places, and the two should be kept in step (A-4).
+- Which unsupported setups should be documented as unsupported (Sway and Hyprland, the Flatpak focus path, GNOME)?
+
+## 6. Remaining work, in order
+
+Automatable, not yet done:
+
+1. **Idle CPU and log checks (H-7, I-8).** Measure the daemon's CPU use over a few idle seconds, and check its log for panics and output errors at the end of each daemon test.
+2. **Config file permissions (H-SEC-5, partly).** A test that the saved config isn't world-readable. The write is atomic, so only the mode is in question.
+3. **Process-based focus switching (D-partial).** The process-scan backend needs no desktop session: a test can start a dummy process named like a game and check the profile switches and back. KWin, Sway and Hyprland stay manual.
+4. **GUI smoke test (U-partial).** Under Xvfb (not installed here), start the GUI, open each tab, and fail on panics.
+5. **Ring sector coverage (A-9).** A test that the 4, 8 and 12 sector rings cover the full circle with no gaps.
+6. **Controller in the same slot (H-3).** A test with a second, differently named uhid controller replacing the first.
+
+Needs a person or a real session:
+
+7. Tray Quit on a desktop session, and whether libinput releases keys when a virtual keyboard disappears (only relevant to SIGKILL, a crash or a power cut).
+8. The manual sections (3.1 to 3.6 and the rest of 3.7) on the controllers and compositors you have, in this order: H, D, O, G, I, U, T.
+9. The security review (section 4) before the next release, with a second reviewer for H-SEC-1 and H-SEC-2.
+
+## Commands
+
+From `CLAUDE.md`:
+
+```sh
+cargo check --all-targets --message-format=short 2>&1 | head -40
+cargo clippy --all-targets -- -D warnings
+RUST_BACKTRACE=0 cargo nextest run --profile agent --hide-progress-bar --cargo-quiet
+cargo test -- --ignored rumble      # needs /dev/uinput
+```
+
+Project checks, install files, and dependency audit:
+
+```sh
+python3 scripts/check-project.py
+scripts/check-install.sh
+cargo audit
+```
+
+Container tests (need `/dev/uinput` and `/dev/uhid`; run as root in the container):
+
+```sh
+scripts/kernel-test-docker.sh nothing_stays   # A-10, kernel level
+scripts/kernel-test-docker.sh daemon_         # A-11, daemon exit
+scripts/kernel-test-docker.sh hotplug_        # H-2, H-3
+scripts/kernel-test-docker.sh socket_fallback # I-9
+```
