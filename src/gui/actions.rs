@@ -595,12 +595,12 @@ pub(super) fn multi_editor<'a>(
             .align_y(Alignment::Center),
         );
     }
-    col.push(
+    let col = col.push(
         button(text("+ Add output").size(13))
             .style(style::secondary)
             .on_press(with(&|v| v.push(ButtonAction::Keys(Vec::new())))),
-    )
-    .into()
+    );
+    container(col).padding(8).width(Length::Fill).style(style::output_list).into()
 }
 
 /// Text input for evdev key names (without the `KEY_` prefix) that turns red when invalid.
