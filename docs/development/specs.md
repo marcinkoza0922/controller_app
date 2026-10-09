@@ -206,7 +206,8 @@ bumpers, both analog triggers, Select, Start, Guide, both sticks with clicks, an
 Anything beyond that is a **feature**:
 
 - `gyro`: a gyro and accelerometer, as on PlayStation and Switch controllers.
-- Future inputs go here as the app adds them: back paddles, touchpad, extra buttons.
+- `back_paddles`: extra buttons on the back of a controller (Xbox Elite, DualSense Edge, Steam Deck). Detected from the kernel's `BTN_GRIPL`, `BTN_GRIPR`, `BTN_GRIPL2` and `BTN_GRIPR2` codes; the four are `LeftPaddle`, `RightPaddle`, `LeftPaddle2` and `RightPaddle2`. They are inputs only, since the virtual pad is an Xbox 360 pad.
+- Future inputs go here as the app adds them: touchpad, extra buttons.
 
 **Profiles state what they need.** Each profile has `requires = ["gyro"]` when its author says it
 can't be played without that feature (a flick stick setup that turns up and down with gyro). It

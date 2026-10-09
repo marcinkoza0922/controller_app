@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use crate::motion::MotionSet;
 use crate::sound::SoundSet;
 use crate::config::{
-    ButtonAction, Config, Game, GyroMode, Indicator, InfoOverlay, ItemKind, Layer, LogOverlay, Macro, Menu, MacroStep, Origin,
-    OverlayStyle, PackInfo, PackRef, Profile, Rule, Shared, free_name,
+    Button, ButtonAction, Combo, Config, Game, Gestures, GyroMode, Indicator, InfoOverlay, ItemKind, Layer, LogOverlay, Macro,
+    Menu, MacroStep, Origin, OverlayStyle, PackInfo, PackRef, Profile, Rule, Shared, free_name,
 };
 
 /// The pack format this app writes, and the newest it reads. 2 added layers; 3, toggles
@@ -19,8 +19,9 @@ use crate::config::{
 /// with generated bindings, extra info overlays and a delay; 8, profiles stating what
 /// controller features they need (replacing the pack-wide list); 9, the media controls and
 /// in-game menu looks; 10, menu sounds, radial arcs and corner rounding; 11, how each overlay moves;
-/// 12, the sounds of each overlay (replacing the menu sounds).
-pub const FORMAT: u32 = 12;
+/// 12, the sounds of each overlay (replacing the menu sounds); 13, back paddles (their button
+/// names and the `back_paddles` feature).
+pub const FORMAT: u32 = 13;
 pub const EXTENSION: &str = "padpack";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -285,19 +286,31 @@ pub fn dependencies(source: &Game, kind: ItemKind, name: &str, resolves: impl Fn
 /// where. What a profile demands is only what its author declared.
 pub fn features(game: &Game) -> Vec<FeatureUse> {
     let profiles = game.profiles.iter().flat_map(|p| {
-        let uses_gyro = p.gyro.mode != GyroMode::Off;
+        let uses = [
+            (Feature::Gyro, p.gyro.mode != GyroMode::Off),
+            (Feature::BackPaddles, uses_paddles(&p.buttons, &p.gestures, &p.combos)),
+        ];
         Feature::ALL.into_iter().filter_map(move |feature| {
             let required = p.requires.contains(&feature);
-            (required || (feature == Feature::Gyro && uses_gyro))
-                .then(|| FeatureUse { feature, place: format!("profile “{}”", p.name), required })
+            let used = uses.iter().any(|(f, used)| *f == feature && *used);
+            (required || used).then(|| FeatureUse { feature, place: format!("profile “{}”", p.name), required })
         })
     });
-    let layers = game
-        .layers
-        .iter()
-        .filter(|l| l.gyro.as_ref().is_some_and(|g| g.mode != GyroMode::Off))
-        .map(|l| FeatureUse { feature: Feature::Gyro, place: format!("layer “{}”", l.name), required: false });
+    let layers = game.layers.iter().flat_map(|l| {
+        let gyro = l.gyro.as_ref().is_some_and(|g| g.mode != GyroMode::Off);
+        [(Feature::Gyro, gyro), (Feature::BackPaddles, uses_paddles(&l.buttons, &l.gestures, &l.combos))]
+            .into_iter()
+            .filter(|(_, used)| *used)
+            .map(move |(feature, _)| FeatureUse { feature, place: format!("layer “{}”", l.name), required: false })
+    });
     profiles.chain(layers).collect()
+}
+
+/// Whether any buttons, gestures or combos use a back paddle (a set action, not "Disabled").
+fn uses_paddles(buttons: &BTreeMap<Button, ButtonAction>, gestures: &BTreeMap<Button, Gestures>, combos: &[Combo]) -> bool {
+    Button::PADDLES.iter().any(|b| {
+        buttons.get(b).is_some_and(|a| *a != ButtonAction::Disabled) || gestures.contains_key(b)
+    }) || combos.iter().any(|c| c.buttons.iter().any(|b| Button::PADDLES.contains(b)))
 }
 
 impl Pack {
@@ -903,6 +916,28 @@ mod tests {
         // ("Heal" is shared rather than the game's own, so it isn't the source's to copy.)
         let needs = dependencies(&config.games[0], ItemKind::Layer, "Hotkeys", |_, _| false);
         assert_eq!(needs, [(ItemKind::Layer, "Hotkeys".to_string()), (ItemKind::Layer, "Deeper".to_string())]);
+    }
+
+    #[test]
+    fn paddles_are_listed_when_used_and_when_required() {
+        let mut config = setup();
+        let game = &mut config.games[0];
+        game.profiles[0].set_button(Button::LeftPaddle, ButtonAction::Gamepad(Button::South));
+        let paddle = |required| FeatureUse { feature: Feature::BackPaddles, place: "profile “Play”".into(), required };
+        let out = export(game, &config.shared, &draft(game, false));
+        assert!(out.features.contains(&paddle(false)), "a paddle mapping is listed as an undeclared use");
+        assert!(!out.pack.needing(Feature::BackPaddles).contains(&"Play"));
+
+        game.profiles[0].requires = vec![Feature::BackPaddles];
+        let out = export(game, &config.shared, &draft(game, false));
+        assert!(out.features.contains(&paddle(true)));
+        assert_eq!(out.pack.needing(Feature::BackPaddles), ["Play"]);
+
+        // A paddle set to nothing isn't a use.
+        game.profiles[0].requires.clear();
+        game.profiles[0].set_button(Button::LeftPaddle, ButtonAction::Disabled);
+        let out = export(game, &config.shared, &draft(game, false));
+        assert!(!out.features.iter().any(|u| u.feature == Feature::BackPaddles));
     }
 
     #[test]

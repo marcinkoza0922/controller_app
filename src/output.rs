@@ -119,6 +119,7 @@ impl VirtualPad {
                 return self.dpad(b, pressed);
             }
             // The engine turns stick directions into stick deflection; nothing to press.
+            // Paddles aren't on the Xbox pad, so they have no output.
             Button::LeftStickUp
             | Button::LeftStickDown
             | Button::LeftStickLeft
@@ -126,7 +127,11 @@ impl VirtualPad {
             | Button::RightStickUp
             | Button::RightStickDown
             | Button::RightStickLeft
-            | Button::RightStickRight => return Ok(()),
+            | Button::RightStickRight
+            | Button::LeftPaddle
+            | Button::RightPaddle
+            | Button::LeftPaddle2
+            | Button::RightPaddle2 => return Ok(()),
         };
         self.emit(&[key_event(code, pressed)])
     }

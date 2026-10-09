@@ -78,6 +78,20 @@ pub fn is_gamepad(dev: &Device) -> bool {
     has_buttons && has_stick
 }
 
+/// Back paddles (Xbox Elite, DualSense Edge, Steam Deck). The kernel's header defines these
+/// codes, but the evdev crate doesn't, so they're named here.
+const BTN_GRIPL: KeyCode = KeyCode(0x224);
+const BTN_GRIPR: KeyCode = KeyCode(0x225);
+const BTN_GRIPL2: KeyCode = KeyCode(0x226);
+const BTN_GRIPR2: KeyCode = KeyCode(0x227);
+
+/// True if the device reports any back paddle button.
+pub fn has_paddles(dev: &Device) -> bool {
+    dev.supported_keys().is_some_and(|k| {
+        [BTN_GRIPL, BTN_GRIPR, BTN_GRIPL2, BTN_GRIPR2].into_iter().any(|code| k.contains(code))
+    })
+}
+
 /// False for pads whose triggers are only on/off buttons (Switch Pro Controller, Joy-Cons,
 /// many retro-style pads): they report BTN_TL2/BTN_TR2 but no trigger axis.
 pub fn has_analog_triggers(dev: &Device) -> bool {
@@ -345,6 +359,10 @@ fn key_to_button(code: KeyCode, xbox_labels: bool) -> Option<Button> {
         KeyCode::BTN_DPAD_DOWN => Button::DpadDown,
         KeyCode::BTN_DPAD_LEFT => Button::DpadLeft,
         KeyCode::BTN_DPAD_RIGHT => Button::DpadRight,
+        BTN_GRIPL => Button::LeftPaddle,
+        BTN_GRIPR => Button::RightPaddle,
+        BTN_GRIPL2 => Button::LeftPaddle2,
+        BTN_GRIPR2 => Button::RightPaddle2,
         _ => return None,
     })
 }
@@ -428,6 +446,14 @@ mod tests {
         // PlayStation passes through unchanged.
         let s = MotionSample { gyro: [1.0, 2.0, 3.0], accel: [4.0, 5.0, 6.0], dt: 0.1 };
         assert_eq!(MotionFrame::PlayStation.to_standard(s), s);
+    }
+
+    #[test]
+    fn paddle_codes_map_to_the_paddle_buttons() {
+        assert_eq!(key_to_button(BTN_GRIPL, false), Some(Button::LeftPaddle));
+        assert_eq!(key_to_button(BTN_GRIPR, false), Some(Button::RightPaddle));
+        assert_eq!(key_to_button(BTN_GRIPL2, true), Some(Button::LeftPaddle2));
+        assert_eq!(key_to_button(BTN_GRIPR2, true), Some(Button::RightPaddle2));
     }
 
     #[test]

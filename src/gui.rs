@@ -1127,7 +1127,7 @@ mod tests {
     }
 
     pub(super) fn device(name: &str, analog_triggers: bool, ignored: bool) -> ipc::DeviceInfo {
-        ipc::DeviceInfo { name: name.into(), path: String::new(), managed: !ignored, ignored, analog_triggers, rumble: true, gyro: false, family: None }
+        ipc::DeviceInfo { name: name.into(), path: String::new(), managed: !ignored, ignored, analog_triggers, rumble: true, gyro: false, paddles: false, family: None }
     }
 
     pub(super) fn snapshot(buttons: &[Button], right_stick: (f32, f32)) -> InputSnapshot {

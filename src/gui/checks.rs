@@ -172,7 +172,7 @@ pub(super) fn section_has_problem(p: &Profile, tab: ProfileTab, names: &Names) -
         bad(p.button(b)) || p.gestures.get(&b).is_some_and(|g| GestureKind::ALL.iter().any(|k| g.get(*k).is_some_and(bad)))
     };
     match tab {
-        ProfileTab::Buttons => Button::ALL.into_iter().any(button_bad),
+        ProfileTab::Buttons => Button::ALL.into_iter().chain(Button::PADDLES).any(button_bad),
         ProfileTab::Sticks => {
             let dirs = [Stick::Left, Stick::Right].into_iter().flat_map(Button::stick_directions).any(button_bad);
             let zones = [Analog::Stick(Stick::Left), Analog::Stick(Stick::Right), Analog::Trigger(Trigger::Left), Analog::Trigger(Trigger::Right)]
@@ -293,7 +293,7 @@ pub(super) struct Place {
 
 /// The first assignment in a profile that saving rejects.
 fn bad_target(p: &Profile, names: &Names) -> Option<Target> {
-    let mut all: Vec<(Target, &ButtonAction)> = Button::ALL.into_iter().map(|b| (Target::Button(b), p.button(b))).collect();
+    let mut all: Vec<(Target, &ButtonAction)> = Button::ALL.into_iter().chain(Button::PADDLES).map(|b| (Target::Button(b), p.button(b))).collect();
     for (b, gestures) in &p.gestures {
         all.extend(GestureKind::ALL.into_iter().filter_map(|k| gestures.get(k).map(|a| (Target::Gesture(*b, k), a))));
     }

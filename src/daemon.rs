@@ -118,6 +118,8 @@ struct Managed {
     motion: Option<PathBuf>,
     /// Touchpad node of this controller, once found (and taken from the desktop).
     touchpad: Option<PathBuf>,
+    /// Has back paddles (see [`input::has_paddles`]).
+    paddles: bool,
     motion_frame: MotionFrame,
     /// Drift per raw sensor axis (the controller's own frame), subtracted before remapping.
     gyro_bias: [f32; 3],
@@ -199,6 +201,7 @@ struct SeenGamepad {
     name: String,
     analog_triggers: bool,
     rumble: bool,
+    paddles: bool,
 }
 
 /// What the overlay is showing.
@@ -1719,7 +1722,8 @@ impl Daemon {
     fn pad_features(&self) -> Option<Vec<Feature>> {
         (!self.devices.is_empty()).then(|| {
             let gyro = self.devices.values().any(|d| d.motion.is_some()).then_some(Feature::Gyro);
-            gyro.into_iter().collect()
+            let paddles = self.devices.values().any(|d| d.paddles).then_some(Feature::BackPaddles);
+            gyro.into_iter().chain(paddles).collect()
         })
     }
 
@@ -2210,6 +2214,7 @@ impl Daemon {
                 gyro: self.devices.values().any(|d| &d.path == path && d.motion.is_some()),
                 analog_triggers: pad.analog_triggers,
                 rumble: pad.rumble,
+                paddles: pad.paddles,
                 family: self.devices.values().find(|d| &d.path == path).and_then(|d| d.family),
             })
             .collect();
@@ -2304,7 +2309,8 @@ impl Daemon {
             }
             let analog_triggers = input::has_analog_triggers(&dev);
             let rumble = rumble::supports_rumble(&dev);
-            self.gamepads.insert(key, SeenGamepad { name: name.clone(), analog_triggers, rumble });
+            let paddles = input::has_paddles(&dev);
+            self.gamepads.insert(key, SeenGamepad { name: name.clone(), analog_triggers, rumble, paddles });
             if self.config.enabled && !self.config.ignored_devices.contains(&name) {
                 self.manage(path, name, dev);
             }
@@ -2383,6 +2389,7 @@ impl Daemon {
         let parent = hid_parent(&path);
         let family = crate::info::PadFamily::detect(dev.input_id().vendor(), &name);
         let uniq = dev.unique_name().map(str::to_string);
+        let paddles = input::has_paddles(&dev);
         if let Err(e) = dev.grab() {
             log!("cannot grab {name} ({}): {e}", path.display());
             return;
@@ -2418,6 +2425,7 @@ impl Daemon {
             uniq,
             motion: None,
             touchpad: None,
+            paddles,
             motion_frame: MotionFrame::default(),
             gyro_bias: [0.0; 3],
             calibrating: None,

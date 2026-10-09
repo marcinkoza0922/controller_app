@@ -157,6 +157,10 @@ pub fn button_badge(b: Button) -> &'static str {
         Button::RightStickDown => "RS↓",
         Button::RightStickLeft => "RS←",
         Button::RightStickRight => "RS→",
+        Button::LeftPaddle => "LP",
+        Button::RightPaddle => "RP",
+        Button::LeftPaddle2 => "LP2",
+        Button::RightPaddle2 => "RP2",
     }
 }
 

@@ -25,6 +25,12 @@ Buttons pressed together can make an input of their own, such as LB + RB. After 
 
 A button set to *Disabled* works as a modifier and has no time limit.
 
+## Back paddles
+
+Some controllers have extra buttons on the back: Xbox Elite, DualSense Edge and Steam Deck controllers, for example. Their **Back paddles** box sits under the buttons on the Buttons tab. Map them like any other button.
+
+A profile that can't be played without a paddle says so with *Can't be played without back paddles*, the same way gyro works. Players whose controller has no paddles aren't offered that profile, and Guide skips it. Leave the box unticked when the paddles only add extra inputs to a scheme that works without them.
+
 ## Gestures
 
 A button can do something different on a double tap, a triple tap, or a long press. A single tap on a button with gestures fires once padwight is sure there's no second tap. If you hold the button past that moment, its normal action starts at once and continues until you let go.
