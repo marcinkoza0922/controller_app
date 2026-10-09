@@ -89,8 +89,18 @@ pub fn problems(pack: &Pack) -> Vec<String> {
     if game.profiles.iter().any(|p| !p.holds_guide_layer()) {
         problems.push("a profile's Guide button doesn't hold the Guide layer".into());
     }
-    if !game.layers.iter().any(|l| l.name == crate::config::GUIDE_LAYER) {
-        problems.push("has no Guide layer".into());
+    // Holding Guide always gives the system features, so the pack's Guide layer must have all of
+    // the built-in ones (see `Layer::complete_guide`).
+    // Checked on the pack's own layers: `to_game` fills in what they leave out.
+    match pack.layers.iter().find(|l| l.name == crate::config::GUIDE_LAYER) {
+        None => problems.push("has no Guide layer".into()),
+        Some(layer) => {
+            let mut full = layer.clone();
+            full.complete_guide();
+            if full != *layer {
+                problems.push("its Guide layer is missing system features (keyboard, media, screenshot...)".into());
+            }
+        }
     }
     // Players with a plain pad must get something.
     if !pack.profiles.iter().any(|p| p.usable_with(&[])) {

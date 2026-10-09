@@ -134,6 +134,44 @@ indicator_title = "Hold {guide} and press"
 indicator_delay_ms = 250
 swallow_unbound = true
 
+[layers.buttons]
+East = "force_quit"
+LeftStick = "toggle_recording"
+RightBumper = "screenshot"
+LeftBumper = "toggle_media"
+West = "toggle_overlay"
+North = "toggle_numpad"
+DpadUp = "next_profile"
+
+[layers.buttons.DpadRight]
+keys = ["KEY_ENTER"]
+
+[layers.buttons.DpadDown]
+keys = ["KEY_TAB"]
+
+[layers.buttons.DpadLeft]
+keys = ["KEY_ESC"]
+
+[layers.right_stick]
+deadzone = 0.1
+curve = 2.0
+key_threshold = 0.5
+
+[layers.right_stick.action.mouse]
+speed = 1600.0
+
+[layers.left_trigger.action.button]
+threshold = 0.3
+
+[layers.left_trigger.action.button.action]
+mouse = "Right"
+
+[layers.right_trigger.action.button]
+threshold = 0.3
+
+[layers.right_trigger.action.button.action]
+mouse = "Left"
+
 [layers.indicator_style]
 position = "bottom_left"
 scale = 0.8

@@ -1444,6 +1444,18 @@ pub fn combo_key(buttons: &[Button]) -> Vec<Button> {
 }
 
 impl Layer {
+    /// Fills in what this layer leaves unset of the built-in Guide layer: each button it doesn't
+    /// bind, and its triggers and right stick if it has none. What it does set stays.
+    pub fn complete_guide(&mut self) {
+        let built_in = Layer::guide();
+        for (button, action) in built_in.buttons {
+            self.buttons.entry(button).or_insert(action);
+        }
+        self.left_trigger = self.left_trigger.take().or(built_in.left_trigger);
+        self.right_trigger = self.right_trigger.take().or(built_in.right_trigger);
+        self.right_stick = self.right_stick.take().or(built_in.right_stick);
+    }
+
     pub fn new(name: &str) -> Self {
         Layer {
             name: name.into(),
@@ -2411,10 +2423,13 @@ impl Game {
         self.profiles.iter().find(|p| p.name == name)
     }
 
-    /// Adds the default Guide layer unless the game already has a layer of that name.
+    /// Gives the game the Guide layer, so holding Guide always has the system features (the
+    /// on-screen keyboard and numpad, the media controls, screenshots, recording, and so on).
+    /// A game's own Guide layer keeps what it sets and gets the rest of the built-in one.
     pub fn ensure_guide_layer(&mut self) {
-        if !self.layers.iter().any(|l| l.name == GUIDE_LAYER) {
-            self.layers.push(Layer::guide());
+        match self.layers.iter_mut().find(|l| l.name == GUIDE_LAYER) {
+            Some(layer) => layer.complete_guide(),
+            None => self.layers.push(Layer::guide()),
         }
     }
 
@@ -2746,6 +2761,9 @@ impl Config {
         let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         let mut config: Config = toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
         store::load(store::root_of(path), &mut config)?;
+        for game in config.games.iter_mut().chain(std::iter::once(&mut config.general)) {
+            game.ensure_guide_layer();
+        }
         Ok(config)
     }
 
@@ -2757,7 +2775,12 @@ impl Config {
     pub fn save_to(&self, path: &Path) -> Result<()> {
         let root = store::root_of(path);
         std::fs::create_dir_all(root)?;
-        store::save(root, self)?;
+        // Every game is saved with the Guide layer, including ones made in the settings window.
+        let mut config = self.clone();
+        for game in config.games.iter_mut().chain(std::iter::once(&mut config.general)) {
+            game.ensure_guide_layer();
+        }
+        store::save(root, &config)?;
         // Write-then-rename so the daemon never reads a half-written file.
         let tmp = path.with_extension("toml.tmp");
         store::write_private(&tmp, &store::app_settings(self)?)?;
@@ -2975,6 +2998,30 @@ mod tests {
         assert!(!written.contains("corners"), "{written}");
         assert!(!toml::to_string(&MenuItem { weight: 1.0, ..item.clone() }).unwrap().contains("weight"));
         assert!(toml::to_string(&MenuKind::Radial { stick: Stick::Right, boxes: true }).unwrap().contains("boxes = true"));
+    }
+
+    #[test]
+    fn every_game_gets_the_system_features_of_guide() {
+        let built_in = Layer::guide();
+        // A game with no Guide layer gets the whole built-in one.
+        let mut bare = Game::new("Bare", Vec::new());
+        bare.ensure_guide_layer();
+        assert_eq!(bare.layers.iter().find(|l| l.name == GUIDE_LAYER), Some(&built_in));
+        // A game's own Guide layer keeps what it sets, and gets the rest.
+        let mut own = Layer::new(GUIDE_LAYER);
+        own.buttons.insert(Button::East, ButtonAction::Keys(vec!["KEY_Q".into()]));
+        let mut game = Game::new("Own", Vec::new());
+        game.layers = vec![own];
+        game.ensure_guide_layer();
+        let layer = game.layers.iter().find(|l| l.name == GUIDE_LAYER).unwrap();
+        assert_eq!(layer.buttons.get(&Button::East), Some(&ButtonAction::Keys(vec!["KEY_Q".into()])));
+        assert_eq!(layer.buttons.get(&Button::LeftBumper), Some(&ButtonAction::ToggleMedia));
+        assert!(layer.left_trigger.is_some() && layer.right_stick.is_some());
+        // Setting a button to nothing counts as setting it, so it stays off.
+        let mut off = Layer::new(GUIDE_LAYER);
+        off.buttons.insert(Button::LeftBumper, ButtonAction::Disabled);
+        off.complete_guide();
+        assert_eq!(off.buttons.get(&Button::LeftBumper), Some(&ButtonAction::Disabled));
     }
 
     #[test]

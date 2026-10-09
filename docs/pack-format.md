@@ -301,7 +301,7 @@ speed = 1600.0
 
 A layer can override `buttons`, `gestures`, `combos`, `disabled_combos`, `left_stick`, `right_stick`, `left_trigger`, `right_trigger` and `gyro`. Each override replaces the profile's setting for that input only.
 
-**Guide** is special. In a pack, every profile's `Guide` button must hold the layer named `Guide`, and the pack must contain that layer: the library check fails otherwise. The app adds the default Guide layer when it creates a profile that holds it, but importing doesn't add it, so a pack should carry its own copy, as the Deus Ex pack does. The default layer holds the system shortcuts while Guide is down: `+ X` keyboard, `+ Y` numpad, `+ RT` / `+ LT` clicks, `+ Right stick` mouse, `+ D-pad` Enter, Tab and Escape, `+ D-pad Up` next profile, and so on. Its bindings are listed in [the Guide design notes](development/guide.md).
+**Guide** is special. In a pack, every profile's `Guide` button must hold the layer named `Guide`, and the pack must contain that layer: the library check fails otherwise. Every game gets the system shortcuts while Guide is down, whether or not its pack carries them: the app fills in whatever a game's Guide layer leaves unset when it loads, imports or saves a setup. A pack's Guide layer must still carry all of them, so the pack file shows what Guide does, and the library check fails otherwise. The shortcuts: `+ X` keyboard, `+ Y` numpad, `+ LB` media controls, `+ RB` screenshot, `+ Left stick` recording, `+ B` force-quit, `+ RT` / `+ LT` clicks, `+ Right stick` mouse, `+ D-pad` Enter, Tab and Escape, `+ D-pad Up` next profile, and so on. Its bindings are listed in [the Guide design notes](development/guide.md).
 
 ## Keyboard, numpad and font
 

@@ -112,7 +112,7 @@ impl Pack {
 
     /// The game this pack makes, before any clash handling.
     pub fn to_game(&self) -> Game {
-        Game {
+        let mut game = Game {
             name: self.pack.name.clone(),
             pack: self.info(),
             origin: None,
@@ -130,7 +130,9 @@ impl Pack {
             overlay_font: self.overlay_font.clone(),
             nintendo_layout: self.nintendo_layout,
             menu_sounds: self.menu_sounds,
-        }
+        };
+        game.ensure_guide_layer();
+        game
     }
 
     pub fn to_toml(&self) -> Result<String> {
