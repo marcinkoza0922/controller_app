@@ -26,6 +26,8 @@ pub(super) struct Ui<'a> {
     pub(super) live_sticks: Option<[(f32, f32); 2]>,
     /// Whose button glyphs to draw (see `App::glyph_family`).
     pub(super) family: PadFamily,
+    /// Whether face buttons are drawn with the Nintendo layout's labels (see `App::nintendo_layout`).
+    pub(super) nintendo_layout: bool,
     /// Set while editing a layer: the profile shown is the layer over `base`.
     pub(super) layer: Option<LayerMarks<'a>>,
 }
@@ -703,7 +705,7 @@ pub(super) fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<
     if !open {
         let disabled = matches!(p.button(b), ButtonAction::Disabled) && set_gestures.is_empty();
         let passthrough = *p.button(b) == ButtonAction::Gamepad(b) && set_gestures.is_empty();
-        let summary = piece_line(p.button(b).pieces(), ui.family, disabled || passthrough);
+        let summary = piece_line(p.button(b).pieces(), ui.family, ui.nintendo_layout, disabled || passthrough);
         let mut line = row![row_toggle(&b.to_string(), target, false, problem.is_some()), summary]
             .spacing(10)
             .align_y(Alignment::Center);
@@ -712,7 +714,7 @@ pub(super) fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<
             line = line
                 .push(text("│").color(MUTED_COLOR))
                 .push(text(format!("{k}:")).color(MUTED_COLOR))
-                .push(piece_line(a.pieces(), ui.family, false));
+                .push(piece_line(a.pieces(), ui.family, ui.nintendo_layout, false));
         }
         if let Some(problem) = problem {
             line = line.push(space::horizontal()).push(text(format!("⚠ {problem}")).size(12).color(ERROR_COLOR));
@@ -1643,6 +1645,7 @@ impl App {
             any_gyro: self.any_gyro(),
             live_sticks: self.live.as_ref().map(|l| [l.left_stick, l.right_stick]),
             family: self.glyph_family(),
+            nintendo_layout: self.nintendo_layout(),
             layer,
         };
         col.push(view_profile(p, &ui, self.profile_tab)).into()
@@ -1831,7 +1834,7 @@ mod tests {
         assert!(!app.finding, "one press ends find mode");
         assert_eq!((app.game_tab, app.profile_tab, app.found), (GameTab::Profiles, ProfileTab::Buttons, Some(Button::West)));
         let names = Names::default();
-        let ui = Ui { names: &names, expanded: &app.expanded, found: app.found, analog_triggers: true, any_gyro: false, live_sticks: None, family: PadFamily::default(), layer: None };
+        let ui = Ui { names: &names, expanded: &app.expanded, found: app.found, analog_triggers: true, any_gyro: false, live_sticks: None, family: PadFamily::default(), nintendo_layout: false, layer: None };
         assert!(ui.is_open(Target::Button(Button::West)));
         // Presses while not finding don't move the editor.
         let _ = app.update(Message::LiveInput(Some(snapshot(&[Button::West, Button::North], (0.0, 0.0)))));

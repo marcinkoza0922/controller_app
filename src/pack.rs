@@ -51,6 +51,9 @@ pub struct Pack {
     /// The font of this game's overlays, menus and keyboards, if the author set one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub overlay_font: Option<String>,
+    /// Whether this game's button glyphs use the Nintendo layout, if the author set that.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nintendo_layout: Option<bool>,
 }
 
 /// What a pack says about itself.
@@ -121,6 +124,7 @@ impl Pack {
             media_style: self.media_style.clone(),
             menu_style: self.menu_style.clone(),
             overlay_font: self.overlay_font.clone(),
+            nintendo_layout: self.nintendo_layout,
         }
     }
 
@@ -393,6 +397,7 @@ pub fn export(game: &Game, shared: &Shared, info: &PackInfo) -> Export {
         media_style: pack_game.media_style,
         menu_style: pack_game.menu_style,
         overlay_font: pack_game.overlay_font,
+        nintendo_layout: pack_game.nintendo_layout,
     };
     Export { pack, pulled_in, dangling: dangling.into_iter().collect(), features }
 }
@@ -656,6 +661,7 @@ pub fn apply(config: &mut Config, plan: &Plan, choices: &Choices) -> String {
             game.media_style = game.media_style.or_else(|| old.media_style.clone());
             game.menu_style = game.menu_style.or_else(|| old.menu_style.clone());
             game.overlay_font = game.overlay_font.or_else(|| old.overlay_font.clone());
+            game.nintendo_layout = game.nintendo_layout.or(old.nintendo_layout);
             config.games[i] = game;
         }
         None => config.games.push(game),

@@ -3,7 +3,7 @@
 use iced::widget::{checkbox, column, row};
 
 use super::*;
-use crate::config::{InputLogSettings, LogEnd, LogSource};
+use crate::{config::{InputLogSettings, LogEnd, LogSource}, info::Glyphs};
 
 impl fmt::Display for LogEnd {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -135,7 +135,8 @@ impl App {
         }
         let sample = crate::inputlog::Inputs::sample();
         let now = sample.now.unwrap_or_else(std::time::Instant::now);
-        let view = crate::inputlog::log_view(&sample.entries(None), s, &preview_style(&o.style), self.config.info_glyphs, now);
+        let glyphs = Glyphs { family: self.config.info_glyphs, nintendo_layout: self.nintendo_layout() };
+        let view = crate::inputlog::log_view(&sample.entries(None), s, &preview_style(&o.style), glyphs, now);
         rows.push(preview(crate::overlay::draw::log_panel(&view, self.preview_font())));
         column(rows).spacing(12).into()
     }

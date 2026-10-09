@@ -1083,7 +1083,7 @@ impl Daemon {
             values.inputs = self.inputs(now);
         }
         let token_redraw = self.token_redraw(&with_input, &values.inputs, now);
-        let (logs, logs_up) = self.log_frame(now, values.family);
+        let (logs, logs_up) = self.log_frame(now, values.family, values.nintendo_layout);
         self.shows_input = !with_input.is_empty() || logs_up;
         self.log_redraw = self.log_redraw.into_iter().chain(token_redraw).min();
         let mut info: Vec<_> = shown
@@ -1109,6 +1109,7 @@ impl Daemon {
             font: self.config.active_font().map(str::to_string),
             colourblind: self.config.colourblind_tones,
             family: values.family,
+            nintendo_layout: values.nintendo_layout,
         }
     }
 
@@ -1223,6 +1224,7 @@ impl Daemon {
             controller: pad.map(|d| d.name.clone()).unwrap_or_default(),
             layers: self.active_layers(),
             family: pad.and_then(|d| d.family).unwrap_or(self.config.info_glyphs),
+            nintendo_layout: self.config.active_nintendo_layout(),
             system: self.sampler.stats.clone(),
             controller_battery: pad.and_then(|d| d.parent.as_deref()).and_then(crate::info::controller_battery),
             form: crate::info::form_factor(),

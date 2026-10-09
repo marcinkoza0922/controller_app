@@ -1020,7 +1020,7 @@ impl App {
             rows.push(style_editor(&o.style, Rc::new(move |s| Message::SetInfoStyle(i, s))));
         }
         let sample = InfoOverlay { style: preview_style(&o.style), ..o.clone() };
-        let view = crate::info::resolve(&sample, &crate::info::Live::sample(self.config.info_glyphs));
+        let view = crate::info::resolve(&sample, &crate::info::Live::sample(self.config.info_glyphs).with_layout(self.nintendo_layout()));
         rows.push(preview(crate::overlay::draw::info_panel(&view, self.preview_font())));
 
         // The grid: rows of cells, which line up in columns on screen.

@@ -10,6 +10,7 @@ use std::{
 use super::{Daemon, FADE_FRAME, Managed, layered};
 use crate::{
     config::{InfoOverlay, InputLogSettings, LogOverlay, LogSource, OverlayStyle, Profile, Stick, Trigger},
+    info::Glyphs,
     input::InputEvent,
     inputlog::{self, Entry, FiredFrom, Inputs, LogView, Thresholds},
     overlay::OverlayAction,
@@ -93,7 +94,8 @@ impl Daemon {
     /// The latest presses of the controller in use, drawn as the log overlays draw them.
     pub(super) fn feed_view(&self, now: Instant) -> Option<LogView> {
         let dev = self.devices.get(&self.last_active?)?;
-        let view = inputlog::log_view(dev.log.entries(), &feed_settings(), &OverlayStyle::default(), dev.family.unwrap_or(self.config.info_glyphs), now);
+        let glyphs = Glyphs { family: dev.family.unwrap_or(self.config.info_glyphs), nintendo_layout: self.config.active_nintendo_layout() };
+        let view = inputlog::log_view(dev.log.entries(), &feed_settings(), &OverlayStyle::default(), glyphs, now);
         Some(LogView { opacity: 1.0, ..view })
     }
 
@@ -143,7 +145,7 @@ impl Daemon {
 
     /// The log overlays' views (those with lines to show), noting when they next change on
     /// their own. Also returns whether any log overlay is up, even one with nothing in it yet.
-    pub(super) fn log_frame(&mut self, now: Instant, family: crate::info::PadFamily) -> (Vec<LogView>, bool) {
+    pub(super) fn log_frame(&mut self, now: Instant, family: crate::info::PadFamily, swapped: bool) -> (Vec<LogView>, bool) {
         let shown = self.visible_logs(now);
         let mut redraw = self.log_timers.next_redraw(now, FADE_FRAME);
         let views = shown
@@ -155,7 +157,8 @@ impl Daemon {
                     let due = inputlog::next_change(&entries, &s.tracking, life, now, FADE_FRAME);
                     redraw = redraw.into_iter().chain(due).min();
                 }
-                LogView { opacity: *opacity, ..inputlog::log_view(&entries, s, &o.style, family, now) }
+                let glyphs = Glyphs { family, nintendo_layout: swapped };
+                LogView { opacity: *opacity, ..inputlog::log_view(&entries, s, &o.style, glyphs, now) }
             })
             .filter(|v| !v.lines.is_empty())
             .collect();

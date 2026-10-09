@@ -146,6 +146,8 @@ impl App {
             }
             Message::SetInfoGlyphs(family) => self.config.info_glyphs = family,
             Message::SetAppearance(appearance) => self.config.appearance = appearance,
+            Message::SetNintendoLayout(on) => self.config.nintendo_layout = on,
+            Message::SetGameNintendoLayout(choice) => self.game_mut().nintendo_layout = choice,
             Message::SetKeyboardStyle(style) => self.config.keyboard_style = style,
             Message::SetOverlayFont(font) => self.config.overlay_font = font,
             Message::SetColourblindTones(on) => self.config.colourblind_tones = on,
@@ -367,6 +369,42 @@ impl App {
         )
     }
 
+    /// The Nintendo layout's switch: which label each face button shows. The bindings don't move.
+    fn view_nintendo_layout(&self) -> Element<'_, Message> {
+        section(
+            "Button layout",
+            Some(
+                "Swaps A with B and X with Y in the button glyphs, to match prompts that a game draws in the \
+                 Nintendo layout. Only the labels change: each button still does what its binding says. The \
+                 swapped labels carry a swap icon wherever they show here."
+                    .into(),
+            ),
+            vec![toggler(self.config.nintendo_layout).label("Nintendo button layout").on_toggle(Message::SetNintendoLayout).into()],
+        )
+    }
+
+    /// A game's own choice of the Nintendo layout, or the one Settings gives.
+    fn view_game_nintendo_layout(&self) -> Element<'_, Message> {
+        let current = self.game().nintendo_layout;
+        let choice = |label: &'static str, value: Option<bool>| {
+            button(text(label).size(14))
+                .style(style::segment(current == value))
+                .padding([5, 14])
+                .on_press(Message::SetGameNintendoLayout(value))
+        };
+        let settings = if self.config.nintendo_layout { "on" } else { "off" };
+        section(
+            "Button layout",
+            Some(format!("Nintendo layout for this setup's glyphs. Same as Settings is currently {settings}.")),
+            vec![
+                container(row![choice("Same as Settings", None), choice("On", Some(true)), choice("Off", Some(false))].spacing(2))
+                    .padding(3)
+                    .style(style::segments)
+                    .into(),
+            ],
+        )
+    }
+
     pub(super) fn view_settings(&self) -> Element<'_, Message> {
         let glyphs = section(
             "Info overlays",
@@ -389,6 +427,7 @@ impl App {
         );
         column![
             self.view_appearance(),
+            self.view_nintendo_layout(),
             self.view_auto_switch(),
             self.view_font_card(),
             self.view_colour_card(),
@@ -638,6 +677,7 @@ impl App {
                 vec![rules.into()],
             ),
             self.view_game_overlays(),
+            self.view_game_nintendo_layout(),
             section("Pack", None, pack_rows),
         ]
         .spacing(16)

@@ -642,7 +642,7 @@ impl App {
                     ItemKind::Info => {
                         let o = &items.info[i];
                         let sample = InfoOverlay { style: preview_style(&o.style), ..o.clone() };
-                        let view = crate::info::resolve(&sample, &crate::info::Live::sample(self.config.info_glyphs));
+                        let view = crate::info::resolve(&sample, &crate::info::Live::sample(self.config.info_glyphs).with_layout(self.nintendo_layout()));
                         (o.name.clone(), format!("{} rows", o.rows.len()), Some(preview(crate::overlay::draw::info_panel(&view, self.preview_font()))))
                     }
                     ItemKind::Log => {
@@ -650,7 +650,8 @@ impl App {
                         let crate::config::LogSource::Input(s) = &o.source;
                         let sample = crate::inputlog::Inputs::sample();
                         let now = sample.now.unwrap_or_else(std::time::Instant::now);
-                        let view = crate::inputlog::log_view(&sample.entries(None), s, &preview_style(&o.style), self.config.info_glyphs, now);
+                        let glyphs = crate::info::Glyphs { family: self.config.info_glyphs, nintendo_layout: self.nintendo_layout() };
+                        let view = crate::inputlog::log_view(&sample.entries(None), s, &preview_style(&o.style), glyphs, now);
                         (o.name.clone(), format!("input · {} lines", s.lines), Some(preview(crate::overlay::draw::log_panel(&view, self.preview_font()))))
                     }
                     ItemKind::Layer => {

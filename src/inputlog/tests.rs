@@ -6,7 +6,7 @@ use super::{
 };
 use crate::{
     config::{CurrentInput, InputLogSettings, InputTracking, LogEnd, OverlayStyle, TrackedInput},
-    info::PadFamily,
+    info::{Glyphs, PadFamily},
 };
 
 const GAP: Duration = Duration::from_millis(250);
@@ -155,12 +155,12 @@ fn repeats_merge_with_their_average_hold() {
         button(&mut log, Button::South, false, ms(t0, at + hold));
     }
     button(&mut log, Button::East, true, ms(t0, 300));
-    let view = log_view(log.entries(), &InputLogSettings::default(), &OverlayStyle::log(), PadFamily::Xbox, ms(t0, 310));
+    let view = log_view(log.entries(), &InputLogSettings::default(), &OverlayStyle::log(), Glyphs { family: PadFamily::Xbox, nintendo_layout: false }, ms(t0, 310));
     let cells = &view.lines[0].cells;
     assert_eq!((cells[0].count, cells[0].hold_ms, cells[0].held), (3, Some(60), false));
     assert_eq!((cells[1].count, cells[1].hold_ms, cells[1].held), (1, None, true));
     let apart = InputLogSettings { merge_repeats: false, ..InputLogSettings::default() };
-    let view = log_view(log.entries(), &apart, &OverlayStyle::log(), PadFamily::Xbox, ms(t0, 310));
+    let view = log_view(log.entries(), &apart, &OverlayStyle::log(), Glyphs { family: PadFamily::Xbox, nintendo_layout: false }, ms(t0, 310));
     assert_eq!(view.lines[0].cells.len(), 4);
 }
 
@@ -174,11 +174,11 @@ fn log_lines_keep_the_newest_and_fade_after_their_end() {
     }
     let s = InputLogSettings { lines: 3, fade_after: 2.0, ..InputLogSettings::default() };
     let now = ms(t0, 4100);
-    let view = log_view(log.entries(), &s, &OverlayStyle::log(), PadFamily::Xbox, now);
+    let view = log_view(log.entries(), &s, &OverlayStyle::log(), Glyphs { family: PadFamily::Xbox, nintendo_layout: false }, now);
     // Lines ended at 2.05 s (gone at 4.05), 3.05 s and 4.05 s; newest on top.
     assert_eq!(view.lines.len(), 2);
     let bottom = InputLogSettings { newest: LogEnd::Bottom, ..s };
-    let view = log_view(log.entries(), &bottom, &OverlayStyle::log(), PadFamily::Xbox, ms(t0, 3700));
+    let view = log_view(log.entries(), &bottom, &OverlayStyle::log(), Glyphs { family: PadFamily::Xbox, nintendo_layout: false }, ms(t0, 3700));
     assert_eq!(view.lines.len(), 3);
     assert!(view.lines[0].opacity < view.lines[2].opacity, "the oldest line, at the top, is fading");
 }
@@ -192,9 +192,9 @@ fn current_input_shows_the_latest_sequence_until_it_has_stayed() {
     button(&mut log, Button::South, true, ms(t0, 60));
     button(&mut log, Button::South, false, ms(t0, 100));
     let c = CurrentInput::default();
-    let shown = current_input(log.entries(), &c, PadFamily::Xbox, ms(t0, 500));
+    let shown = current_input(log.entries(), &c, PadFamily::Xbox, false, ms(t0, 500));
     assert_eq!(shown.len(), 2);
-    assert!(current_input(log.entries(), &c, PadFamily::Xbox, ms(t0, 1350)).is_empty());
+    assert!(current_input(log.entries(), &c, PadFamily::Xbox, false, ms(t0, 1350)).is_empty());
     let due = next_change(log.entries(), &c.tracking, GAP + Duration::from_millis(c.stay_ms), ms(t0, 500), Duration::from_millis(16));
     assert_eq!(due, Some(ms(t0, 1350) - crate::info::FADE_OUT));
 }
@@ -222,9 +222,9 @@ fn ignored_inputs_are_left_out_and_dont_hold_a_sequence_together() {
     button(&mut log, Button::East, true, ms(t0, 600));
     button(&mut log, Button::East, false, ms(t0, 650));
     let mut s = InputLogSettings::default();
-    assert_eq!(log_view(log.entries(), &s, &OverlayStyle::log(), PadFamily::Xbox, ms(t0, 700)).lines.len(), 1);
+    assert_eq!(log_view(log.entries(), &s, &OverlayStyle::log(), Glyphs { family: PadFamily::Xbox, nintendo_layout: false }, ms(t0, 700)).lines.len(), 1);
     s.tracking.set_tracked(TrackedInput::Stick(Stick::Right), false);
-    let view = log_view(log.entries(), &s, &OverlayStyle::log(), PadFamily::Xbox, ms(t0, 700));
+    let view = log_view(log.entries(), &s, &OverlayStyle::log(), Glyphs { family: PadFamily::Xbox, nintendo_layout: false }, ms(t0, 700));
     assert_eq!(view.lines.len(), 2);
     assert!(view.lines.iter().all(|l| l.cells.len() == 1));
 }
@@ -239,9 +239,9 @@ fn a_long_sequence_keeps_its_newest_inputs() {
     }
     let tracking = InputTracking { max_inputs: 2, ..InputTracking::default() };
     let c = CurrentInput { tracking: tracking.clone(), ..CurrentInput::default() };
-    let shown = current_input(log.entries(), &c, PadFamily::Xbox, ms(t0, 300));
-    let xbox = |b| crate::info::button_glyph(b, PadFamily::Xbox);
+    let shown = current_input(log.entries(), &c, PadFamily::Xbox, false, ms(t0, 300));
+    let xbox = |b| crate::info::button_glyph(b, PadFamily::Xbox, false);
     assert_eq!(shown, [xbox(Button::West), xbox(Button::North)]);
     let s = InputLogSettings { tracking, ..InputLogSettings::default() };
-    assert_eq!(log_view(log.entries(), &s, &OverlayStyle::log(), PadFamily::Xbox, ms(t0, 300)).lines[0].cells.len(), 2);
+    assert_eq!(log_view(log.entries(), &s, &OverlayStyle::log(), Glyphs { family: PadFamily::Xbox, nintendo_layout: false }, ms(t0, 300)).lines[0].cells.len(), 2);
 }

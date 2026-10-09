@@ -74,7 +74,11 @@ impl App {
     /// How menu previews are drawn: the colour-blind setting, and the controller the info
     /// glyphs are drawn for when none is detected.
     pub(super) fn menu_look(&self) -> crate::overlay::draw::MenuLook {
-        crate::overlay::draw::MenuLook { colourblind: self.config.colourblind_tones, family: self.config.info_glyphs }
+        crate::overlay::draw::MenuLook {
+            colourblind: self.config.colourblind_tones,
+            family: self.config.info_glyphs,
+            nintendo_layout: self.nintendo_layout(),
+        }
     }
 
     /// The App settings page's colour card: the tints of added and removed rows.

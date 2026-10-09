@@ -70,6 +70,9 @@ pub struct OverlayFrame {
     /// The controller in use, whose button glyphs menus draw as the info overlays do.
     #[serde(default)]
     pub family: crate::info::PadFamily,
+    /// Whether menus draw their button glyphs in the Nintendo layout.
+    #[serde(default)]
+    pub nintendo_layout: bool,
 }
 
 impl OverlayFrame {
@@ -509,7 +512,11 @@ mod ui {
         match &state.frame.active {
             Some(OverlayView::Keyboard(k)) => layers.push(draw::place(draw::keyboard_panel(k, font), &k.style)),
             Some(OverlayView::Menu(m)) => {
-                let look = draw::MenuLook { colourblind: state.frame.colourblind, family: state.frame.family };
+                let look = draw::MenuLook {
+                    colourblind: state.frame.colourblind,
+                    family: state.frame.family,
+                    nintendo_layout: state.frame.nintendo_layout,
+                };
                 layers.push(draw::place(draw::menu_panel(m, font, look), &m.style));
             }
             Some(OverlayView::Media(m)) => layers.push(draw::place(draw::media_panel(m, font), &m.style)),
@@ -558,6 +565,7 @@ pub mod draw {
     pub struct MenuLook {
         pub colourblind: bool,
         pub family: crate::info::PadFamily,
+        pub nintendo_layout: bool,
     }
 
     #[derive(Clone, Copy)]
@@ -565,6 +573,8 @@ pub mod draw {
         font: Font,
         /// The controller in use, for button glyphs.
         family: crate::info::PadFamily,
+        /// Face buttons drawn with the Nintendo layout's labels.
+        nintendo_layout: bool,
         /// Tints for added and removed rows in colours colour-blind people can tell apart.
         colourblind: bool,
         background: Color,
@@ -594,6 +604,7 @@ pub mod draw {
             Colors {
                 font: self.font,
                 family: self.family,
+                nintendo_layout: self.nintendo_layout,
                 colourblind: self.colourblind,
                 background: f(self.background),
                 background_text: f(self.background_text),
@@ -614,6 +625,7 @@ pub mod draw {
         Colors {
             font,
             family: crate::info::PadFamily::default(),
+        nintendo_layout: false,
             colourblind: false,
             background,
             background_text,
@@ -870,7 +882,7 @@ pub mod draw {
         let mut line = row![].spacing(size * 0.5).align_y(Alignment::Center);
         // The glyphs are sized from the label, which is 17 units when the scale is 1.
         for b in &item.buttons {
-            line = line.push(segment_element(&crate::info::button_glyph(*b, c.family), c, size / 17.0, 1.0));
+            line = line.push(segment_element(&crate::info::button_glyph(*b, c.family, c.nintendo_layout), c, size / 17.0, 1.0));
         }
         if let Some(b) = item.button.as_deref().filter(|b| !b.is_empty()) {
             line = line.push(
@@ -1071,7 +1083,7 @@ pub mod draw {
     }
 
     pub fn menu_panel<'a, M: 'a>(m: &MenuView, font: Font, look: MenuLook) -> Element<'a, M> {
-        let c = Colors { family: look.family, colourblind: look.colourblind, ..colors(&m.style, font) };
+        let c = Colors { family: look.family, nintendo_layout: look.nintendo_layout, colourblind: look.colourblind, ..colors(&m.style, font) };
         let s = m.style.scale.clamp(0.5, 2.0);
         let body: Element<'a, M> = match m.kind {
             MenuKind::Radial { .. } => radial(m, c, s),

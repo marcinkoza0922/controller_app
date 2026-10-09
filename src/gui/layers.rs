@@ -322,7 +322,7 @@ impl App {
                 style: preview_style(&layer.indicator_style),
                 rows: vec![vec![layer.name.clone()]],
             };
-            let view = crate::info::resolve(&sample, &crate::info::Live::sample(self.config.info_glyphs));
+            let view = crate::info::resolve(&sample, &crate::info::Live::sample(self.config.info_glyphs).with_layout(self.nintendo_layout()));
             settings.push(preview(crate::overlay::draw::info_panel(&view, self.preview_font())));
         }
         settings.push(labeled(

@@ -2303,6 +2303,10 @@ pub struct Game {
     /// applies when unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub overlay_font: Option<String>,
+    /// Button glyphs swapped to the Nintendo layout while this game is active; `None` follows
+    /// `Config::nintendo_layout`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nintendo_layout: Option<bool>,
 }
 
 impl Game {
@@ -2325,6 +2329,7 @@ impl Game {
             media_style: None,
             menu_style: None,
             overlay_font: None,
+            nintendo_layout: None,
         };
         if game.profiles.iter().any(Profile::holds_guide_layer) {
             game.ensure_guide_layer();
@@ -2599,6 +2604,10 @@ pub struct Config {
     /// Whose button glyphs info overlays use when the controller in use isn't recognized.
     #[serde(default)]
     pub info_glyphs: crate::info::PadFamily,
+    /// Swaps A with B and X with Y in button glyphs, to match prompts drawn in the Nintendo
+    /// layout. Only the labels change; the buttons still do what their bindings say.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub nintendo_layout: bool,
     /// Draws the added and removed rows of menus in blue and orange, with a + or − in front, so
     /// they can be told apart without red and green.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -2640,6 +2649,7 @@ impl Default for Config {
             media_style: OverlayStyle::media(),
             menu_style: OverlayStyle::default(),
             info_glyphs: crate::info::PadFamily::default(),
+            nintendo_layout: false,
             overlay_font: None,
             general: Game::new("General", vec![Profile::passthrough("Gamepad"), Profile::desktop("Desktop")]),
             shared: Shared::default(),
@@ -2784,6 +2794,7 @@ impl Config {
             media_style: OverlayStyle::media(),
             menu_style: OverlayStyle::default(),
             info_glyphs: old.info_glyphs,
+            nintendo_layout: false,
             overlay_font: None,
             general: Game::new("General", Vec::new()),
             shared: Shared::default(),
@@ -2918,6 +2929,12 @@ impl Config {
     /// The font overlays are drawn in now: the active game's own, else the global one.
     pub fn active_font(&self) -> Option<&str> {
         self.active_game().overlay_font.as_deref().or(self.overlay_font.as_deref())
+    }
+
+    /// Whether button glyphs are swapped to the Nintendo layout now: the active game's own
+    /// choice, else the global one.
+    pub fn active_nintendo_layout(&self) -> bool {
+        self.active_game().nintendo_layout.unwrap_or(self.nintendo_layout)
     }
 
     /// The active profile's game, or General if it's gone.

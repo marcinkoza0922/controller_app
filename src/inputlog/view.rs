@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use super::{Entry, Input};
 use crate::{
     config::{CurrentInput, InputLogSettings, InputTracking, LogEnd, OverlayStyle, Stick, TrackedInput},
-    info::{PadFamily, Segment, button_glyph, glyph, trigger_glyph},
+    info::{Glyphs, PadFamily, Segment, button_glyph, glyph, trigger_glyph},
 };
 
 /// What the overlay window draws for one log overlay.
@@ -88,7 +88,7 @@ fn tracked(entries: &[Entry], t: &InputTracking) -> Vec<Entry> {
 
 /// Folds presses of the same input (with the same label) in a row into one cell, keeping
 /// the newest `max` cells.
-fn cells(seq: &[Entry], merge: bool, max: u8, family: PadFamily) -> Vec<LogCell> {
+fn cells(seq: &[Entry], merge: bool, max: u8, family: PadFamily, swapped: bool) -> Vec<LogCell> {
     let mut out: Vec<(LogCell, &Entry, Vec<Duration>)> = Vec::new();
     for e in seq {
         let hold = e.released.map(|r| r.saturating_duration_since(e.pressed));
@@ -102,7 +102,7 @@ fn cells(seq: &[Entry], merge: bool, max: u8, family: PadFamily) -> Vec<LogCell>
             holds.extend(hold);
             continue;
         }
-        let cell = LogCell { glyph: input_glyph(&e.input, family), label: e.label.clone(), hold_ms: None, count: 1, held: e.released.is_none() };
+        let cell = LogCell { glyph: input_glyph(&e.input, family, swapped), label: e.label.clone(), hold_ms: None, count: 1, held: e.released.is_none() };
         out.push((cell, e, hold.into_iter().collect()));
     }
     let skip = out.len().saturating_sub(usize::from(max.max(1)));
@@ -120,9 +120,9 @@ fn cells(seq: &[Entry], merge: bool, max: u8, family: PadFamily) -> Vec<LogCell>
 
 /// An input's glyphs: the button's own, the D-pad cross for a D-pad direction, an arrow in
 /// a disc with the stick's letter for a stick, and a combo's buttons joined by `+`.
-pub fn input_glyph(input: &Input, family: PadFamily) -> Vec<Segment> {
+pub fn input_glyph(input: &Input, family: PadFamily, swapped: bool) -> Vec<Segment> {
     match input {
-        Input::Button(b) => vec![button_glyph(*b, family)],
+        Input::Button(b) => vec![button_glyph(*b, family, swapped)],
         Input::Direction(None, d) => vec![Segment::Dpad(d.arms())],
         Input::Direction(Some(s), d) => {
             let letter = if *s == Stick::Left { "L" } else { "R" };
@@ -135,7 +135,7 @@ pub fn input_glyph(input: &Input, family: PadFamily) -> Vec<Segment> {
                 if i > 0 {
                     out.push(Segment::Text("+".into()));
                 }
-                out.push(button_glyph(*b, family));
+                out.push(button_glyph(*b, family, swapped));
             }
             out
         }
@@ -144,7 +144,7 @@ pub fn input_glyph(input: &Input, family: PadFamily) -> Vec<Segment> {
 
 /// `{current_input}`: the latest sequence, in one line, until `stay_ms` after it ends (the
 /// gap after its last input is let go). Empty once it's gone.
-pub fn current_input(entries: &[Entry], c: &CurrentInput, family: PadFamily, now: Instant) -> Vec<Segment> {
+pub fn current_input(entries: &[Entry], c: &CurrentInput, family: PadFamily, swapped: bool, now: Instant) -> Vec<Segment> {
     let entries = tracked(entries, &c.tracking);
     let gap = Duration::from_millis(c.tracking.gap_ms);
     let Some(seq) = sequences(&entries, gap).pop() else { return Vec::new() };
@@ -152,7 +152,7 @@ pub fn current_input(entries: &[Entry], c: &CurrentInput, family: PadFamily, now
         return Vec::new();
     }
     let mut out = Vec::new();
-    for cell in cells(seq, true, c.tracking.max_inputs, family) {
+    for cell in cells(seq, true, c.tracking.max_inputs, family, swapped) {
         out.extend(cell.glyph);
         if cell.count > 1 {
             out.push(Segment::Text(format!("×{}", cell.count)));
@@ -163,7 +163,7 @@ pub fn current_input(entries: &[Entry], c: &CurrentInput, family: PadFamily, now
 
 /// A log overlay's lines, newest at the end its settings name. Lines fade out `fade_after`
 /// seconds after they end.
-pub fn log_view(entries: &[Entry], s: &InputLogSettings, style: &OverlayStyle, family: PadFamily, now: Instant) -> LogView {
+pub fn log_view(entries: &[Entry], s: &InputLogSettings, style: &OverlayStyle, glyphs: Glyphs, now: Instant) -> LogView {
     let entries = tracked(entries, &s.tracking);
     let all = sequences(&entries, Duration::from_millis(s.tracking.gap_ms));
     let skip = all.len().saturating_sub(usize::from(s.lines.max(1)));
@@ -174,7 +174,7 @@ pub fn log_view(entries: &[Entry], s: &InputLogSettings, style: &OverlayStyle, f
                 (Some(after), Some(end)) => crate::info::fade(now, end + after)?,
                 _ => 1.0,
             };
-            Some(LogLine { opacity, cells: cells(seq, s.merge_repeats, s.tracking.max_inputs, family) })
+            Some(LogLine { opacity, cells: cells(seq, s.merge_repeats, s.tracking.max_inputs, glyphs.family, glyphs.nintendo_layout) })
         })
         .collect();
     if s.newest == LogEnd::Top {
@@ -230,9 +230,9 @@ impl Inputs {
     }
 
     /// What a `{current_input}` cell with these settings shows.
-    pub fn current(&self, c: &CurrentInput, family: PadFamily) -> Vec<Segment> {
+    pub fn current(&self, c: &CurrentInput, family: PadFamily, swapped: bool) -> Vec<Segment> {
         let now = self.now.unwrap_or_else(Instant::now);
-        current_input(&self.entries(c.tracking.device), c, family, now)
+        current_input(&self.entries(c.tracking.device), c, family, swapped, now)
     }
 
     /// Made-up input for the settings previews: a combo, a mashed button, then a fireball

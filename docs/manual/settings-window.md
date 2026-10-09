@@ -3,7 +3,7 @@
 The left side lists the pages and your setups. The rest of the window shows the page you picked.
 
 - **Overview**: your controller, drawn with the mapping of the profile in use on each button. **What's happening** shows your latest presses with what each did, and each profile switch with the rule or action that made it. It also lists the controllers padwight has found, with Test rumble and Calibrate gyro.
-- **App settings**: the window's appearance (Auto, Light or Dark), automatic switching, the default profile, and how the on-screen keyboard, numpad, media controls and in-game menu look.
+- **App settings**: the window's appearance (Auto, Light or Dark), the Nintendo button layout, automatic switching, the default profile, and how the on-screen keyboard, numpad, media controls and in-game menu look. The Nintendo button layout swaps A with B and X with Y in the button glyphs, to match prompts a game draws that way. Only the labels change; the buttons keep their bindings. Setups can set their own choice on their Details tab, or follow this one.
 - **Manual**: this guide.
 - **General**: the built-in setup for the desktop and plain gamepad use. Its profiles are used when no other setup matches.
 - **Setups**: your setups, one for each game, each with its own profiles. **+ Add setup** creates one.
