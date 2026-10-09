@@ -1,4 +1,4 @@
-format = 9
+format = 10
 macros = []
 overlay_font = "Source Code Pro"
 
@@ -389,6 +389,7 @@ label = "Sniper rifles"
 keys = ["KEY_6"]
 
 [menus.style]
+corners = 0.2
 position = "center"
 scale = 1.0
 
@@ -488,38 +489,23 @@ indicator_title = "Hold {guide} and press"
 indicator_delay_ms = 250
 swallow_unbound = true
 
-[layers.indicator_style]
-position = "bottom_left"
-scale = 0.8
-
-[layers.indicator_style.background]
-color = "#1a1410"
-opacity = 0.85
-
-[layers.indicator_style.items]
-color = "#3b2f24"
-opacity = 0.95
-
-[layers.indicator_style.selected]
-color = "#d69a3c"
-opacity = 1.0
-
 [layers.buttons]
 East = "force_quit"
-North = "toggle_numpad"
-West = "toggle_overlay"
-RightBumper = "screenshot"
 LeftStick = "toggle_recording"
+RightBumper = "screenshot"
+LeftBumper = "toggle_media"
+West = "toggle_overlay"
+North = "toggle_numpad"
 DpadUp = "next_profile"
+
+[layers.buttons.DpadRight]
+keys = ["KEY_ENTER"]
 
 [layers.buttons.DpadDown]
 keys = ["KEY_TAB"]
 
 [layers.buttons.DpadLeft]
 keys = ["KEY_ESC"]
-
-[layers.buttons.DpadRight]
-keys = ["KEY_ENTER"]
 
 [layers.right_stick]
 deadzone = 0.1
@@ -541,7 +527,24 @@ threshold = 0.3
 [layers.right_trigger.action.button.action]
 mouse = "Left"
 
+[layers.indicator_style]
+position = "bottom_left"
+scale = 0.8
+
+[layers.indicator_style.background]
+color = "#1a1410"
+opacity = 0.85
+
+[layers.indicator_style.items]
+color = "#3b2f24"
+opacity = 0.95
+
+[layers.indicator_style.selected]
+color = "#d69a3c"
+opacity = 1.0
+
 [keyboard_style]
+corners = 0.2
 position = "bottom_center"
 scale = 1.0
 
@@ -558,6 +561,7 @@ color = "#d69a3c"
 opacity = 1.0
 
 [numpad_style]
+corners = 0.2
 position = "bottom_center"
 scale = 1.0
 
@@ -574,6 +578,7 @@ color = "#d69a3c"
 opacity = 1.0
 
 [media_style]
+corners = 0.2
 position = "top_center"
 scale = 1.0
 
@@ -590,6 +595,7 @@ color = "#d69a3c"
 opacity = 1.0
 
 [menu_style]
+corners = 0.2
 position = "center"
 scale = 1.0
 
@@ -604,3 +610,8 @@ opacity = 0.95
 [menu_style.selected]
 color = "#d69a3c"
 opacity = 1.0
+
+[menu_sounds]
+enabled = true
+step = { kind = "click", volume = 0.1, pitch = 0.6 }
+pick = { kind = "thud", volume = 0.3, pitch = 0.9 }

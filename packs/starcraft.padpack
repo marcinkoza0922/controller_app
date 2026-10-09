@@ -1,4 +1,4 @@
-format = 9
+format = 10
 macros = []
 overlay_font = "Rajdhani"
 
@@ -268,6 +268,7 @@ label = "Unload all"
 keys = ["KEY_D"]
 
 [menus.style]
+corners = 0.5
 position = "center"
 scale = 1.0
 
@@ -550,38 +551,23 @@ indicator_title = "Hold {guide} and press"
 indicator_delay_ms = 250
 swallow_unbound = true
 
-[layers.indicator_style]
-position = "bottom_left"
-scale = 0.8
-
-[layers.indicator_style.background]
-color = "#0a171b"
-opacity = 0.85
-
-[layers.indicator_style.items]
-color = "#163238"
-opacity = 0.95
-
-[layers.indicator_style.selected]
-color = "#3fc1b4"
-opacity = 1.0
-
 [layers.buttons]
 East = "force_quit"
-North = "toggle_numpad"
-West = "toggle_overlay"
-RightBumper = "screenshot"
 LeftStick = "toggle_recording"
+RightBumper = "screenshot"
+LeftBumper = "toggle_media"
+West = "toggle_overlay"
+North = "toggle_numpad"
 DpadUp = "next_profile"
+
+[layers.buttons.DpadRight]
+keys = ["KEY_ENTER"]
 
 [layers.buttons.DpadDown]
 keys = ["KEY_TAB"]
 
 [layers.buttons.DpadLeft]
 keys = ["KEY_ESC"]
-
-[layers.buttons.DpadRight]
-keys = ["KEY_ENTER"]
 
 [layers.right_stick]
 deadzone = 0.1
@@ -603,7 +589,24 @@ threshold = 0.3
 [layers.right_trigger.action.button.action]
 mouse = "Left"
 
+[layers.indicator_style]
+position = "bottom_left"
+scale = 0.8
+
+[layers.indicator_style.background]
+color = "#0a171b"
+opacity = 0.85
+
+[layers.indicator_style.items]
+color = "#163238"
+opacity = 0.95
+
+[layers.indicator_style.selected]
+color = "#3fc1b4"
+opacity = 1.0
+
 [keyboard_style]
+corners = 0.5
 position = "bottom_center"
 scale = 1.0
 
@@ -620,6 +623,7 @@ color = "#3fc1b4"
 opacity = 1.0
 
 [numpad_style]
+corners = 0.5
 position = "bottom_center"
 scale = 1.0
 
@@ -636,6 +640,7 @@ color = "#3fc1b4"
 opacity = 1.0
 
 [media_style]
+corners = 0.5
 position = "top_center"
 scale = 1.0
 
@@ -652,6 +657,7 @@ color = "#3fc1b4"
 opacity = 1.0
 
 [menu_style]
+corners = 0.5
 position = "center"
 scale = 1.0
 
@@ -666,3 +672,8 @@ opacity = 0.95
 [menu_style.selected]
 color = "#3fc1b4"
 opacity = 1.0
+
+[menu_sounds]
+enabled = true
+step = { kind = "click", volume = 0.12, pitch = 1.3 }
+pick = { kind = "chime", volume = 0.3, pitch = 1.0 }

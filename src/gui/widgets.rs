@@ -122,15 +122,40 @@ pub(super) fn style_editor<'a>(style: &OverlayStyle, on_change: OnStyle<'a>) -> 
         labeled(format!("    {label}"), line.into())
     };
 
+    let corners = style.corners;
+    let shape = row![
+        slider(0.0..=100.0, corners * 100.0, {
+            let on_change = on_change.clone();
+            let style = style.clone();
+            move |v| on_change(OverlayStyle { corners: (v / 100.0 * 20.0).round() / 20.0, ..style.clone() })
+        })
+        .step(5.0_f32)
+        .width(220),
+        text(corner_name(corners)).size(13),
+    ]
+    .spacing(10)
+    .align_y(Alignment::Center);
+
     column![
         labeled("    Position", position.into()),
         labeled("    Size", size.into()),
+        labeled("    Corners", shape.into()),
         paint_editor("Background", &style.background, |s, p| s.background = p),
         paint_editor("Items", &style.items, |s, p| s.items = p),
         paint_editor("Selected item", &style.selected, |s, p| s.selected = p),
     ]
     .spacing(8)
     .into()
+}
+
+/// What a corners setting looks like, from square to circle.
+fn corner_name(corners: f32) -> &'static str {
+    match corners {
+        c if c < 0.1 => "Square",
+        c if c < 0.5 => "Rounded",
+        c if c < 0.95 => "Squircle",
+        _ => "Circle",
+    }
 }
 
 /// The preview keeps the real colors but caps the size so it fits the window.

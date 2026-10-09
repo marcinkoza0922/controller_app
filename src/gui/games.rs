@@ -148,9 +148,12 @@ impl App {
             Message::SetAppearance(appearance) => self.config.appearance = appearance,
             Message::SetNintendoLayout(on) => self.config.nintendo_layout = on,
             Message::SetGameNintendoLayout(choice) => self.game_mut().nintendo_layout = choice,
+            Message::SetGameMenuSounds(sounds) => self.game_mut().menu_sounds = Some(sounds),
+            Message::PreviewSound(spec) => self.sounds.play(&spec),
             Message::SetKeyboardStyle(style) => self.config.keyboard_style = style,
             Message::SetOverlayFont(font) => self.config.overlay_font = font,
             Message::SetColourblindTones(on) => self.config.colourblind_tones = on,
+            Message::SetMotion(motion) => self.config.motion = motion,
             Message::SetGameOverlayFont(font) => self.game_mut().overlay_font = font,
             Message::SetGameOverlayStyle(layout, style) => self.set_game_overlay_style(layout, style),
             Message::SetGameMediaStyle(style) => self.game_mut().media_style = style,
@@ -383,6 +386,42 @@ impl App {
         )
     }
 
+    /// The setup's menu sounds: on or off, and what the cursor's steps and the picks sound like.
+    fn view_menu_sounds(&self) -> Element<'_, Message> {
+        let current = self.game().menu_sounds.unwrap_or_default();
+        let toggle = toggler(current.enabled)
+            .label("Play sounds as the menus are used")
+            .on_toggle(move |on| Message::SetGameMenuSounds(MenuSounds { enabled: on, ..current }));
+        let cue = |label: &'static str, spec: SoundSpec, put: fn(MenuSounds, SoundSpec) -> MenuSounds| {
+            row![
+                text(label).size(14).width(60),
+                dropdown(SoundKind::ALL, Some(spec.kind), move |kind| Message::SetGameMenuSounds(put(current, SoundSpec { kind, ..spec }))).width(120),
+                slider(0.0..=100.0, spec.volume * 100.0, move |v| Message::SetGameMenuSounds(put(current, SoundSpec { volume: v / 100.0, ..spec })))
+                    .step(5.0_f32)
+                    .width(120),
+                text(format!("{:.0}%", spec.volume * 100.0)).size(13).width(44),
+                slider(50.0..=200.0, spec.pitch * 100.0, move |v| Message::SetGameMenuSounds(put(current, SoundSpec { pitch: v / 100.0, ..spec })))
+                    .step(5.0_f32)
+                    .width(120),
+                text(format!("pitch {:.0}%", spec.pitch * 100.0)).size(13).width(100),
+                button(text("Play").size(13)).style(style::secondary).on_press(Message::PreviewSound(spec)),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .into()
+        };
+        let mut rows: Vec<Element<'_, Message>> = vec![toggle.into()];
+        if current.enabled {
+            rows.push(cue("Step", current.step, |m, s| MenuSounds { step: s, ..m }));
+            rows.push(cue("Pick", current.pick, |m, s| MenuSounds { pick: s, ..m }));
+        }
+        section(
+            "Menu sounds",
+            Some("A faint tick as the cursor moves, and a sound when an item is chosen. Each setup has its own.".into()),
+            rows,
+        )
+    }
+
     /// A game's own choice of the Nintendo layout, or the one Settings gives.
     fn view_game_nintendo_layout(&self) -> Element<'_, Message> {
         let current = self.game().nintendo_layout;
@@ -431,6 +470,7 @@ impl App {
             self.view_auto_switch(),
             self.view_font_card(),
             self.view_colour_card(),
+            self.view_motion_card(),
             self.view_keyboard_card(),
             self.view_numpad_card(),
             self.view_media_card(),
@@ -678,6 +718,7 @@ impl App {
             ),
             self.view_game_overlays(),
             self.view_game_nintendo_layout(),
+            self.view_menu_sounds(),
             section("Pack", None, pack_rows),
         ]
         .spacing(16)

@@ -1,13 +1,13 @@
 # `.padpack` format reference
 
-A pack is one game in one file: TOML, in the same shapes the app writes to `config.toml`. This page describes **format 9**, the format the current app writes. For a walkthrough of building one, see [tutorial-deus-ex-pack.md](tutorial-deus-ex-pack.md). The shipped examples are in `packs/`.
+A pack is one game in one file: TOML, in the same shapes the app writes to `config.toml`. This page describes **format 10**, the format the current app writes. For a walkthrough of building one, see [tutorial-deus-ex-pack.md](tutorial-deus-ex-pack.md). The shipped examples are in `packs/`.
 
 The easiest way to write a pack is in the app, then **Details → Export…**. Read this page when you want to edit the file by hand, check a value, or understand what the export produced.
 
 ## Top level
 
 ```toml
-format = 9                       # pack format version (required)
+format = 10                      # pack format version (required)
 macros = []                      # optional, see Macros
 overlay_font = "Rajdhani"        # optional, font for overlays, menus and keyboards
 
@@ -227,14 +227,14 @@ Menu kinds (`menus.kind`):
 
 | Kind | TOML | Notes |
 |---|---|---|
-| Radial | `[menus.kind.radial] stick = "Right"` | Aim the stick at an item; release to pick it. |
+| Radial | `[menus.kind.radial] stick = "Right"` | Aim the stick at an item; release to pick it. Items are arcs of a circle, each sized by its `weight` (default 1). `boxes = true` puts them in boxes at equal angles instead. |
 | Directional | `[menus.kind.directional] cluster = "DPad"` (or `"FaceButtons"`) | Four slots, up/right/down/left. |
 | List | `kind = "list"` | D-pad or left stick moves; A picks. |
 | Button | `kind = "buttons"` | A list whose items can also be picked with their own `button`. |
 | Carousel | `[menus.kind.carousel] controls = "Bumpers"` | Cycles with `Bumpers`, `Triggers`, `DPad`, `LeftStick` or `RightStick`. |
 | Grid | `[menus.kind.grid] columns = 4` | Up to 6 columns and 6 rows. |
 
-A menu item's `action` can be `open_menu = "Name"`, which opens a submenu. Radial menus can't open submenus. `style` also has `items` and `selected` paints, as in the example above.
+A menu item's `action` can be `open_menu = "Name"`, which opens a submenu. Radial menus can't open submenus. `style` also has `items` and `selected` paints, as in the example above. `corners` (0–1, default 0.4) sets how round boxes, keys and panels are: 0 is square and 1 is a circle wherever the shape allows.
 
 ## Macros
 
@@ -301,7 +301,7 @@ speed = 1600.0
 
 A layer can override `buttons`, `gestures`, `combos`, `disabled_combos`, `left_stick`, `right_stick`, `left_trigger`, `right_trigger` and `gyro`. Each override replaces the profile's setting for that input only.
 
-**Guide** is special. In a pack, every profile's `Guide` button must hold the layer named `Guide`, and the pack must contain that layer: the library check fails otherwise. The app adds the default Guide layer when it creates a profile that holds it, but importing doesn't add it, so a pack should carry its own copy, as the Deus Ex pack does. The default layer holds the system shortcuts while Guide is down: `+ X` keyboard, `+ Y` numpad, `+ RT` / `+ LT` clicks, `+ Right stick` mouse, `+ D-pad` Enter, Tab and Escape, `+ D-pad Up` next profile, and so on. Its bindings are listed in [the Guide design notes](development/guide.md).
+**Guide** is special. In a pack, every profile's `Guide` button must hold the layer named `Guide`, and the pack must contain that layer: the library check fails otherwise. Every game gets the system shortcuts while Guide is down, whether or not its pack carries them: the app fills in whatever a game's Guide layer leaves unset when it loads, imports or saves a setup. A pack's Guide layer must still carry all of them, so the pack file shows what Guide does, and the library check fails otherwise. The shortcuts: `+ X` keyboard, `+ Y` numpad, `+ LB` media controls, `+ RB` screenshot, `+ Left stick` recording, `+ B` force-quit, `+ RT` / `+ LT` clicks, `+ Right stick` mouse, `+ D-pad` Enter, Tab and Escape, `+ D-pad Up` next profile, and so on. Its bindings are listed in [the Guide design notes](development/guide.md).
 
 ## Keyboard, numpad and font
 
@@ -319,9 +319,22 @@ opacity = 0.94
 
 `keyboard_style`, `numpad_style`, `media_style` and `menu_style` use the same shape as an overlay's `style`. `overlay_font` names a bundled font (`assets/fonts`) or an installed family.
 
+## Menu sounds
+
+`[menu_sounds]` sets the sounds played as a menu's cursor moves and when an item is chosen. Every key is optional.
+
+```toml
+[menu_sounds]
+enabled = true                # false silences both
+step = { kind = "click", volume = 0.12, pitch = 1.2 }
+pick = { kind = "pop", volume = 0.3, pitch = 1.0 }
+```
+
+`kind` is `click`, `pop`, `chime`, `thud` or `crunch`. `volume` is 0–1 and `pitch` is 0.5–2 (an octave either way), both relative to the kind's own sound.
+
 ## Versioning
 
-- `format` is an integer. The app writes `9` and reads up to `9`. A pack with a newer `format` is refused with "update the app to import it". Older formats are upgraded when read.
+- `format` is an integer. The app writes `10` and reads up to `10`. A pack with a newer `format` is refused with "update the app to import it". Older formats are upgraded when read.
 - Format history:
   - 2 added layers.
   - 3 added toggles that start on.

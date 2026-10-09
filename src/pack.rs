@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
+use crate::sound::MenuSounds;
 use crate::config::{
     ButtonAction, Config, Game, GyroMode, Indicator, InfoOverlay, ItemKind, Layer, LogOverlay, Macro, Menu, MacroStep, Origin,
     OverlayStyle, PackInfo, PackRef, Profile, Rule, Shared, free_name,
@@ -16,8 +17,8 @@ use crate::config::{
 /// the Guide shift, screenshot, recording and force-quit actions and layer indicators
 /// with generated bindings, extra info overlays and a delay; 8, profiles stating what
 /// controller features they need (replacing the pack-wide list); 9, the media controls and
-/// in-game menu looks.
-pub const FORMAT: u32 = 9;
+/// in-game menu looks; 10, menu sounds, radial arcs and corner rounding.
+pub const FORMAT: u32 = 10;
 pub const EXTENSION: &str = "padpack";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -54,6 +55,9 @@ pub struct Pack {
     /// Whether this game's button glyphs use the Nintendo layout, if the author set that.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nintendo_layout: Option<bool>,
+    /// The menu sounds, if the author set them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub menu_sounds: Option<MenuSounds>,
 }
 
 /// What a pack says about itself.
@@ -108,7 +112,7 @@ impl Pack {
 
     /// The game this pack makes, before any clash handling.
     pub fn to_game(&self) -> Game {
-        Game {
+        let mut game = Game {
             name: self.pack.name.clone(),
             pack: self.info(),
             origin: None,
@@ -125,7 +129,10 @@ impl Pack {
             menu_style: self.menu_style.clone(),
             overlay_font: self.overlay_font.clone(),
             nintendo_layout: self.nintendo_layout,
-        }
+            menu_sounds: self.menu_sounds,
+        };
+        game.ensure_guide_layer();
+        game
     }
 
     pub fn to_toml(&self) -> Result<String> {
@@ -398,6 +405,7 @@ pub fn export(game: &Game, shared: &Shared, info: &PackInfo) -> Export {
         menu_style: pack_game.menu_style,
         overlay_font: pack_game.overlay_font,
         nintendo_layout: pack_game.nintendo_layout,
+        menu_sounds: pack_game.menu_sounds,
     };
     Export { pack, pulled_in, dangling: dangling.into_iter().collect(), features }
 }
@@ -662,6 +670,7 @@ pub fn apply(config: &mut Config, plan: &Plan, choices: &Choices) -> String {
             game.menu_style = game.menu_style.or_else(|| old.menu_style.clone());
             game.overlay_font = game.overlay_font.or_else(|| old.overlay_font.clone());
             game.nintendo_layout = game.nintendo_layout.or(old.nintendo_layout);
+            game.menu_sounds = game.menu_sounds.or(old.menu_sounds);
             config.games[i] = game;
         }
         None => config.games.push(game),
@@ -682,7 +691,7 @@ mod tests {
         Menu {
             name: name.into(),
             kind: MenuKind::List,
-            items: items.into_iter().map(|action| MenuItem { label: "x".into(), action, button: None }).collect(),
+            items: items.into_iter().map(|action| MenuItem { label: "x".into(), action, button: None, weight: 1.0 }).collect(),
             cancel: None,
             style: OverlayStyle::default(),
         }

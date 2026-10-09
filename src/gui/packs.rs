@@ -959,7 +959,7 @@ mod tests {
         quake.menus.push(Menu {
             name: "Wheel".into(),
             kind: MenuKind::List,
-            items: ["Heal", "Taunt"].map(|n| MenuItem { label: n.into(), action: ButtonAction::Macro { name: n.into(), repeat: false }, button: None }).into(),
+            items: ["Heal", "Taunt"].map(|n| MenuItem { label: n.into(), action: ButtonAction::Macro { name: n.into(), repeat: false }, button: None, weight: 1.0 }).into(),
             cancel: None,
             style: OverlayStyle::default(),
         });

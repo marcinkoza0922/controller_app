@@ -24,7 +24,7 @@ use crate::{
     config::{
         Analog, Appearance, Button, ButtonAction, CarouselControls, Cluster, Combo, Config, Feature, Game, GestureKind, GRID_MAX, GyroActivation,
         CurrentInput, GyroConfig, GyroHorizontal, GyroInput, GyroMode, InfoOverlay, ItemKind, LogOverlay, Macro, MacroStep, Menu, MenuItem,
-        MenuKind, MenuKindTag, MouseButton, OverlayStyle, Paint, Profile, ProfileRef, Rule, RuleKind, ScopeRef,
+        MenuKind, MenuKindTag, MenuMotion, MouseButton, OverlayStyle, Paint, Profile, ProfileRef, Rule, RuleKind, ScopeRef,
         ScreenPosition, Stick, StickAction, StickConfig, Toggled, Trigger, TriggerAction, WheelDirection, Zone, free_name,
     },
     engine::Opener,
@@ -34,7 +34,9 @@ use crate::{
     keyboard::{self, Layout},
     launchers, library,
     menu::MenuSession,
-    pack, pad_svg, style,
+    pack, pad_svg,
+    sound::{MenuSounds, SoundKind, SoundSpec},
+    style,
 };
 
 mod actions;
@@ -94,6 +96,8 @@ const MUTED_COLOR: Color = Color::from_rgb(0.55, 0.55, 0.6);
 struct App {
     /// Working copy being edited.
     config: Config,
+    /// Plays the previews of menu sounds.
+    sounds: crate::sound::Sounds,
     /// Last copy known to be applied; `config != saved` means unsaved edits.
     saved: Config,
     /// `None` while the daemon is unreachable.
@@ -365,6 +369,8 @@ enum Message {
     SetAppearance(Appearance),
     SetNintendoLayout(bool),
     SetGameNintendoLayout(Option<bool>),
+    SetGameMenuSounds(MenuSounds),
+    PreviewSound(SoundSpec),
     NewLog,
     ToggleLog(usize),
     ToggleLogAppearance(usize),
@@ -396,6 +402,7 @@ enum Message {
     /// The font of all overlays (`None`: the system's), or the shown game's own.
     SetOverlayFont(Option<String>),
     SetColourblindTones(bool),
+    SetMotion(MenuMotion),
     SetGameOverlayFont(Option<String>),
     /// A game's own style for the keyboard or numpad, or back to the global one.
     SetGameOverlayStyle(crate::keyboard::Layout, Option<OverlayStyle>),
@@ -407,6 +414,7 @@ enum Message {
     MoveMenuItem(usize, usize, bool),
     SetMenuItemLabel(usize, usize, String),
     SetMenuItemButton(usize, usize, QuickChoice),
+    SetMenuItemWeight(usize, usize, f32),
     OpenKeyPicker(KeyField, Vec<String>, bool),
     PickerKey(&'static str),
     PickerClear,
@@ -490,6 +498,7 @@ impl App {
         let app = App {
             saved: config.clone(),
             config,
+            sounds: crate::sound::Sounds::start(),
             status: None,
             page: Page::Overview,
             editing: 0,

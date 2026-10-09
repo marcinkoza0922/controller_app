@@ -1,5 +1,6 @@
 //! Background service: grabs physical gamepads, runs the mapping engine and drives virtual devices.
 
+use crate::sound;
 use std::{
     collections::{HashMap, HashSet},
     io::{BufRead, BufReader, ErrorKind, Write},
@@ -244,6 +245,7 @@ struct Daemon {
     config: Config,
     /// What the active profile can use (its game's items, then shared ones).
     scope: Scope,
+    sounds: sound::Sounds,
     kbm: VirtualKbm,
     devices: HashMap<u64, Managed>,
     next_id: u64,
@@ -359,6 +361,7 @@ pub fn run() -> Result<()> {
     let kbm = VirtualKbm::new().context("creating virtual keyboard/mouse (do you have write access to /dev/uinput?)")?;
     let mut daemon = Daemon {
         scope: config.scope(),
+        sounds: sound::Sounds::start(),
         config,
         kbm,
         devices: HashMap::new(),
@@ -1110,6 +1113,7 @@ impl Daemon {
             colourblind: self.config.colourblind_tones,
             family: values.family,
             nintendo_layout: values.nintendo_layout,
+            motion: self.config.motion,
         }
     }
 
@@ -1831,6 +1835,18 @@ impl Daemon {
         }
     }
 
+    /// The cue for a menu input: a pick when something is chosen, a step when the cursor moved.
+    fn menu_sound(&self, sounds: sound::MenuSounds, outcome: &Option<MenuOutcome>, moved: bool) {
+        if !sounds.enabled {
+            return;
+        }
+        match outcome {
+            Some(MenuOutcome::Choose { .. }) => self.sounds.play(&sounds.pick),
+            None if moved => self.sounds.play(&sounds.step),
+            _ => {}
+        }
+    }
+
     /// While the overlay shows something, controller input drives it instead of the mappings.
     /// (Every way out redraws, so the input log's view of it shows too.)
     fn overlay_input(&mut self, id: u64, events: Vec<InputEvent>) {
@@ -1850,7 +1866,11 @@ impl Daemon {
                 }
                 Some(Active::Menu { session, device }) => {
                     let device = *device;
-                    match session.handle(&self.scope.menus, ev, now) {
+                    let (sounds, before) = (self.scope.sounds, session.cursor());
+                    let outcome = session.handle(&self.scope.menus, ev, now);
+                    let moved = session.cursor() != before;
+                    self.menu_sound(sounds, &outcome, moved);
+                    match outcome {
                         Some(MenuOutcome::Choose { menu, item, action, close }) => {
                             self.log_menu_choice(id, ev, &action);
                             if close {

@@ -6,6 +6,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use crate::sound::MenuSounds;
 
 mod log;
 mod store;
@@ -338,13 +339,30 @@ pub struct MenuItem {
     /// Quick-select button (button menus).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub button: Option<Button>,
+    /// Share of a radial menu's circle this item's arc takes, relative to the others.
+    #[serde(default = "default_weight", skip_serializing_if = "is_default_weight")]
+    pub weight: f32,
+}
+
+pub fn default_weight() -> f32 {
+    1.0
+}
+
+fn is_default_weight(weight: &f32) -> bool {
+    (weight - 1.0).abs() < f32::EPSILON
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MenuKind {
     /// Shown while the opening input is held: aim `stick` at an item, release to choose it.
-    Radial { stick: Stick },
+    /// Items are arcs of a circle (sized by their weights) unless `boxes` puts them in boxes
+    /// at equal angles.
+    Radial {
+        stick: Stick,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        boxes: bool,
+    },
     /// Four slots (up, right, down, left) on the D-pad or face buttons. A slot fires its
     /// action; give it "Open menu" to make it a submenu.
     #[serde(alias = "cascade")]
@@ -366,7 +384,7 @@ pub const GRID_MAX: usize = 6;
 impl MenuKind {
     pub fn default_for(kind: MenuKindTag) -> Self {
         match kind {
-            MenuKindTag::Radial => MenuKind::Radial { stick: Stick::Right },
+            MenuKindTag::Radial => MenuKind::Radial { stick: Stick::Right, boxes: false },
             MenuKindTag::Directional => MenuKind::Directional { cluster: Cluster::DPad },
             MenuKindTag::List => MenuKind::List,
             MenuKindTag::Buttons => MenuKind::Buttons,
@@ -440,6 +458,39 @@ impl fmt::Display for MenuKindTag {
             MenuKindTag::Buttons => "Button menu (list + quick buttons)",
             MenuKindTag::Carousel => "Carousel",
             MenuKindTag::Grid => "Grid (up to 6 × 6)",
+        })
+    }
+}
+
+/// How menus move. Off keeps them still.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MenuMotion {
+    #[default]
+    Off,
+    /// A quick fade-in when a menu opens, and the highlight sliding from item to item.
+    Subtle,
+    /// Subtle, with a little overshoot: the menu settles in and the highlight pops past its place.
+    Playful,
+    /// Subtle, with the items fading in one after another.
+    Stagger,
+}
+
+impl MenuMotion {
+    pub const ALL: [MenuMotion; 4] = [MenuMotion::Off, MenuMotion::Subtle, MenuMotion::Playful, MenuMotion::Stagger];
+
+    pub fn is_off(&self) -> bool {
+        *self == MenuMotion::Off
+    }
+}
+
+impl fmt::Display for MenuMotion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            MenuMotion::Off => "Off",
+            MenuMotion::Subtle => "Subtle",
+            MenuMotion::Playful => "Playful",
+            MenuMotion::Stagger => "Stagger",
         })
     }
 }
@@ -538,10 +589,21 @@ pub struct OverlayStyle {
     pub items: Paint,
     #[serde(default = "default_selected")]
     pub selected: Paint,
+    /// How round the corners are, 0..1: 0 is square, 1 is a circle wherever the shape allows.
+    #[serde(default = "default_corners", skip_serializing_if = "is_default_corners")]
+    pub corners: f32,
 }
 
 fn default_scale() -> f32 {
     1.0
+}
+
+fn default_corners() -> f32 {
+    0.4
+}
+
+fn is_default_corners(corners: &f32) -> bool {
+    (corners - default_corners()).abs() < f32::EPSILON
 }
 
 fn default_background() -> Paint {
@@ -564,6 +626,7 @@ impl Default for OverlayStyle {
             background: default_background(),
             items: default_items(),
             selected: default_selected(),
+            corners: default_corners(),
         }
     }
 }
@@ -1381,6 +1444,18 @@ pub fn combo_key(buttons: &[Button]) -> Vec<Button> {
 }
 
 impl Layer {
+    /// Fills in what this layer leaves unset of the built-in Guide layer: each button it doesn't
+    /// bind, and its triggers and right stick if it has none. What it does set stays.
+    pub fn complete_guide(&mut self) {
+        let built_in = Layer::guide();
+        for (button, action) in built_in.buttons {
+            self.buttons.entry(button).or_insert(action);
+        }
+        self.left_trigger = self.left_trigger.take().or(built_in.left_trigger);
+        self.right_trigger = self.right_trigger.take().or(built_in.right_trigger);
+        self.right_stick = self.right_stick.take().or(built_in.right_stick);
+    }
+
     pub fn new(name: &str) -> Self {
         Layer {
             name: name.into(),
@@ -2309,6 +2384,10 @@ pub struct Game {
     /// `Config::nintendo_layout`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nintendo_layout: Option<bool>,
+    /// Sounds played as the menus' cursor moves and picks, while this game is active; the
+    /// defaults when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub menu_sounds: Option<MenuSounds>,
 }
 
 impl Game {
@@ -2332,6 +2411,7 @@ impl Game {
             menu_style: None,
             overlay_font: None,
             nintendo_layout: None,
+            menu_sounds: None,
         };
         if game.profiles.iter().any(Profile::holds_guide_layer) {
             game.ensure_guide_layer();
@@ -2343,10 +2423,13 @@ impl Game {
         self.profiles.iter().find(|p| p.name == name)
     }
 
-    /// Adds the default Guide layer unless the game already has a layer of that name.
+    /// Gives the game the Guide layer, so holding Guide always has the system features (the
+    /// on-screen keyboard and numpad, the media controls, screenshots, recording, and so on).
+    /// A game's own Guide layer keeps what it sets and gets the rest of the built-in one.
     pub fn ensure_guide_layer(&mut self) {
-        if !self.layers.iter().any(|l| l.name == GUIDE_LAYER) {
-            self.layers.push(Layer::guide());
+        match self.layers.iter_mut().find(|l| l.name == GUIDE_LAYER) {
+            Some(layer) => layer.complete_guide(),
+            None => self.layers.push(Layer::guide()),
         }
     }
 
@@ -2526,6 +2609,8 @@ pub struct Scope {
     pub logs: Vec<LogOverlay>,
     /// The game's own (layers are never shared).
     pub layers: Vec<Layer>,
+    /// The active game's menu sounds.
+    pub sounds: MenuSounds,
 }
 
 /// Like [`Scope`], borrowed: what a game's profiles (or the shared items) can refer to.
@@ -2602,6 +2687,9 @@ pub struct Config {
     /// Light, dark or the desktop's choice, for the settings window.
     #[serde(default, skip_serializing_if = "Appearance::is_auto")]
     pub appearance: Appearance,
+    /// Small motion in menus: a fade-in when one opens, and the highlight gliding between items.
+    #[serde(default, skip_serializing_if = "MenuMotion::is_off")]
+    pub motion: MenuMotion,
     /// Font of every overlay, menu and keyboard (a bundled or installed family); the system's
     /// own when unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2632,6 +2720,7 @@ impl Default for Config {
             auto_switch: AutoSwitch::default(),
             colourblind_tones: false,
             appearance: Appearance::Auto,
+            motion: MenuMotion::Off,
             gyro_calibration: BTreeMap::new(),
             keyboard_style: OverlayStyle::keyboard(),
             numpad_style: OverlayStyle::numpad(),
@@ -2672,6 +2761,9 @@ impl Config {
         let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         let mut config: Config = toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
         store::load(store::root_of(path), &mut config)?;
+        for game in config.games.iter_mut().chain(std::iter::once(&mut config.general)) {
+            game.ensure_guide_layer();
+        }
         Ok(config)
     }
 
@@ -2683,7 +2775,12 @@ impl Config {
     pub fn save_to(&self, path: &Path) -> Result<()> {
         let root = store::root_of(path);
         std::fs::create_dir_all(root)?;
-        store::save(root, self)?;
+        // Every game is saved with the Guide layer, including ones made in the settings window.
+        let mut config = self.clone();
+        for game in config.games.iter_mut().chain(std::iter::once(&mut config.general)) {
+            game.ensure_guide_layer();
+        }
+        store::save(root, &config)?;
         // Write-then-rename so the daemon never reads a half-written file.
         let tmp = path.with_extension("toml.tmp");
         store::write_private(&tmp, &store::app_settings(self)?)?;
@@ -2844,6 +2941,7 @@ impl Config {
             info: s.info.into_iter().cloned().collect(),
             logs: s.logs.into_iter().cloned().collect(),
             layers: s.layers.into_iter().cloned().collect(),
+            sounds: self.active_game().menu_sounds.unwrap_or_default(),
         }
     }
 
@@ -2881,6 +2979,50 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn overlay_corners_and_radial_options_are_optional() {
+        // Older configs have none of the new keys: they load with today's look.
+        let style: OverlayStyle = toml::from_str("position = \"center\"\n").unwrap();
+        assert_eq!(style.corners, 0.4);
+        let item: MenuItem = toml::from_str("label = \"x\"\naction = { keys = [\"KEY_X\"] }\n").unwrap();
+        assert_eq!(item.weight, 1.0);
+        #[derive(Deserialize)]
+        struct Holder {
+            kind: MenuKind,
+        }
+        let holder: Holder = toml::from_str("[kind.radial]\nstick = \"Right\"\n").unwrap();
+        assert_eq!(holder.kind, MenuKind::Radial { stick: Stick::Right, boxes: false });
+        // Defaults are left out of what gets written, so existing files and packs don't change.
+        let written = toml::to_string(&OverlayStyle::default()).unwrap();
+        assert!(!written.contains("corners"), "{written}");
+        assert!(!toml::to_string(&MenuItem { weight: 1.0, ..item.clone() }).unwrap().contains("weight"));
+        assert!(toml::to_string(&MenuKind::Radial { stick: Stick::Right, boxes: true }).unwrap().contains("boxes = true"));
+    }
+
+    #[test]
+    fn every_game_gets_the_system_features_of_guide() {
+        let built_in = Layer::guide();
+        // A game with no Guide layer gets the whole built-in one.
+        let mut bare = Game::new("Bare", Vec::new());
+        bare.ensure_guide_layer();
+        assert_eq!(bare.layers.iter().find(|l| l.name == GUIDE_LAYER), Some(&built_in));
+        // A game's own Guide layer keeps what it sets, and gets the rest.
+        let mut own = Layer::new(GUIDE_LAYER);
+        own.buttons.insert(Button::East, ButtonAction::Keys(vec!["KEY_Q".into()]));
+        let mut game = Game::new("Own", Vec::new());
+        game.layers = vec![own];
+        game.ensure_guide_layer();
+        let layer = game.layers.iter().find(|l| l.name == GUIDE_LAYER).unwrap();
+        assert_eq!(layer.buttons.get(&Button::East), Some(&ButtonAction::Keys(vec!["KEY_Q".into()])));
+        assert_eq!(layer.buttons.get(&Button::LeftBumper), Some(&ButtonAction::ToggleMedia));
+        assert!(layer.left_trigger.is_some() && layer.right_stick.is_some());
+        // Setting a button to nothing counts as setting it, so it stays off.
+        let mut off = Layer::new(GUIDE_LAYER);
+        off.buttons.insert(Button::LeftBumper, ButtonAction::Disabled);
+        off.complete_guide();
+        assert_eq!(off.buttons.get(&Button::LeftBumper), Some(&ButtonAction::Disabled));
+    }
 
     #[test]
     fn log_overlays_roundtrip_and_old_configs_load_without_them() {
@@ -3211,12 +3353,12 @@ key_threshold = 0.2
 
     #[test]
     fn menus_roundtrip_and_pick_a_sensible_cancel_button() {
-        let item = |label: &str, action| MenuItem { label: label.into(), action, button: None };
+        let item = |label: &str, action| MenuItem { label: label.into(), action, button: None, weight: 1.0 };
         let shared = Shared {
             menus: vec![
             Menu {
                 name: "Weapons".into(),
-                    kind: MenuKind::Radial { stick: Stick::Right },
+                    kind: MenuKind::Radial { stick: Stick::Right, boxes: false },
                 items: (1..=4).map(|n| item(&format!("Slot {n}"), ButtonAction::Keys(vec![format!("KEY_{n}")]))).collect(),
                 cancel: None,
                 style: OverlayStyle::default(),
@@ -3450,7 +3592,7 @@ key_threshold = 0.2
         game.menus.push(Menu {
             name: "M".into(),
             kind: MenuKind::List,
-            items: vec![MenuItem { label: "x".into(), action: ButtonAction::Macro { name: "Old".into(), repeat: false }, button: None }],
+            items: vec![MenuItem { label: "x".into(), action: ButtonAction::Macro { name: "Old".into(), repeat: false }, button: None, weight: 1.0 }],
             cancel: None,
             style: OverlayStyle::default(),
         });

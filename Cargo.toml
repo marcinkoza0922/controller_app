@@ -24,6 +24,7 @@ ksni = { version = "0.3.6", features = ["blocking"] }
 # iced_layershell's devtools (iced_exdevtools 0.19.1) don't build against winit-core
 # 0.31.0-beta.3; pin the beta they were written for. Not used directly.
 winit-core = "=0.31.0-beta.2"
+rodio = { version = "0.22", default-features = false, features = ["playback"] }
 
 [lints.clippy]
 # Keep code compact and units small so they are cheaper to read.
