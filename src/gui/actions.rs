@@ -780,7 +780,7 @@ mod tests {
             "Toggle Turbo Left click (12/s)"
         );
         assert_eq!(summarize(&ButtonAction::Macro { name: "QCF".into(), repeat: true }), "Macro “QCF” (repeat)");
-        assert_eq!(summarize(&ButtonAction::Gamepad(Button::RightStickRight)), "Pad RS→");
+        assert_eq!(summarize(&ButtonAction::Gamepad(Button::RightStickRight)), "RS→");
     }
 
     #[test]

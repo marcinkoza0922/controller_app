@@ -143,7 +143,7 @@ The "On-screen keyboard" action (also a button on the Overview tab, and `padwigh
 
 Guide holds the Guide layer, where X opens it (Guide + X). It needs a compositor with layer-shell (KDE Plasma, Sway, Hyprland, …).
 
-The "On-screen numpad" action (or `padwight numpad-toggle`) opens a smaller pad with the digits 0–9 and a dot, for codes and number fields: move with the D-pad or left stick, A presses a number, X is backspace, Start presses Enter, and holding B closes it. It types the top-row number keys, so it works whatever the Num Lock state. Both pads have their own position, size and colors on the Settings page, and opening one closes the other.
+The "On-screen numpad" action (or `padwight numpad-toggle`) opens a smaller pad with the digits 0–9 and a dot, for codes and number fields: move with the D-pad or left stick, A presses a number, X is backspace, Start presses Enter, and holding B closes it. It types the top-row number keys, so it works whatever the Num Lock state. Both pads have their own position, size and colors on the App settings page, and opening one closes the other.
 
 ## Menus
 
@@ -170,7 +170,7 @@ The wiki has the details: [the in-game menu](https://github.com/marcinkoza0922/p
 
 Info overlays put text on screen without taking the controller, mainly to show a game's controls. Each one is a grid of cells (rows of cells that line up in columns), with its own position, size and colors. Cells can hold tokens:
 
-- **Button glyphs** drawn the way the controller in use labels them: `{south}` is A on Xbox, ✕ on PlayStation and B on Nintendo; also `{east}` `{west}` `{north}` `{lb}` `{rb}` `{lt}` `{rt}` `{select}` `{start}` `{guide}` `{ls}` `{rs}` `{l3}` `{r3}` `{dpad}` `{up}` `{down}` `{left}` `{right}`. Controllers that can't be recognized get the "Fallback glyphs" kind chosen on the Settings page.
+- **Button glyphs** drawn the way the controller in use labels them: `{south}` is A on Xbox, ✕ on PlayStation and B on Nintendo; also `{east}` `{west}` `{north}` `{lb}` `{rb}` `{lt}` `{rt}` `{select}` `{start}` `{guide}` `{ls}` `{rs}` `{l3}` `{r3}` `{dpad}` `{up}` `{down}` `{left}` `{right}`. Controllers that can't be recognized get the "Fallback glyphs" kind chosen on the App settings page.
 - **Live values**, updated every second: `{time}` `{time12}` `{date}` `{profile}` `{layer}` (the layers on, e.g. "Hotkeys + Build") `{app}` (the focused program's executable) `{title}` `{pid}` `{cpu}` `{ram}` `{gpu}` (AMD only) `{wifi}` (signal strength, with its icon) `{system_battery}` (a laptop's or handheld's charge) `{controller_battery}` (the controller in use's charge, where it reports one; `~` when estimated from a coarse level).
 - **Icons**: `{pc}` (a monitor, or a laptop or handheld shape) and `{controller}` (the controller in use, drawn for its kind), meant to sit beside a battery. Add `:icon` to `{system_battery}` or `{controller_battery}` for a gauge instead of the number, and `{controller:name}` for the controller's name.
 
@@ -188,7 +188,7 @@ Horizontal aim can come from yaw (turning), roll (tilting) or both, and either a
 
 ## Automatic profile switching
 
-Each setup's rules (on its Details tab) switch to one of its profiles when the game's window gets focus, and when it loses focus the default profile (on the Settings page; General › Gamepad unless changed, or "keep current profile") takes over. Each switch, and each game launch, shows a short toast at the top of the screen naming the controller profile now active and its setup; switching back to the default when a game loses focus doesn't. Rules are checked setup by setup, in order; a rule can be switched off without deleting it. A rule matches on:
+Each setup's rules (on its Details tab) switch to one of its profiles when the game's window gets focus, and when it loses focus the default profile (on the App settings page; General › Gamepad unless changed, or "keep current profile") takes over. Each switch, and each game launch, shows a short toast at the top of the screen naming the controller profile now active and its setup; switching back to the default when a game loses focus doesn't. Rules are checked setup by setup, in order; a rule can be switched off without deleting it. A rule matches on:
 
 - **Executable**: the program's file name. For Wine/Proton games it's the Windows `.exe` (e.g. `eldenring.exe`), not the Wine loader.
 - **Steam App ID**: taken from the environment Steam sets, or from Proton's `steam_app_<id>` window class.

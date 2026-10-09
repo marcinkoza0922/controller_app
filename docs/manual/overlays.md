@@ -31,4 +31,4 @@ A small list of the buttons you pressed lately, and what each one did. It's usef
 
 Controls the music or video player that's running. The D-pad left and right seek, up and down change the volume, the bumpers change track, A plays or pauses, Y chooses the player, and B closes.
 
-> **Tip:** each overlay has its own position, size and colours. Set them on the Settings page.
+> **Tip:** each overlay has its own position, size and colours. Set them on the App settings page.
