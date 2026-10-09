@@ -4,12 +4,13 @@ Background service that remaps gamepad inputs, or turns them into mouse and keyb
 
 - **daemon**: grabs physical gamepads (evdev) so nothing else sees them, runs the active profile, and emits through virtual uinput devices (an Xbox 360-style pad plus a keyboard and a mouse).
 - **gui**: edits profiles and talks to the daemon over `$XDG_RUNTIME_DIR/padwight.sock`.
-- **config**: `~/.config/padwight/config.toml`. The daemon is the only writer while it runs; after editing by hand, run `padwight reload`. A config from before games existed is converted on first load, and the original is kept as `config.toml.old`. Each profile that an auto-switch rule pointed to becomes a game of its own with those rules; the rest go to General. Macros, menus and info overlays limited to one game's profiles move into that game, and the others become shared.
+- **config**: `~/.config/padwight/config.toml`. The daemon is the only writer while it runs; after editing by hand, run `padwight reload`. A config from before setups existed is converted on first load, and the original is kept as `config.toml.old`. Each profile that an auto-switch rule pointed to becomes a setup of its own with those rules; the rest go to General. Macros, menus and info overlays limited to one setup's profiles move into that setup, and the others become shared.
 
 ## Documentation
 
 For users:
 
+- **Manual**: a plain-language guide, shown on the Manual page of the settings window. Its source is [docs/manual/](docs/manual/), plain Markdown that is also built into the app, so the two can't drift apart.
 - [docs/tutorial-deus-ex-pack.md](docs/tutorial-deus-ex-pack.md): a step-by-step walkthrough of making a pack, using Deus Ex on an Xbox-style pad, with the reasons for the less obvious mappings.
 - [docs/pack-format.md](docs/pack-format.md): reference for the `.padpack` format (format 9).
 
@@ -18,17 +19,17 @@ For developers, in [docs/development/](docs/development/):
 - [architecture.md](docs/development/architecture.md): how the processes, input pipeline, config and focus tracking fit together, with a module map and test commands.
 - [specs.md](docs/development/specs.md), [layers.md](docs/development/layers.md), [sticks.md](docs/development/sticks.md), [guide.md](docs/development/guide.md): design notes for individual features.
 
-## Games
+## Setups
 
-Everything is organized by game. A game holds its own profiles, macros, menus, info overlays and the auto-switch rules that activate it; all of its profiles can use all of its items. **General** is a built-in game with no rules, for the desktop and a plain gamepad. Its Macros, Menus and Info overlays tabs also hold the **shared** items, which every profile of every game can use. Names only need to be unique within a game, and a game's items can't reuse a shared item's name.
+Everything is organized by setup, one controller setup per game. A setup holds its own profiles, macros, menus, info overlays and the auto-switch rules that activate it; all of its profiles can use all of its items. **General** is a built-in setup with no rules, for the desktop and a plain gamepad. Its Macros, Menus and Info overlays tabs also hold the **shared** items, which every profile of every setup can use. Names only need to be unique within a setup, and a setup's items can't reuse a shared item's name.
 
-The GUI's sidebar lists General and the games (with a search), and each game's page has sub-tabs: **Profiles**, **Macros**, **Menus**, **Info overlays** and **Details** (name, rules, export, delete). On the Macros, Menus and Info overlays tabs, "Copy from another game…" previews another game's (or a library game's) items and copies one in to adapt.
+The GUI's sidebar lists General and the setups (with a search), and each setup's page has sub-tabs: **Profiles**, **Macros**, **Menus**, **Info overlays** and **Details** (name, rules, export, delete). On the Macros, Menus and Info overlays tabs, "Copy from another setup…" previews another setup's (or a library setup's) items and copies one in to adapt.
 
 ## Packs and the library
 
-A game can be shared as a **pack**: **Details → Export…** writes it to a `.padpack` file (TOML), copying in any shared items it uses. The export dialog warns about references to missing items. Whether a pack needs more than a plain XInput pad (today, gyro) is stated by each **profile**, not the pack: on the profile's Gyro tab, tick *Can't be played without gyro* when it depends on it (a flick stick setup that turns up and down with gyro, say), and leave it unticked when gyro only adds to a scheme that works without. It is your word, nothing is detected, and the export dialog just lists what you've declared. Players whose controller lacks a feature are only offered the profiles that don't need it, and Guide skips the others. Re-exporting your own game keeps its pack ID; exporting someone else's makes a fork with its own ID that credits the original.
+A setup can be shared as a **pack**: **Details → Export…** writes it to a `.padpack` file (TOML), copying in any shared items it uses. The export dialog warns about references to missing items. Whether a pack needs more than a plain XInput pad (today, gyro) is stated by each **profile**, not the pack: on the profile's Gyro tab, tick *Can't be played without gyro* when it depends on it (a flick stick setup that turns up and down with gyro, say), and leave it unticked when gyro only adds to a scheme that works without. It is your word, nothing is detected, and the export dialog just lists what you've declared. Players whose controller lacks a feature are only offered the profiles that don't need it, and Guide skips the others. Re-exporting your own setup keeps its pack ID; exporting someone else's makes a fork with its own ID that credits the original.
 
-**+ Add game** opens the picker: the built-in library (games you have installed in Steam, Heroic or Lutris, or running, come first), an empty game from a template, or **Import a file…**. Importing shows a preview first: what's inside, what your controller lacks, a game with the same name (add under a new name, or replace yours), shared items it renames to avoid clashes, and other games' rules for the same window (the imported game takes over unless you keep yours). Nothing changes until Save & apply. Imported games are ordinary, editable games that remember their pack: importing a newer version of the same pack, or an app update shipping a newer library version (marked "update" in the sidebar), offers to update it and lists what you changed since. A pack made by a newer app version is refused with a request to update.
+**+ Add setup** opens the picker: the built-in library (setups for games you have installed in Steam, Heroic or Lutris, or running, come first), an empty setup from a template, or **Import a file…**. Importing shows a preview first: what's inside, what your controller lacks, a setup with the same name (add under a new name, or replace yours), shared items it renames to avoid clashes, and other setups' rules for the same window (the imported game takes over unless you keep yours). Nothing changes until Save & apply. Imported setups are ordinary, editable setups that remember their pack: importing a newer version of the same pack, or an app update shipping a newer library version (marked "update" in the sidebar), offers to update it and lists what you changed since. A pack made by a newer app version is refused with a request to update.
 
 The library is `packs/*.padpack` in this repository, embedded at build time; see `packs/README.md`.
 
@@ -49,7 +50,7 @@ install -Dm644 flatpak/io.github.marcinkoza0922.Padwight.svg ~/.local/share/icon
 install -Dm644 flatpak/io.github.marcinkoza0922.Padwight.desktop ~/.local/share/applications/io.github.marcinkoza0922.Padwight.desktop
 ```
 
-Controllers can be unplugged, reconnected or swapped while it runs. A disconnect releases everything that controller held and closes a menu it had open, and a toast names the controller that left or arrived. The profile stays as it was, so reconnecting the same pad picks up where it left off. If the pad that comes back (or replaces it) lacks something the active profile is marked as needing, such as gyro, the game's first profile that doesn't need it takes over (or the default profile, if none does), with a toast saying so. When a pad with the feature is connected again, the profile you were on returns, unless you've changed it since. The change is made once the controllers have looked the same for two 2-second scans, so a motion sensor that shows up a moment after its pad doesn't make the profile flicker.
+Controllers can be unplugged, reconnected or swapped while it runs. A disconnect releases everything that controller held and closes a menu it had open, and a toast names the controller that left or arrived. The profile stays as it was, so reconnecting the same pad picks up where it left off. If the pad that comes back (or replaces it) lacks something the active profile is marked as needing, such as gyro, the setup's first profile that doesn't need it takes over (or the default profile, if none does), with a toast saying so. When a pad with the feature is connected again, the profile you were on returns, unless you've changed it since. The change is made once the controllers have looked the same for two 2-second scans, so a motion sensor that shows up a moment after its pad doesn't make the profile flicker.
 
 On most desktops (systemd-logind with `uaccess`), your user can already open `/dev/uinput` and the gamepad nodes, so no root is needed. If it can't, add a udev rule that grants access, or add yourself to the `input` group.
 
@@ -76,7 +77,7 @@ flatpak run io.github.marcinkoza0922.Padwight          # open the GUI
 
 To run the daemon at login, copy `dist/padwight-flatpak.service` to `~/.config/systemd/user/` and enable it. Things that differ from the native install:
 
-- Settings live in `~/.var/app/io.github.marcinkoza0922.Padwight/config/padwight/`. To keep your existing games, copy `~/.config/padwight/config.toml` there.
+- Settings live in `~/.var/app/io.github.marcinkoza0922.Padwight/config/padwight/`. To keep your existing setups, copy `~/.config/padwight/config.toml` there.
 - The motion-sensor rule is a host file, so install it with the `sudo` commands above; the app can't run `sudo`.
 - Game detection reads Steam and Lutris libraries read-only. Other library folders need `flatpak override --user --filesystem=/path:ro io.github.marcinkoza0922.Padwight`.
 - The sandbox has its own process list, so a window is identified by its class and title only, not by its executable. Focus tracking works through KWin. Hyprland's socket is shared in but untested; Sway's isn't reachable.
@@ -100,7 +101,7 @@ On top of that:
 - **Gestures**: double tap, triple tap and long press per button. The final tap of a sequence fires on press and holds, so "double-tap and hold" works. A quick tap on a button with gestures fires once the gesture is decided; holding it past the tap window presses the button's own action right away and holds it until release (unless a long press is set).
 - **Zones**: extra actions held while a stick or trigger is within part of its travel. For example, Left Shift on a partial stick push gives walk/run with WASD, and a half versus full trigger pull can do different things. Zones are hidden for controllers whose triggers are on/off only (e.g. Switch pads).
 
-General's defaults are **Gamepad** (1:1 passthrough) and **Desktop** (left stick moves the mouse, right stick scrolls, A/B click, LB+RB = Alt+Tab). Guide holds the Guide layer, and Guide + D-pad Up cycles between the profiles of the active game in both.
+General's defaults are **Gamepad** (1:1 passthrough) and **Desktop** (left stick moves the mouse, right stick scrolls, A/B click, LB+RB = Alt+Tab). Guide holds the Guide layer, and Guide + D-pad Up cycles between the profiles of the active setup in both.
 
 More templates are available under "New from template…" in the GUI:
 
@@ -110,17 +111,17 @@ More templates are available under "New from template…" in the GUI:
 
 ## Layers
 
-A layer changes some of the controller's mappings while it's on, then changes them back, e.g. hold LB and the face buttons type F1–F4 and the right stick scrolls. Layers belong to a game (its **Layers** tab) and apply over whichever of its profiles is active; anything a layer doesn't set stays as in the profile. A layer can override buttons and stick directions, gestures, sticks, triggers (with their zones) and gyro, add combos, and switch the profile's combos off.
+A layer changes some of the controller's mappings while it's on, then changes them back, e.g. hold LB and the face buttons type F1–F4 and the right stick scrolls. Layers belong to a setup (its **Layers** tab) and apply over whichever of its profiles is active; anything a layer doesn't set stays as in the profile. A layer can override buttons and stick directions, gestures, sticks, triggers (with their zones) and gyro, add combos, and switch the profile's combos off.
 
 - **Turning one on**: map "Layer…" to any button, trigger, stick direction, zone, gesture or combo: the layer is on while that input is held. Wrapped in **Toggle** it stays on until pressed again, which also lets a menu item switch it (menu items can only toggle layers). Layers can turn on further layers.
 - **Several at once**: they stack, and the newest one wins where they disagree.
 - **Switching over**: an input that's down when a layer comes on or goes off keeps doing what it started until it's released; sticks, triggers and gyro switch modes right away. Held layers end when the profile changes or an on-screen menu or keyboard opens; toggled ones stay on within the game.
-- **Showing it**: each layer shows its name on screen while on (with its own position, size and colors), or one of the game's info overlays (e.g. a cheat sheet), or nothing for quick ones like "hold Y to lean". The live controller drawing labels the inputs as they act with the layers that are on.
-- **Editing**: the Layers tab uses the profile editor, shown over one of the game's profiles. Inputs the layer doesn't set read "Same as Gameplay: …" with **Override**; overridden ones have **Back to base**. Layers use their profile's timings. "Copy from another game…" copies a layer (with the macros, menus and info overlays it uses), handy for sequels. Shared items can't use layers.
+- **Showing it**: each layer shows its name on screen while on (with its own position, size and colors), or one of the setup's info overlays (e.g. a cheat sheet), or nothing for quick ones like "hold Y to lean". The live controller drawing labels the inputs as they act with the layers that are on.
+- **Editing**: the Layers tab uses the profile editor, shown over one of the setup's profiles. Inputs the layer doesn't set read "Same as Gameplay: …" with **Override**; overridden ones have **Back to base**. Layers use their profile's timings. "Copy from another setup…" copies a layer (with the macros, menus and info overlays it uses), handy for sequels. Shared items can't use layers.
 
 ## Macros
 
-A game's Macros tab holds named input sequences, each in its own collapsible card ("+ New macro" adds one at the top). Each step is a **tap** (press, hold for N ms, release), **hold down**, **release**, **wait** (N ms), or **move stick** (a virtual-pad stick to a direction or custom position, held until the next stick step and recentered when the macro ends). Steps can press a key or key combo, mouse button, scroll wheel or gamepad button. "Insert motion…" adds fighting-game motions one frame apart: quarter circles, dragon punch and half circles, written facing right. Map a macro with the "Macro…" action:
+A setup's Macros tab holds named input sequences, each in its own collapsible card ("+ New macro" adds one at the top). Each step is a **tap** (press, hold for N ms, release), **hold down**, **release**, **wait** (N ms), or **move stick** (a virtual-pad stick to a direction or custom position, held until the next stick step and recentered when the macro ends). Steps can press a key or key combo, mouse button, scroll wheel or gamepad button. "Insert motion…" adds fighting-game motions one frame apart: quarter circles, dragon punch and half circles, written facing right. Map a macro with the "Macro…" action:
 
 - **Play once**: each press plays it through to the end, even if you let go early.
 - **Repeat while held**: it loops until you let go, then stops at once.
@@ -146,7 +147,7 @@ The "On-screen numpad" action (or `padwight numpad-toggle`) opens a smaller pad 
 
 ## Menus
 
-A game's Menus tab holds on-screen **action menus**. Open one from any button, gesture, combo, trigger or stick direction with the "Open menu…" action (or `padwight menu <name>`). A menu is on screen only while that input is held, and letting go closes it. To keep a menu up without holding, wrap the action in "Toggle…": the menu then stays until the input is pressed again. Choosing an item taps its action like a button press, so items can be keys, macros, toggles or the keyboard, and the menu stays up for more picks.
+A setup's Menus tab holds on-screen **action menus**. Open one from any button, gesture, combo, trigger or stick direction with the "Open menu…" action (or `padwight menu <name>`). A menu is on screen only while that input is held, and letting go closes it. To keep a menu up without holding, wrap the action in "Toggle…": the menu then stays until the input is pressed again. Choosing an item taps its action like a button press, so items can be keys, macros, toggles or the keyboard, and the menu stays up for more picks.
 
 - **Radial**: aim a stick at an item; whatever is aimed at when you let go is chosen.
 - **Directional**: four slots on the D-pad or face buttons.
@@ -161,7 +162,7 @@ Each menu is a collapsible card on the Menus tab, with a live preview; "Add a me
 
 ## In-game menu
 
-Guide + Start, pressed together, opens a menu over the game in front. **Quick Settings** changes a few values, such as stick and gyro sensitivity, Invert Y and the profile. **Edit Controls** changes that game's buttons, sticks, triggers, gyro, combos, layers, macros and zones. A change applies at once, and is saved when you choose Save. With no game in front, Edit Controls is refused, and quick settings make a game for the window in front instead.
+Guide + Start, pressed together, opens a menu over the game in front. **Quick Settings** changes a few values, such as stick and gyro sensitivity, Invert Y and the profile. **Edit Controls** changes that setup's buttons, sticks, triggers, gyro, combos, layers, macros and zones. A change applies at once, and is saved when you choose Save. With no game in front, Edit Controls is refused, and quick settings make a setup for the window in front instead.
 
 The wiki has the details: [the in-game menu](https://github.com/marcinkoza0922/padwight/wiki/In-Game-Menu) and [editing controls in game](https://github.com/marcinkoza0922/padwight/wiki/Editing-Controls-in-Game).
 
@@ -173,7 +174,7 @@ Info overlays put text on screen without taking the controller, mainly to show a
 - **Live values**, updated every second: `{time}` `{time12}` `{date}` `{profile}` `{layer}` (the layers on, e.g. "Hotkeys + Build") `{app}` (the focused program's executable) `{title}` `{pid}` `{cpu}` `{ram}` `{gpu}` (AMD only) `{wifi}` (signal strength, with its icon) `{system_battery}` (a laptop's or handheld's charge) `{controller_battery}` (the controller in use's charge, where it reports one; `~` when estimated from a coarse level).
 - **Icons**: `{pc}` (a monitor, or a laptop or handheld shape) and `{controller}` (the controller in use, drawn for its kind), meant to sit beside a battery. Add `:icon` to `{system_battery}` or `{controller_battery}` for a gauge instead of the number, and `{controller:name}` for the controller's name.
 
-An info overlay is shown always while its game is active, for a few seconds when the game starts (the first time it's focused after launching, e.g. a "config loaded" note), or with the "Show info overlay…" action while that input is held (wrap it in Toggle to keep it up). An always-shown overlay can't also be mapped to an action; for one shown only sometimes, use an action (typically a Toggle). One shown by an action can **linger** for a few seconds after it's let go or toggled off. Timed ones fade out at the end. For an overlay that should stay up until dismissed, map "Toggle → Show info overlay…" to a button and tick **On when the game starts**: it shows at launch and goes when the button is pressed. Any Toggle can start on that way (a layer, a held key, …). Overlays at the same screen position stack.
+An info overlay is shown always while its setup is active, for a few seconds when the game starts (the first time it's focused after launching, e.g. a "config loaded" note), or with the "Show info overlay…" action while that input is held (wrap it in Toggle to keep it up). An always-shown overlay can't also be mapped to an action; for one shown only sometimes, use an action (typically a Toggle). One shown by an action can **linger** for a few seconds after it's let go or toggled off. Timed ones fade out at the end. For an overlay that should stay up until dismissed, map "Toggle → Show info overlay…" to a button and tick **On when the game starts**: it shows at launch and goes when the button is pressed. Any Toggle can start on that way (a layer, a held key, …). Overlays at the same screen position stack.
 
 ## Gyro
 
@@ -183,17 +184,17 @@ Controllers with motion sensors (DualShock 4, DualSense, Switch Pro, Joy-Cons) c
 - **Gamepad stick**: rotation speed deflects a virtual-pad stick, added to the physical stick. An anti-deadzone gets past the game's own stick deadzone.
 - **Steering**: tilt the controller like a wheel to move a stick.
 
-Horizontal aim can come from yaw (turning), roll (tilting) or both, and either axis can be inverted. Gyro can be **always on**, **on only while holding** an input (e.g. LT to aim down sights), **off while holding** (a clutch for repositioning the controller), or **toggled**. A **recenter** input sets the current tilt as straight for steering. Slow movement below a jitter threshold is scaled down to hide drift, and "Calibrate gyro" in the controller list measures the drift while the controller sits still. The PC action template turns on gyro mouse aiming while LT is held. StarCraft's Gameplay profile has a "+ Gyro" twin that moves the cursor by tilting, as an extra to the left stick. The library's shooters (Deus Ex, F.E.A.R., Max Payne 1 and 2) each ship three profiles: one without gyro, one with gyro as an extra, and a flick stick one that needs gyro. Their rules start on the plain one; picking another when the Guide offer appears makes that one the game's.
+Horizontal aim can come from yaw (turning), roll (tilting) or both, and either axis can be inverted. Gyro can be **always on**, **on only while holding** an input (e.g. LT to aim down sights), **off while holding** (a clutch for repositioning the controller), or **toggled**. A **recenter** input sets the current tilt as straight for steering. Slow movement below a jitter threshold is scaled down to hide drift, and "Calibrate gyro" in the controller list measures the drift while the controller sits still. The PC action template turns on gyro mouse aiming while LT is held. StarCraft's Gameplay profile has a "+ Gyro" twin that moves the cursor by tilting, as an extra to the left stick. The library's shooters (Deus Ex, F.E.A.R., Max Payne 1 and 2) each ship three profiles: one without gyro, one with gyro as an extra, and a flick stick one that needs gyro. Their rules start on the plain one; picking another when the Guide offer appears makes that one the setup's.
 
-## Per-game profiles
+## Automatic profile switching
 
-Each game's rules (on its Details tab) switch to one of its profiles when the game's window gets focus, and when it loses focus the default profile (on the Settings page; General › Gamepad unless changed, or "keep current profile") takes over. Each switch, and each game launch, shows a short toast at the top of the screen naming the controller profile now active and its game; switching back to the default when a game loses focus doesn't. Rules are checked game by game, in order; a rule can be switched off without deleting it. A rule matches on:
+Each setup's rules (on its Details tab) switch to one of its profiles when the game's window gets focus, and when it loses focus the default profile (on the Settings page; General › Gamepad unless changed, or "keep current profile") takes over. Each switch, and each game launch, shows a short toast at the top of the screen naming the controller profile now active and its setup; switching back to the default when a game loses focus doesn't. Rules are checked setup by setup, in order; a rule can be switched off without deleting it. A rule matches on:
 
 - **Executable**: the program's file name. For Wine/Proton games it's the Windows `.exe` (e.g. `eldenring.exe`), not the Wine loader.
 - **Steam App ID**: taken from the environment Steam sets, or from Proton's `steam_app_<id>` window class.
 - **Window class**.
 
-A game's Details tab lists recently focused windows with a one-click "+ Rule". Switching with Guide or the GUI stays in effect until focus changes again. Focusing the settings window never switches profiles.
+A setup's Details tab lists recently focused windows with a one-click "+ Rule". Switching with Guide or the GUI stays in effect until focus changes again. Focusing the settings window never switches profiles.
 
 Focus tracking depends on the desktop; the daemon picks the right one by itself and logs which one it uses (`padwight status` shows it):
 
@@ -207,9 +208,9 @@ GNOME is not supported: Mutter has no layer-shell, so the on-screen keyboard, me
 
 - **Overview**: a live controller drawing labelled with the active profile's mappings, and the controller list (Manage, Test rumble, Calibrate gyro).
 - **Settings**: automatic switching and its default profile, the on-screen keyboard and numpad, fallback glyphs, and colour-blind mode for menu colours.
-- **A game's Profiles tab**: the profile being edited, with its own labelled drawing and sub-tabs for Buttons, Sticks & triggers, Combos and Gyro. Mappings collapse to one-line summaries ("A ▸ Left click"); click a name to edit it. **Find by pressing** jumps to whatever you press or push on the controller.
-- **A game's Layers tab**: the game's layers, edited like a profile (see Layers).
-- **A game's Macros tab**: step editor with exact millisecond fields.
+- **A setup's Profiles tab**: the profile being edited, with its own labelled drawing and sub-tabs for Buttons, Sticks & triggers, Combos and Gyro. Mappings collapse to one-line summaries ("A ▸ Left click"); click a name to edit it. **Find by pressing** jumps to whatever you press or push on the controller.
+- **A setup's Layers tab**: the setup's layers, edited like a profile (see Layers).
+- **A setup's Macros tab**: step editor with exact millisecond fields.
 
 Problems that would block saving (unknown keys, missing macros, incomplete combos) are flagged on the row and with ⚠ on its tab. Section explanations sit behind ⓘ tooltips, and keys can be picked from an on-screen keyboard.
 
@@ -217,7 +218,7 @@ Problems that would block saving (unknown keys, missing macros, incomplete combo
 
 `padwight status | enable | disable | profile <name> | next-profile | reload | overlay-toggle | numpad-toggle | menu <name> | daemon`
 
-`profile <name>` looks in the active game, then General, then the first game with a profile of that name. `menu <name>` opens one of the active game's menus, or a shared one.
+`profile <name>` looks in the active setup, then General, then the first setup with a profile of that name. `menu <name>` opens one of the active setup's menus, or a shared one.
 
 When `padwight daemon` runs in a terminal, it keeps a live status line showing each controller's input and what is being output.
 

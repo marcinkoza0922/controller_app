@@ -2135,7 +2135,7 @@ impl Rule {
 /// A profile, by its game (`None`: General) and name.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct ProfileRef {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, rename = "setup", alias = "game", skip_serializing_if = "Option::is_none")]
     pub game: Option<String>,
     pub profile: String,
 }
@@ -2258,8 +2258,8 @@ impl PackInfo {
     }
 }
 
-/// A game: its profiles, the macros, menus and info overlays they use, and the rules that
-/// switch to it. General is a game too, with no rules.
+/// A controller setup: its profiles, the macros, menus and info overlays they use, and the rules
+/// that switch to it. General is a setup too, with no rules.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Game {
     pub name: String,
@@ -2594,7 +2594,7 @@ pub struct Config {
     pub general: Game,
     #[serde(default)]
     pub shared: Shared,
-    #[serde(default)]
+    #[serde(default, rename = "setups", alias = "games")]
     pub games: Vec<Game>,
     /// Set once Guide has been moved from switching profiles to the Guide layer (see
     /// `Game::adopt_guide_layer`), so a later edit back to the old binding stays.
@@ -3056,6 +3056,19 @@ mod tests {
         let text = toml::to_string_pretty(&config).unwrap();
         let back: Config = toml::from_str(&text).unwrap();
         assert_eq!(config, back);
+    }
+
+    #[test]
+    fn setups_are_saved_as_setups_and_old_games_keys_still_load() {
+        let mut config = Config::default();
+        config.games.push(Game::new("Doom", vec![Profile::passthrough("Play")]));
+        config.active = ProfileRef::new(Some("Doom"), "Gamepad");
+        let text = toml::to_string_pretty(&config).unwrap();
+        assert!(text.contains("[[setups]]") && text.contains("setup = \"Doom\""), "{text}");
+        assert!(!text.contains("[[games]]"), "{text}");
+        assert_eq!(toml::from_str::<Config>(&text).unwrap(), config);
+        let old = text.replace("setups", "games").replace("setup = ", "game = ");
+        assert_eq!(toml::from_str::<Config>(&old).unwrap(), config);
     }
 
     #[test]
@@ -3556,7 +3569,7 @@ always = true
         assert_eq!((souls.name.as_str(), souls.profiles[0].name.as_str()), ("Souls", "Souls"));
         assert_eq!(souls.rules, [Rule::new(RuleKind::SteamAppId, "1245620", "Souls")]);
         assert_eq!(souls.names(ItemKind::Macro), ["Roll"]);
-        assert_eq!(config.shared.names(ItemKind::Macro), ["Screenshot", "Both"], "unscoped, or spread over games");
+        assert_eq!(config.shared.names(ItemKind::Macro), ["Screenshot", "Both"], "unscoped, or spread over setups");
         assert_eq!(config.general.names(ItemKind::Info), ["Help"]);
         assert!(config.general.info[0].always);
         assert_eq!(config.active, ProfileRef::new(Some("Souls"), "Souls"));
@@ -3578,7 +3591,7 @@ always = true
         value.insert("auto_switch".into(), auto.into());
         let config = Config::from_legacy(&toml::to_string(&value).unwrap()).unwrap();
         assert_eq!(config.games[0].name, "Gamepad");
-        assert_eq!(config.general.profiles[0].name, "Gamepad (2)", "named apart from the game's profile");
+        assert_eq!(config.general.profiles[0].name, "Gamepad (2)", "named apart from the setup's profile");
         assert!(config.auto_switch.enabled);
         assert_eq!(config.active, ProfileRef::new(Some("Gamepad"), "Gamepad"));
     }
@@ -3620,7 +3633,7 @@ always = true
         config.games.push(Game::new("Doom", vec![Profile::pc_action("Play")]));
         config.active = ProfileRef::new(Some("Doom"), "Gone");
         assert_eq!(config.active_ref(), ProfileRef::new(Some("Doom"), "Play"));
-        config.active = ProfileRef::new(Some("No such game"), "Play");
+        config.active = ProfileRef::new(Some("No such setup"), "Play");
         assert_eq!(config.active_ref(), ProfileRef::new(None, "Gamepad"));
     }
 

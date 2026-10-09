@@ -12,7 +12,7 @@ pub(super) fn origin_note(game: &Game) -> Option<String> {
     Some(format!("from {source}, version {}{by}", origin.version))
 }
 
-/// An entry in the auto-switch "Otherwise use" list.
+/// An entry in the auto-switch "When no setup matches, use" list.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct DefaultChoice(pub(super) Option<ProfileRef>);
 
@@ -83,6 +83,13 @@ impl App {
                 self.game_tab = tab;
                 self.found = None;
             }
+            Message::SelectChapter(chapter) => self.manual_chapter = chapter,
+            Message::ManualLink(link) => {
+                if let Some(chapter) = manual::chapter_of(&link) {
+                    self.manual_chapter = chapter;
+                }
+            }
+            Message::SystemMode(mode) => self.theme_mode = mode,
             Message::SetSharedView(shared) => {
                 self.shared_view = shared;
                 self.reset_page_state();
@@ -201,10 +208,11 @@ impl App {
         let mut col = column![
             entry("Overview".into(), Page::Overview, None),
             entry("Settings".into(), Page::Settings, None),
+            entry("Manual".into(), Page::Manual, None),
             rule::horizontal(1),
             entry("General".into(), Page::Game(None), playing(&None)),
-            text("Games").size(13).color(MUTED_COLOR),
-            field("Search games", &self.game_search).on_input(Message::SetGameSearch).size(14),
+            text("Setups").size(13).color(MUTED_COLOR),
+            field("Search setups", &self.game_search).on_input(Message::SetGameSearch).size(14),
         ]
         .spacing(6);
         let search = self.game_search.trim().to_lowercase();
@@ -217,9 +225,9 @@ impl App {
             col = col.push(entry(label, Page::Game(key), note));
         }
         if self.config.games.is_empty() {
-            col = col.push(text("No games yet.").size(13).color(MUTED_COLOR));
+            col = col.push(text("No setups yet. Use + Add setup to add one.").size(13).color(MUTED_COLOR));
         }
-        col = col.push(button(text("+ Add game").size(14)).width(Length::Fill).style(style::secondary).on_press(Message::OpenAddGame));
+        col = col.push(button(text("+ Add setup").size(14)).width(Length::Fill).style(style::secondary).on_press(Message::OpenAddGame));
         container(scrollable(col.padding(12)).height(Length::Fill)).width(SIDEBAR_WIDTH).into()
     }
 
@@ -277,7 +285,7 @@ impl App {
             };
             col = col.push(
                 row![
-                    container(row![choice("General's own", false), choice("Shared by all games", true)].spacing(2))
+                    container(row![choice("General's own", false), choice("Shared by all setups", true)].spacing(2))
                         .padding(3)
                         .style(style::segments),
                     help(
@@ -382,11 +390,11 @@ impl App {
                     } else if d.ignored {
                         "ignored"
                     } else if !status.enabled {
-                        "idle (disabled)"
+                        "paused (remapping is off)"
                     } else {
-                        "not grabbed"
+                        "not remapped"
                     };
-                    let state = if d.analog_triggers { state.to_string() } else { format!("{state} · digital triggers") };
+                    let state = if d.analog_triggers { state.to_string() } else { format!("{state} · on/off triggers") };
                     let state = if d.rumble { state } else { format!("{state} · no rumble") };
                     let state = if d.gyro { format!("{state} · gyro") } else { state };
                     let calibrate: Element<'_, Message> = if d.gyro {
@@ -468,13 +476,13 @@ impl App {
         );
         let default = DefaultChoice(auto.default_profile.clone());
         section(
-            "Per-game profiles",
-            Some("Each game's rules (on its Details tab) say which windows switch to which of its profiles.".into()),
+            "Per-setup profiles",
+            Some("On its Details tab, each setup's rules decide which windows switch to which of its profiles.".into()),
             vec![
                 row![
                     toggler(auto.enabled).label("Switch profiles automatically").on_toggle(Message::SetAutoSwitch),
                     space::horizontal(),
-                    text("Outside games use"),
+                    text("When no setup matches, use"),
                     dropdown(defaults, Some(default), Message::SetDefaultProfile).width(280),
                 ]
                 .spacing(12)
@@ -518,7 +526,7 @@ impl App {
             rules = rules.push(line);
         }
         if game.rules.is_empty() {
-            rules = rules.push(text("No rules: this game is only used when picked by hand.").size(13).color(MUTED_COLOR));
+            rules = rules.push(text("No rules yet. This setup only starts when you pick it yourself.").size(13).color(MUTED_COLOR));
         }
         rules = rules.push(button(text("+ Add rule").size(13)).style(style::secondary).on_press(Message::AddRule(None)));
         // This app's own window is never a game.
@@ -576,9 +584,9 @@ impl App {
                 );
             }
         } else if !game.pack.id.is_empty() {
-            pack_rows.push(text(format!("You've exported this game (version {}).", game.pack.version)).into());
+            pack_rows.push(text(format!("You've exported this setup (version {}).", game.pack.version)).into());
         } else {
-            pack_rows.push(text("Export this game to share it as a .padpack file.").size(13).color(MUTED_COLOR).into());
+            pack_rows.push(text("Export this setup to share it as a .padpack file.").size(13).color(MUTED_COLOR).into());
         }
         if let Some(b) = &game.pack.based_on {
             pack_rows.push(text(format!("Based on {} {} by {}.", b.name, b.version, b.author)).size(13).color(MUTED_COLOR).into());
@@ -590,7 +598,7 @@ impl App {
             row![
                 button(text("Export…")).on_press(Message::OpenExport),
                 space::horizontal(),
-                button(text("Delete game")).style(button::danger).on_press(Message::AskDeleteGame),
+                button(text("Delete setup")).style(button::danger).on_press(Message::AskDeleteGame),
             ]
             .spacing(8)
             .into(),
@@ -599,11 +607,11 @@ impl App {
         column![
             labeled(
                 "Name",
-                field("Game name", &game.name).on_input(Message::RenameGame).width(260).into(),
+                field("Setup name", &game.name).on_input(Message::RenameGame).width(260).into(),
             ),
             section(
                 "Auto-switch rules",
-                Some("When the focused window (or a running process) matches a rule, its profile becomes active. Untick a rule to switch it off.".into()),
+                Some("A rule switches to its profile when a matching window has focus, or a matching program is running. Untick a rule to turn it off.".into()),
                 vec![rules.into()],
             ),
             self.view_game_overlays(),
@@ -763,7 +771,7 @@ mod tests {
         let _ = app.update(Message::SetRuleValue(1, "x".into()));
         let _ = app.update(Message::SetRuleProfile(1, "Gone".into()));
         let err = app.validate().unwrap();
-        assert!(err.starts_with("Doom: ") && err.contains("missing profile"), "{err}");
+        assert!(err.starts_with("Doom: ") && err.contains("doesn't exist"), "{err}");
         let _ = app.update(Message::RemoveRule(1));
         let _ = app.update(Message::SetRuleEnabled(0, false));
         assert!(!app.game().rules[0].enabled);
@@ -798,10 +806,10 @@ mod tests {
         assert_eq!(app.config.auto_switch.default_profile, None);
 
         let _ = app.update(Message::AddEmptyGame(Template::Strategy));
-        assert_eq!(app.page, Page::Game(Some("New game".into())));
+        assert_eq!(app.page, Page::Game(Some("New setup".into())));
         assert_eq!(app.game().profiles[0].name, "Strategy");
         assert_eq!(app.game_tab, GameTab::Details);
         let _ = app.update(Message::AddEmptyGame(Template::Gamepad));
-        assert_eq!(app.config.games[1].name, "New game 2");
+        assert_eq!(app.config.games[1].name, "New setup 2");
     }
 }

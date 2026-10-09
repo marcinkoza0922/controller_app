@@ -153,7 +153,7 @@ impl OfferSession {
             choices: Vec::new(),
             selected: 0,
             answers: answers.iter().map(|(b, t)| ((*b).into(), (*t).into())).collect(),
-            hint: "Tap Guide in a game this app doesn't know yet to be asked".into(),
+            hint: "To be asked again, tap Guide in a game padwight doesn't know yet".into(),
             style,
         }
     }
@@ -254,7 +254,7 @@ mod tests {
 
         let plan = pack::plan(&config, library[0].pack.clone(), true);
         pack::apply(&mut config, &plan, &pack::Choices::default());
-        assert!(candidates(&config, &library, &window("doom.exe"), None).is_empty(), "a game with rules is the config's");
+        assert!(candidates(&config, &library, &window("doom.exe"), None).is_empty(), "a setup with rules is the config's");
     }
 
     #[test]

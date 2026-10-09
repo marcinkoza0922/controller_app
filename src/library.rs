@@ -115,7 +115,7 @@ mod tests {
             let pack = pack::parse(text).unwrap_or_else(|e| panic!("{file}: {e:#}"));
             assert_eq!(pack.format, pack::FORMAT, "{file}: write library packs at the current format");
             assert!(ids.insert(pack.pack.id.clone()), "{file}: pack ID used twice");
-            assert!(names.insert(pack.pack.name.to_lowercase()), "{file}: game name used twice");
+            assert!(names.insert(pack.pack.name.to_lowercase()), "{file}: setup name used twice");
             assert_eq!(problems(&pack), Vec::<String>::new(), "{file}");
         }
         assert_eq!(entries().len(), files::FILES.len());
@@ -182,7 +182,7 @@ mod tests {
         entry.pack.pack.version = "1.1".into();
         assert_eq!(updates(&config, std::slice::from_ref(&entry)).len(), 1);
         config.games[0].origin.as_mut().unwrap().library = false;
-        assert!(updates(&config, &[entry]).is_empty(), "only library games follow the library");
+        assert!(updates(&config, &[entry]).is_empty(), "only library setups follow the library");
     }
 
     #[test]

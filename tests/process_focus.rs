@@ -26,7 +26,7 @@ const GAME_PROFILE: &str = "Fake Pad";
 /// The default config with one game added: a rule that matches [`GAME_EXE`], and a profile copied
 /// from the General Gamepad profile, so it maps the same buttons under another name.
 fn game_config() -> String {
-    // The default config has an empty `games` list, which the game's `[[games]]` would repeat.
+    // The default config has an empty `setups` list, which the game's `[[setups]]` would repeat.
     let text = default_config();
     assert!(text.contains("\ngames = []\n"), "the default config has an empty games list");
     let text = text.replace("\ngames = []\n", "\n");
@@ -45,7 +45,7 @@ fn game_config() -> String {
     let profile = general.join("\n").replace("general.profiles", "games.profiles").replace("name = \"Gamepad\"", &format!("name = \"{GAME_PROFILE}\""));
     assert!(profile.contains(&format!("name = \"{GAME_PROFILE}\"")), "the default config has a Gamepad profile");
     format!(
-        "{text}\n[[games]]\nname = \"{GAME}\"\n\n[[games.rules]]\nkind = \"executable\"\nvalue = \"{GAME_EXE}\"\nprofile = \"{GAME_PROFILE}\"\n\n{profile}\n"
+        "{text}\n[[setups]]\nname = \"{GAME}\"\n\n[[setups.rules]]\nkind = \"executable\"\nvalue = \"{GAME_EXE}\"\nprofile = \"{GAME_PROFILE}\"\n\n{profile}\n"
     )
 }
 

@@ -68,7 +68,7 @@ pub fn start(game: &str) -> Result<(Child, PathBuf)> {
             return Ok((child, path));
         }
     }
-    bail!("{PROGRAM} could not start (is it set up for screen capture?)")
+    bail!("{PROGRAM} couldn't start. Is it set up for screen capture?")
 }
 
 /// Asks the recorder to finish its file and exit.

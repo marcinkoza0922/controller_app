@@ -81,13 +81,13 @@ impl App {
                 }
             }
             Message::AddEmptyGame(template) => {
-                let name = unique_name("New game", |n| self.config.games.iter().any(|g| g.name == n));
+                let name = unique_name("New setup", |n| self.config.games.iter().any(|g| g.name == n));
                 let profile = template.make(template.base_name());
                 self.config.games.push(Game::new(&name, vec![profile]));
                 self.dialog = None;
                 self.show_game(Some(name));
                 self.game_tab = GameTab::Details;
-                self.message = Some(("Name the game and add a rule for it, then Save & apply.".into(), false));
+                self.message = Some(("Name the setup and add a rule for it, then Save & apply.".into(), false));
             }
             Message::PreviewLibrary(i) => {
                 if let Some(entry) = self.library.get(i) {
@@ -184,7 +184,7 @@ impl App {
                     // Remembered for the next export of this game.
                     g.pack = info;
                 }
-                self.message = Some((format!("Exported to {path}. Save & apply to remember its details."), false));
+                self.message = Some((format!("Exported to {path}. Save & apply to keep its details for next time."), false));
             }
             Message::Exported(Some(Err(e))) => self.message = Some((format!("Can't export: {e}"), true)),
             Message::AskDeleteGame => {
@@ -357,7 +357,7 @@ impl App {
 
         let mut list = column![
             row![
-                dropdown(Template::NEW, None::<Template>, Message::AddEmptyGame).placeholder("Empty game from a template…").width(300),
+                dropdown(Template::NEW, None::<Template>, Message::AddEmptyGame).placeholder("Empty setup from a template…").width(300),
                 button(text("Import a file…")).style(style::secondary).on_press(Message::ImportFile),
             ]
             .spacing(8),
@@ -402,11 +402,11 @@ impl App {
                     None => button(text("Preview & add…")).on_press(Message::PreviewLibrary(i)),
                 });
             }
-            None => details = details.push(text("Pick a game to see what's in it.").size(13).color(MUTED_COLOR)),
+            None => details = details.push(text("Pick a setup to see what's in it.").size(13).color(MUTED_COLOR)),
         }
 
         column![
-            text("Add a game").size(22),
+            text("Add a setup").size(22),
             field("Search the library", search).on_input(Message::SetLibrarySearch),
             row![list.width(Length::Fill), rule::vertical(1), details].spacing(16),
             row![space::horizontal(), button(text("Cancel")).style(style::secondary).on_press(Message::CloseDialog)],
@@ -429,7 +429,7 @@ impl App {
                 Some(pack::UpdateKind::Reinstall) => "the same version as",
                 _ => "a newer version than",
             };
-            col = col.push(text(format!("This is {what} the {name} you have ({installed}); it replaces it.")));
+            col = col.push(text(format!("This is {what} the {name} you already have ({installed}). Importing replaces it.")));
             if !plan.edited.is_empty() {
                 col = col.push(
                     text(format!("You've changed these since adding it, and the {} replaces them: {}.", verb.to_lowercase(), plan.edited.join(", ")))
@@ -441,7 +441,7 @@ impl App {
         if plan.name_clash {
             col = col.push(
                 column![
-                    text(format!("You already have a game named {}.", p.pack.name)),
+                    text(format!("You already have a setup named {}.", p.pack.name)),
                     row![
                         button(text(format!("Add as {}", plan.renamed)).size(13))
                             .style(if choices.replace { style::secondary } else { button::primary })
@@ -464,7 +464,7 @@ impl App {
         }
         let clashes: Vec<_> = pack::live_clashes(plan, choices).collect();
         if !clashes.is_empty() {
-            let mut list = column![text("Another game already has a rule for the same window. By default this game's rule takes over:").size(13)].spacing(4);
+            let mut list = column![text("Another setup already has a rule for the same window. By default this setup's rule takes over:").size(13)].spacing(4);
             for (c, clash) in clashes {
                 let rule = &p.rules[clash.rule];
                 let keep = choices.keep_mine.get(c).copied().unwrap_or(false);
@@ -488,7 +488,7 @@ impl App {
     }
 
     fn view_export<'a>(&'a self, game: &'a str, info: &'a PackInfo, library: bool, out: &'a pack::Export) -> Element<'a, Message> {
-        let Some(g) = self.config.game(Some(game)) else { return text("This game is gone.").into() };
+        let Some(g) = self.config.game(Some(game)) else { return text("This setup is gone.").into() };
         let p = &out.pack;
         let mut col = column![
             text(format!("Export {game}")).size(22),
@@ -568,7 +568,7 @@ impl App {
     }
 
     fn view_delete<'a>(&'a self, name: &'a str) -> Element<'a, Message> {
-        let Some(g) = self.config.game(Some(name)) else { return text("This game is gone.").into() };
+        let Some(g) = self.config.game(Some(name)) else { return text("This setup is gone.").into() };
         let list = |label: &str, names: Vec<&String>| -> Option<Element<'a, Message>> {
             (!names.is_empty()).then(|| {
                 let names: Vec<&str> = names.iter().map(|n| n.as_str()).collect();
@@ -618,8 +618,8 @@ impl App {
                 .map(|(i, e)| BrowseSource::Library(i, e.pack.pack.name.clone())),
         );
         let mut col = column![
-            text(format!("Copy a {} from another game", kind.noun())).size(22),
-            dropdown(sources, from.cloned(), Message::BrowseFrom).placeholder("Pick a game…").width(320),
+            text(format!("Copy a {} from another setup", kind.noun())).size(22),
+            dropdown(sources, from.cloned(), Message::BrowseFrom).placeholder("Pick a setup…").width(320),
         ]
         .spacing(12);
         if let Some(items) = from.and_then(|s| self.browse_items(s)) {
@@ -709,7 +709,7 @@ fn feature_notes<'a>(mut col: Column<'a, Message>, out: &pack::Export) -> Column
         col = col.push(line.size(13));
     }
     if !out.pack.profiles.iter().any(|p| p.usable_with(&[])) {
-        col = col.push(text("Every profile needs something beyond a plain XInput pad, so players without it get nothing. Consider adding a profile that works without.").size(13).color(ERROR_COLOR));
+        col = col.push(text("Every profile needs a feature beyond a plain controller, so players without it get nothing. Consider adding a profile that works without it.").size(13).color(ERROR_COLOR));
     }
     col
 }
@@ -837,15 +837,15 @@ fn file_stem(name: &str) -> String {
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
         .join("-");
-    format!("{}.{}", if stem.is_empty() { "game" } else { &stem }, pack::EXTENSION)
+    format!("{}.{}", if stem.is_empty() { "setup" } else { &stem }, pack::EXTENSION)
 }
 
 /// Asks for a pack file and reads it; `None` if the user cancelled.
 async fn pick_pack() -> Option<Result<String, String>> {
     tokio::task::spawn_blocking(|| {
         let path = rfd::FileDialog::new()
-            .set_title("Import a game pack")
-            .add_filter("Game pack", &[pack::EXTENSION])
+            .set_title("Import a setup pack")
+            .add_filter("Setup pack", &[pack::EXTENSION])
             .pick_file()?;
         Some(std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display())))
     })
@@ -857,8 +857,8 @@ async fn pick_pack() -> Option<Result<String, String>> {
 async fn save_pack(file_name: String, text: String, dir: Option<PathBuf>) -> Option<Result<String, String>> {
     tokio::task::spawn_blocking(move || {
         let mut chooser = rfd::FileDialog::new()
-            .set_title("Export game pack")
-            .add_filter("Game pack", &[pack::EXTENSION])
+            .set_title("Export setup pack")
+            .add_filter("Setup pack", &[pack::EXTENSION])
             .set_file_name(file_name);
         if let Some(dir) = dir {
             chooser = chooser.set_directory(dir);
@@ -881,7 +881,7 @@ mod tests {
     #[test]
     fn pack_file_names_are_tidy() {
         assert_eq!(file_stem("ELDEN RING: Nightreign"), "elden-ring-nightreign.padpack");
-        assert_eq!(file_stem("  "), "game.padpack");
+        assert_eq!(file_stem("  "), "setup.padpack");
     }
 
     #[test]

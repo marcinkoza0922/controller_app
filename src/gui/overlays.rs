@@ -166,7 +166,7 @@ fn game_overlay_card<'a>(
         Rc::new(move |s| set(Some(s))) as OnStyle<'a>
     };
     let toggle = checkbox(own.is_some())
-        .label("Use its own appearance in this game")
+        .label("Use its own appearance in this setup")
         .on_toggle(move |on| set(on.then(|| global.clone())));
     let mut rows: Vec<Element<'a, Message>> = vec![toggle.into()];
     if let Some(style) = own {

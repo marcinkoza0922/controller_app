@@ -7,7 +7,7 @@ edition = "2024"
 anyhow = "1.0.104"
 dirs = "7.0.0"
 evdev = "0.13"
-iced = { version = "0.14", features = ["svg", "tokio"] }
+iced = { version = "0.14", features = ["svg", "tokio", "markdown"] }
 iced_layershell = "0.19"
 libc = "0.2.190"
 # File chooser for importing and exporting packs, through the desktop portal.
