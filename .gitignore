@@ -27,3 +27,6 @@ rustc-ice-*.txt
 /build-dir/
 /repo/
 /.flatpak-builder/
+
+# Reference images for drawing the controller pictures
+/references/

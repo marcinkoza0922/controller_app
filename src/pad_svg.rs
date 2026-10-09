@@ -4,7 +4,11 @@
 
 use std::fmt::Write;
 
-mod body;
+mod labels;
+mod layout;
+
+pub use labels::{HEIGHT, LABEL_COLUMN, LABEL_TEXT_SIZE, MARGIN, RIGHT_COLUMN_X, WIDTH, place_labels};
+use layout::{DpadKind, Layout, Mark};
 
 use crate::{
     config::{Button, Trigger},
@@ -25,33 +29,7 @@ const IDLE: &str = "#1d2026";
 const IDLE_EDGE: &str = "#5d6470";
 const ACTIVE: &str = "#4ea1ff";
 
-/// How far (in SVG units) a fully deflected thumbstick cap travels from center.
-const STICK_TRAVEL: f32 = 13.0;
 const TRIGGER_HEIGHT: f32 = 30.0;
-
-/// Margin on each side of the controller for mapping labels.
-pub const MARGIN: f32 = 110.0;
-/// Size of the whole drawing, in SVG units (shown 1:1 in logical pixels).
-pub const WIDTH: f32 = 420.0 + 2.0 * MARGIN;
-pub const HEIGHT: f32 = 275.0;
-/// Width of each label column; label lines end at its inner edge.
-pub const LABEL_COLUMN: f32 = MARGIN - 6.0;
-/// Where the right label column starts.
-pub const RIGHT_COLUMN_X: f32 = MARGIN + 426.0;
-const LABEL_SPACING: f32 = 29.0;
-/// Font size of label text, in logical pixels.
-pub const LABEL_TEXT_SIZE: f32 = 11.0;
-/// Room for label text inside its pill: the column less the pill's padding and border.
-const LABEL_TEXT_WIDTH: f32 = LABEL_COLUMN - 14.0;
-
-const FACE_CENTER: (f32, f32) = (302.0, 118.0);
-/// The face buttons, each with its offset from `FACE_CENTER`.
-const FACE_BUTTONS: [(Button, (f32, f32)); 4] = [
-    (Button::South, (0.0, 22.0)),
-    (Button::East, (22.0, 0.0)),
-    (Button::West, (-22.0, 0.0)),
-    (Button::North, (0.0, -22.0)),
-];
 
 /// How a face button is drawn: its label and color for the controller's family (as the overlays
 /// draw it), and whether that color fills it when pressed. Nintendo's have no color, so they're
@@ -72,46 +50,11 @@ pub struct Overlay {
     pub color: [u8; 3],
 }
 
-/// A mapping label's text and row; it sits in the left or right column.
-pub struct PlacedLabel {
-    pub text: String,
-    pub y: f32,
-    pub right: bool,
-    anchor: (f32, f32),
-}
-
-/// Where each label's leader line meets its button (before the margin offset), split into
-/// the column its label goes in, top to bottom in the order that keeps the lines from
-/// crossing (X, boxed in by Y, B and A, comes after them). Buttons with a letter on them are
-/// met at their edge so the line doesn't cover the letter.
-const LEFT_LABELS: [(Spot, (f32, f32)); 8] = [
-    (Spot::Trigger(Trigger::Left), (95.0, 21.0)),
-    (Spot::Button(Button::LeftBumper), (112.0, 47.0)),
-    (Spot::Button(Button::Select), (182.0, 118.0)),
-    (Spot::Button(Button::LeftStick), (118.0, 118.0)),
-    (Spot::Button(Button::DpadUp), (165.0, 150.0)),
-    (Spot::Button(Button::DpadLeft), (147.0, 168.0)),
-    (Spot::Button(Button::DpadRight), (183.0, 168.0)),
-    (Spot::Button(Button::DpadDown), (165.0, 186.0)),
-];
-const RIGHT_LABELS: [(Spot, (f32, f32)); 9] = [
-    (Spot::Trigger(Trigger::Right), (325.0, 21.0)),
-    (Spot::Button(Button::RightBumper), (308.0, 47.0)),
-    (Spot::Button(Button::Guide), (210.0, 88.0)),
-    (Spot::Button(Button::North), (313.0, 96.0)),
-    (Spot::Button(Button::East), (335.0, 118.0)),
-    (Spot::Button(Button::South), (313.0, 140.0)),
-    (Spot::Button(Button::West), (280.0, 129.0)),
-    (Spot::Button(Button::Start), (238.0, 118.0)),
-    (Spot::Button(Button::RightStick), (255.0, 168.0)),
-];
-
 /// Renders the controller of `model` (the generic one when `None`), with `labels` (text per
 /// button) drawn in the side margins. With no input everything is drawn at rest.
-#[expect(clippy::too_many_lines, reason = "predates the size lints")]
 pub fn render(input: Option<&InputSnapshot>, model: Option<PadModel>, glyphs: Glyphs, labels: &[(Spot, String)]) -> String {
+    let layout = Layout::of(model);
     let pressed = |b: Button| input.is_some_and(|i| i.buttons.contains(&b));
-    let fill = |b: Button| if pressed(b) { ACTIVE } else { IDLE };
     let (ls, rs, lt, rt) = input
         .map(|i| (i.left_stick, i.right_stick, i.left_trigger, i.right_trigger))
         .unwrap_or(((0.0, 0.0), (0.0, 0.0), 0.0, 0.0));
@@ -119,156 +62,156 @@ pub fn render(input: Option<&InputSnapshot>, model: Option<PadModel>, glyphs: Gl
     let mut s = String::with_capacity(8192);
     let _ = write!(
         s,
-        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {} 275"><g transform="translate({MARGIN},0)">"#,
-        420.0 + 2.0 * MARGIN
+        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {WIDTH} {HEIGHT}"><g transform="translate({MARGIN},0)">"#
     );
+    shoulders(&mut s, layout, [(lt, Button::LeftBumper), (rt, Button::RightBumper)], pressed);
 
-    // Triggers: outline with a fill that rises with pressure.
-    for (x, value) in [(95.0, lt), (285.0, rt)] {
-        let h = value.clamp(0.0, 1.0) * TRIGGER_HEIGHT;
-        let _ = write!(
-            s,
-            r#"<rect x="{x}" y="6" width="40" height="{TRIGGER_HEIGHT}" rx="8" fill="{IDLE}" stroke="{IDLE_EDGE}" stroke-width="2"/>"#
-        );
-        if h > 0.5 {
-            let _ = write!(
-                s,
-                r#"<rect x="{x}" y="{y}" width="40" height="{h}" rx="6" fill="{ACTIVE}"/>"#,
-                y = 6.0 + TRIGGER_HEIGHT - h
-            );
+    // Body, and the marks that tell the models apart.
+    let _ = write!(s, r#"<path d="{}" fill="{BODY}" stroke="{BODY_EDGE}" stroke-width="3"/>"#, layout.outline);
+    for mark in layout.marks {
+        match *mark {
+            Mark::Rect(x, y, w, h, rx) => {
+                let _ = write!(s, r#"<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="{rx}" fill="{IDLE}" stroke="{IDLE_EDGE}" stroke-width="2"/>"#);
+            }
+            Mark::Circle(x, y, r) => {
+                let _ = write!(s, r#"<circle cx="{x}" cy="{y}" r="{r}" fill="{IDLE}" stroke="{IDLE_EDGE}" stroke-width="1.5"/>"#);
+            }
         }
     }
 
-    // Bumpers.
-    for (x, b) in [(72.0, Button::LeftBumper), (268.0, Button::RightBumper)] {
-        let _ = write!(
-            s,
-            r#"<rect x="{x}" y="40" width="80" height="14" rx="7" fill="{}" stroke="{IDLE_EDGE}" stroke-width="2"/>"#,
-            fill(b)
-        );
-    }
-
-    // Body, and the marks that tell the models apart.
-    s.push_str(&body::outline(model));
-    s.push_str(&body::marks(model));
-
-    stick(&mut s, 118.0, 118.0, ls, pressed(Button::LeftStick));
-    stick(&mut s, 255.0, 168.0, rs, pressed(Button::RightStick));
-
-    // D-pad: a center square with four arms.
-    let (cx, cy) = (165.0, 168.0);
-    let _ = write!(s, r#"<rect x="{}" y="{}" width="16" height="16" fill="{IDLE}"/>"#, cx - 8.0, cy - 8.0);
-    for (dx, dy, w, h, b) in [
-        (-8.0, -26.0, 16.0, 18.0, Button::DpadUp),
-        (-8.0, 8.0, 16.0, 18.0, Button::DpadDown),
-        (-26.0, -8.0, 18.0, 16.0, Button::DpadLeft),
-        (8.0, -8.0, 18.0, 16.0, Button::DpadRight),
-    ] {
-        let _ = write!(
-            s,
-            r#"<rect x="{}" y="{}" width="{w}" height="{h}" rx="3" fill="{}" stroke="{IDLE_EDGE}" stroke-width="1.5"/>"#,
-            cx + dx,
-            cy + dy,
-            fill(b)
-        );
-    }
+    stick(&mut s, layout.left_stick, layout.stick_r, ls, pressed(Button::LeftStick));
+    stick(&mut s, layout.right_stick, layout.stick_r, rs, pressed(Button::RightStick));
+    dpad(&mut s, layout, pressed);
 
     // Face buttons, colored as the controller's family colors them (letters come from `overlays`).
-    for (button, offset) in FACE_BUTTONS {
+    for (button, (x, y)) in face_positions(layout) {
         let (_, [r, g, bl], filled) = face_look(button, glyphs);
         let color = format!("#{r:02x}{g:02x}{bl:02x}");
         let lit = if filled { color.as_str() } else { ACTIVE };
         let bg = if pressed(button) { lit } else { IDLE };
-        let (x, y) = (FACE_CENTER.0 + offset.0, FACE_CENTER.1 + offset.1);
         let _ = write!(
             s,
-            r#"<circle cx="{x}" cy="{y}" r="11" fill="{bg}" stroke="{color}" stroke-width="2"/>"#
+            r#"<circle cx="{x}" cy="{y}" r="{}" fill="{bg}" stroke="{color}" stroke-width="2"/>"#,
+            layout.face_r
         );
     }
 
     // Select, Guide, Start.
-    for (x, y, r, b) in [
-        (182.0, 118.0, 7.0, Button::Select),
-        (210.0, 88.0, 13.0, Button::Guide),
-        (238.0, 118.0, 7.0, Button::Start),
-    ] {
-        let _ = write!(
-            s,
-            r#"<circle cx="{x}" cy="{y}" r="{r}" fill="{}" stroke="{IDLE_EDGE}" stroke-width="2"/>"#,
-            fill(b)
-        );
+    for (b, (x, y, r)) in [(Button::Select, layout.select), (Button::Guide, layout.guide), (Button::Start, layout.start)] {
+        let fill = if pressed(b) { ACTIVE } else { IDLE };
+        let _ = write!(s, r#"<circle cx="{x}" cy="{y}" r="{r}" fill="{fill}" stroke="{IDLE_EDGE}" stroke-width="2"/>"#);
     }
 
     s.push_str("</g>");
-    draw_labels(&mut s, labels);
+    labels::draw_labels(&mut s, labels, model);
     s.push_str("</svg>");
     s
 }
 
-/// Lays out mapping labels top to bottom in each margin column.
-pub fn place_labels(labels: &[(Spot, String)]) -> Vec<PlacedLabel> {
-    let text_for = |b: Spot| labels.iter().find(|(l, _)| *l == b).map(|(_, t)| t.as_str());
-    let mut placed = Vec::new();
-    for (right, anchors) in [(false, &LEFT_LABELS[..]), (true, &RIGHT_LABELS[..])] {
-        let mut row = 0.0;
-        for (spot, (ax, ay)) in anchors {
-            let Some(label) = text_for(*spot) else { continue };
-            placed.push(PlacedLabel { text: fit_label(label), y: 10.0 + row * LABEL_SPACING, right, anchor: (ax + MARGIN, *ay) });
-            row += 1.0;
+/// The face buttons with their centers: south, east, west, north.
+fn face_positions(layout: &Layout) -> [(Button, (f32, f32)); 4] {
+    let [south, east, west, north] = layout.face_offsets();
+    let at = |(dx, dy): (f32, f32)| (layout.face.0 + dx, layout.face.1 + dy);
+    [(Button::South, at(south)), (Button::East, at(east)), (Button::West, at(west)), (Button::North, at(north))]
+}
+
+/// Triggers (an outline with a fill that rises with pressure) above the bumpers.
+fn shoulders(s: &mut String, layout: &Layout, sides: [(f32, Button); 2], pressed: impl Fn(Button) -> bool) {
+    let w = layout.shoulder_w;
+    for ((value, bumper), cx) in sides.into_iter().zip([layout.shoulders.0, layout.shoulders.1]) {
+        let (x, tw) = (cx - w / 4.0, w / 2.0);
+        let h = value.clamp(0.0, 1.0) * TRIGGER_HEIGHT;
+        let _ = write!(
+            s,
+            r#"<rect x="{x}" y="6" width="{tw}" height="{TRIGGER_HEIGHT}" rx="8" fill="{IDLE}" stroke="{IDLE_EDGE}" stroke-width="2"/>"#
+        );
+        if h > 0.5 {
+            let _ = write!(
+                s,
+                r#"<rect x="{x}" y="{y}" width="{tw}" height="{h}" rx="6" fill="{ACTIVE}"/>"#,
+                y = 6.0 + TRIGGER_HEIGHT - h
+            );
         }
+        let fill = if pressed(bumper) { ACTIVE } else { IDLE };
+        let _ = write!(
+            s,
+            r#"<rect x="{}" y="40" width="{w}" height="14" rx="7" fill="{fill}" stroke="{IDLE_EDGE}" stroke-width="2"/>"#,
+            cx - w / 2.0
+        );
     }
-    placed
 }
 
-/// Shortens `label` with an ellipsis so it fits on one line of its column.
-fn fit_label(label: &str) -> String {
-    let budget = LABEL_TEXT_WIDTH / LABEL_TEXT_SIZE;
-    if label.chars().map(glyph_width).sum::<f32>() <= budget {
-        return label.to_string();
-    }
-    let mut used = glyph_width('…');
-    let mut text: String = label
-        .chars()
-        .take_while(|&c| {
-            used += glyph_width(c);
-            used <= budget
-        })
-        .collect();
-    text.truncate(text.trim_end().len());
-    text.push('…');
-    text
-}
-
-/// Rough advance width of `c` in ems (measured on Noto Sans), erring wide so a label never
-/// needs a second line.
-fn glyph_width(c: char) -> f32 {
-    match c {
-        'i' | 'j' | 'l' | '.' | ',' | ':' | ';' | '\'' | '!' | ' ' => 0.32,
-        'f' | 't' | 'r' | 'I' | '(' | ')' | '[' | ']' | '“' | '”' | '‘' | '’' | '"' | '-' => 0.45,
-        'm' | 'w' | 'M' | 'W' | '@' | '%' | '…' => 0.95,
-        c if c.is_ascii_lowercase() => 0.62,
-        _ => 0.8,
+/// The D-pad, in the shape the model has it; each direction lights up when pressed.
+fn dpad(s: &mut String, layout: &Layout, pressed: impl Fn(Button) -> bool) {
+    let (cx, cy) = layout.dpad;
+    let reach = layout.dpad_reach;
+    let half = reach * 8.0 / 26.0;
+    let arm = reach * 18.0 / 26.0;
+    let fill = |b: Button| if pressed(b) { ACTIVE } else { IDLE };
+    let arms = [
+        (Button::DpadUp, (0.0, -arm)),
+        (Button::DpadDown, (0.0, arm)),
+        (Button::DpadLeft, (-arm, 0.0)),
+        (Button::DpadRight, (arm, 0.0)),
+    ];
+    match layout.dpad_kind {
+        DpadKind::Cross => {
+            let _ = write!(s, r#"<rect x="{}" y="{}" width="{}" height="{}" fill="{IDLE}"/>"#, cx - half, cy - half, 2.0 * half, 2.0 * half);
+            for (b, (dx, dy)) in arms {
+                // Each arm runs from the center square out to `reach`.
+                let (w, h) = if dx == 0.0 { (2.0 * half, reach - half) } else { (reach - half, 2.0 * half) };
+                let x = if dx < 0.0 { cx - reach } else if dx > 0.0 { cx + half } else { cx - half };
+                let y = if dy < 0.0 { cy - reach } else if dy > 0.0 { cy + half } else { cy - half };
+                let _ = write!(
+                    s,
+                    r#"<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="{}" fill="{}" stroke="{IDLE_EDGE}" stroke-width="1.5"/>"#,
+                    half * 3.0 / 8.0,
+                    fill(b)
+                );
+            }
+        }
+        DpadKind::Disc => {
+            let _ = write!(s, r#"<circle cx="{cx}" cy="{cy}" r="{reach}" fill="{IDLE}" stroke="{IDLE_EDGE}" stroke-width="2"/>"#);
+            for (b, (dx, dy)) in arms {
+                let (w, h) = if dx == 0.0 { (1.6 * half, 0.9 * arm) } else { (0.9 * arm, 1.6 * half) };
+                let _ = write!(
+                    s,
+                    r#"<rect x="{}" y="{}" width="{w}" height="{h}" rx="2" fill="{}" stroke="{IDLE_EDGE}" stroke-width="1.5"/>"#,
+                    cx + dx * 0.85 - w / 2.0,
+                    cy + dy * 0.85 - h / 2.0,
+                    fill(b)
+                );
+            }
+        }
+        DpadKind::Buttons => {
+            for (b, (dx, dy)) in arms {
+                let _ = write!(
+                    s,
+                    r#"<circle cx="{}" cy="{}" r="{}" fill="{}" stroke="{IDLE_EDGE}" stroke-width="1.5"/>"#,
+                    cx + dx,
+                    cy + dy,
+                    reach * 0.35,
+                    fill(b)
+                );
+            }
+        }
     }
 }
 
 /// Button letters and trigger names, drawn by the GUI over the SVG.
-pub fn overlays(input: Option<&InputSnapshot>, glyphs: Glyphs) -> Vec<Overlay> {
+pub fn overlays(input: Option<&InputSnapshot>, model: Option<PadModel>, glyphs: Glyphs) -> Vec<Overlay> {
     const LABEL_RGB: [u8; 3] = [0xc9, 0xd1, 0xd9];
     const IDLE_RGB: [u8; 3] = [0x1d, 0x20, 0x26];
+    let layout = Layout::of(model);
     let pressed = |b: Button| input.is_some_and(|i| i.buttons.contains(&b));
-    let mut list: Vec<Overlay> = FACE_BUTTONS
+    let mut list: Vec<Overlay> = face_positions(layout)
         .into_iter()
-        .map(|(button, offset)| {
+        .map(|(button, (x, y))| {
             let (text, rgb, _) = face_look(button, glyphs);
-            Overlay {
-                x: FACE_CENTER.0 + offset.0 + MARGIN,
-                y: FACE_CENTER.1 + offset.1,
-                text,
-                color: if pressed(button) { IDLE_RGB } else { rgb },
-            }
+            Overlay { x: x + MARGIN, y, text, color: if pressed(button) { IDLE_RGB } else { rgb } }
         })
         .collect();
-    for (x, t) in [(115.0, Trigger::Left), (305.0, Trigger::Right)] {
+    for (x, t) in [(layout.shoulders.0, Trigger::Left), (layout.shoulders.1, Trigger::Right)] {
         let text = match trigger_glyph(t, glyphs.family) {
             Segment::Glyph { label, .. } => label,
             _ => String::new(),
@@ -278,26 +221,16 @@ pub fn overlays(input: Option<&InputSnapshot>, glyphs: Glyphs) -> Vec<Overlay> {
     list
 }
 
-/// Leader lines from each label's column edge to its button.
-fn draw_labels(s: &mut String, labels: &[(Spot, String)]) {
-    for l in place_labels(labels) {
-        let line_x = if l.right { RIGHT_COLUMN_X } else { LABEL_COLUMN };
-        let (ax, ay) = l.anchor;
-        let _ = write!(
-            s,
-            r#"<line x1="{line_x}" y1="{}" x2="{ax}" y2="{ay}" stroke="{ACTIVE}" stroke-width="1" stroke-opacity="0.55"/><circle cx="{ax}" cy="{ay}" r="2.5" fill="{ACTIVE}"/>"#,
-            l.y + 10.0
-        );
-    }
-}
-
-
-fn stick(s: &mut String, cx: f32, cy: f32, (x, y): (f32, f32), clicked: bool) {
-    let (tx, ty) = (cx + x.clamp(-1.0, 1.0) * STICK_TRAVEL, cy + y.clamp(-1.0, 1.0) * STICK_TRAVEL);
+/// A thumbstick: its well, and the cap pushed off center by `(x, y)` (-1 to 1 each way).
+fn stick(s: &mut String, (cx, cy): (f32, f32), r: f32, (x, y): (f32, f32), clicked: bool) {
+    let travel = r * 13.0 / 27.0;
+    let (tx, ty) = (cx + x.clamp(-1.0, 1.0) * travel, cy + y.clamp(-1.0, 1.0) * travel);
+    let cap_r = r * 2.0 / 3.0;
     let cap = if clicked { ACTIVE } else { "#3a3f48" };
     let _ = write!(
         s,
-        r#"<circle cx="{cx}" cy="{cy}" r="27" fill="{IDLE}" stroke="{IDLE_EDGE}" stroke-width="2"/><circle cx="{tx}" cy="{ty}" r="18" fill="{cap}" stroke="{IDLE_EDGE}" stroke-width="2"/><circle cx="{tx}" cy="{ty}" r="11" fill="none" stroke="{IDLE_EDGE}" stroke-width="1.5"/>"#
+        r#"<circle cx="{cx}" cy="{cy}" r="{r}" fill="{IDLE}" stroke="{IDLE_EDGE}" stroke-width="2"/><circle cx="{tx}" cy="{ty}" r="{cap_r}" fill="{cap}" stroke="{IDLE_EDGE}" stroke-width="2"/><circle cx="{tx}" cy="{ty}" r="{}" fill="none" stroke="{IDLE_EDGE}" stroke-width="1.5"/>"#,
+        cap_r * 11.0 / 18.0
     );
 }
 
@@ -331,7 +264,7 @@ mod tests {
     fn letters_follow_the_controllers_family_and_layout() {
         use crate::info::PadFamily::{Nintendo, PlayStation, Xbox};
         let texts = |family, nintendo_layout| -> Vec<String> {
-            overlays(None, Glyphs { family, nintendo_layout }).into_iter().map(|o| o.text).collect()
+            overlays(None, None, Glyphs { family, nintendo_layout }).into_iter().map(|o| o.text).collect()
         };
         // South, East, West, North, then the triggers.
         assert_eq!(texts(Xbox, false), ["A", "B", "X", "Y", "LT", "RT"]);
@@ -350,7 +283,22 @@ mod tests {
 
     #[test]
     fn each_model_has_its_own_picture() {
-        let models = [None, Some(PadModel::DualShock4), Some(PadModel::DualSense), Some(PadModel::ProController)];
+        let models = [
+            None,
+            Some(PadModel::DualShock4),
+            Some(PadModel::DualSense),
+            Some(PadModel::DualSenseEdge),
+            Some(PadModel::ProController),
+            Some(PadModel::Switch2Pro),
+            Some(PadModel::JoyCons),
+            Some(PadModel::JoyCons2),
+            Some(PadModel::Xbox360),
+            Some(PadModel::XboxOne),
+            Some(PadModel::XboxSeries),
+            Some(PadModel::XboxElite),
+            Some(PadModel::SteamController),
+            Some(PadModel::WiiUPro),
+        ];
         let drawings: Vec<String> = models.iter().map(|m| render(None, *m, Glyphs::default(), &[])).collect();
         for (i, a) in drawings.iter().enumerate() {
             for b in &drawings[i + 1..] {
@@ -370,30 +318,6 @@ mod tests {
     }
 
     #[test]
-    fn labels_fill_columns_top_down_and_truncate() {
-        let labels = [
-            (Spot::Button(Button::South), "Left click".to_string()),
-            (Spot::Trigger(Trigger::Left), "A very long mapping description".to_string()),
-            (Spot::Button(Button::DpadUp), "Up".to_string()),
-        ];
-        let placed = place_labels(&labels);
-        let left: Vec<&str> = placed.iter().filter(|l| !l.right).map(|l| l.text.as_str()).collect();
-        let right: Vec<&str> = placed.iter().filter(|l| l.right).map(|l| l.text.as_str()).collect();
-        assert_eq!(left, ["A very long m…", "Up"]);
-        assert_eq!(right, ["Left click"]);
-        // Rows are packed: the second label in a column sits one row below the first.
-        let ys: Vec<f32> = placed.iter().filter(|l| !l.right).map(|l| l.y).collect();
-        assert_eq!(ys[1] - ys[0], LABEL_SPACING);
-    }
-
-    #[test]
-    fn wide_letters_are_cut_sooner_than_narrow_ones() {
-        assert_eq!(fit_label("Menu “Augmentations”"), "Menu “Augme…");
-        assert_eq!(fit_label("Hold: fill all"), "Hold: fill all");
-        assert_eq!(fit_label("Keypad PLUS"), "Keypad PLUS");
-    }
-
-    #[test]
     fn pressed_face_button_letter_switches_color() {
         let input = InputSnapshot {
             device: "Pad".into(),
@@ -407,6 +331,6 @@ mod tests {
             gyro: None,
         };
         let a = |o: Vec<Overlay>| o.into_iter().find(|o| o.text == "A").unwrap().color;
-        assert_ne!(a(overlays(None, Glyphs::default())), a(overlays(Some(&input), Glyphs::default())));
+        assert_ne!(a(overlays(None, None, Glyphs::default())), a(overlays(Some(&input), None, Glyphs::default())));
     }
 }
