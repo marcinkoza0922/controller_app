@@ -22,6 +22,7 @@ pub(super) struct Ui<'a> {
     pub(super) found: Option<Button>,
     pub(super) analog_triggers: bool,
     pub(super) any_gyro: bool,
+    pub(super) any_paddles: bool,
     /// Live stick positions (left, right) for previews, when a controller is connected.
     pub(super) live_sticks: Option<[(f32, f32); 2]>,
     /// Whose button glyphs to draw (see `App::glyph_family`).
@@ -281,18 +282,29 @@ pub(super) fn drawing_labels(p: &Profile) -> Vec<(pad_svg::Spot, String)> {
 pub(super) fn view_profile<'a>(p: &'a Profile, ui: &Ui, tab: ProfileTab) -> Element<'a, Message> {
     let names = ui.names;
     let sections: Vec<Element<'a, Message>> = match tab {
-        ProfileTab::Buttons => vec![section(
-            "Buttons",
-            Some(
-                "Click a button's name to edit it. Add a double tap, triple tap or long press \
-                 with the \"+\" buttons under its actions. Buttons with gestures act once the gesture \
-                 is decided: a quick tap fires after the tap window; held past the tap window, the \
-                 button's own action presses \
-                 and holds until release (unless a long press is set, which takes over when held)."
-                    .into(),
+        ProfileTab::Buttons => vec![
+            section(
+                "Buttons",
+                Some(
+                    "Click a button's name to edit it. Add a double tap, triple tap or long press \
+                     with the \"+\" buttons under its actions. Buttons with gestures act once the gesture \
+                     is decided: a quick tap fires after the tap window; held past the tap window, the \
+                     button's own action presses \
+                     and holds until release (unless a long press is set, which takes over when held)."
+                        .into(),
+                ),
+                button_rows(p, ui),
             ),
-            button_rows(p, ui),
-        )],
+            section(
+                "Back paddles",
+                Some(
+                    "The extra buttons on the back of some controllers (Xbox Elite, DualSense Edge, Steam Deck). \
+                     Map them like any button."
+                        .into(),
+                ),
+                paddle_rows(p, ui),
+            ),
+        ],
         ProfileTab::Sticks => {
             let mut sticks = Vec::new();
             for s in [Stick::Left, Stick::Right] {
@@ -353,7 +365,7 @@ pub(super) fn view_profile<'a>(p: &'a Profile, ui: &Ui, tab: ProfileTab) -> Elem
                 layer_part(ui, LayerPart::Gyro, "Gyro".into(), summary, || gyro_rows(&p.gyro, ui.any_gyro)),
             )];
             if ui.layer.is_none() {
-                sections.push(requirement_section(p));
+                sections.push(section("Controller requirements", None, requirement_rows(p, Feature::Gyro)));
             }
             sections
         }
@@ -476,28 +488,50 @@ impl fmt::Display for RecenterChoice {
 /// Where the profile's author says what it can't be played without. Never worked out from
 /// the settings: a profile that adds gyro aiming to a scheme that works without it leaves
 /// the box unticked.
-fn requirement_section(p: &Profile) -> Element<'_, Message> {
-    let rows = Feature::ALL
-        .into_iter()
-        .map(|f| {
-            let has = p.requires.contains(&f);
-            let toggled = move |on: bool| {
-                let mut all: Vec<Feature> = p.requires.iter().copied().filter(|x| *x != f).collect();
-                all.extend(on.then_some(f));
-                Message::SetRequires(all)
-            };
-            checkbox(has).label(format!("Can't be played without {}", f.label())).on_toggle(toggled).into()
-        })
-        .chain([text(
+fn requirement_rows(p: &Profile, f: Feature) -> Vec<Element<'_, Message>> {
+    let has = p.requires.contains(&f);
+    let toggled = move |on: bool| {
+        let mut all: Vec<Feature> = p.requires.iter().copied().filter(|x| *x != f).collect();
+        all.extend(on.then_some(f));
+        Message::SetRequires(all)
+    };
+    let hint = match f {
+        Feature::Gyro => {
             "You decide this; it isn't detected. Tick it when the profile depends on the feature (for example a flick stick \
              setup that turns vertically with gyro). Leave it unticked when it only adds to a scheme that works without. \
-             Players whose controller lacks a ticked feature aren't offered the profile, and Guide skips it.",
-        )
-        .size(12)
-        .color(MUTED_COLOR)
-        .into()])
-        .collect();
-    section("Controller requirements", None, rows)
+             Players whose controller lacks a ticked feature aren't offered the profile, and Guide skips it."
+        }
+        Feature::BackPaddles => {
+            "You decide this; it isn't detected. Tick it when the profile needs a paddle to be played (a jump that's only on \
+             a paddle, say). Leave it unticked when paddles only add extra inputs to a scheme that works without them. \
+             Players whose controller has no paddles aren't offered the profile, and Guide skips it."
+        }
+    };
+    vec![
+        checkbox(has).label(format!("Can't be played without {}", f.label())).on_toggle(toggled).into(),
+        text(hint).size(12).color(MUTED_COLOR).into(),
+    ]
+}
+
+/// The back paddles' mappings, with the box saying whether the profile needs them. Layers
+/// can override them like any button, so the box is left out there.
+pub(super) fn paddle_rows<'a>(p: &'a Profile, ui: &Ui) -> Vec<Element<'a, Message>> {
+    let mut rows: Vec<Element<'a, Message>> = Vec::new();
+    if ui.layer.is_none() {
+        if !ui.any_paddles {
+            rows.push(
+                text("None of your managed controllers have back paddles. These mappings take effect once one is connected.")
+                    .size(13)
+                    .color(MUTED_COLOR)
+                    .into(),
+            );
+        }
+        rows.extend(requirement_rows(p, Feature::BackPaddles));
+    }
+    for b in Button::PADDLES {
+        rows.extend(button_row(p, b, ui));
+    }
+    rows
 }
 
 #[expect(clippy::too_many_lines, reason = "predates the size lints")]
@@ -1482,7 +1516,7 @@ impl App {
             }
             Message::ExpandAll(open) => {
                 let targets: Vec<Target> = match self.profile_tab {
-                    ProfileTab::Buttons => Button::ALL.into_iter().map(Target::Button).collect(),
+                    ProfileTab::Buttons => Button::ALL.into_iter().chain(Button::PADDLES).map(Target::Button).collect(),
                     ProfileTab::Sticks => [Stick::Left, Stick::Right]
                         .into_iter()
                         .flat_map(Button::stick_directions)
@@ -1577,6 +1611,10 @@ impl App {
         }
         let (tab, position) = match Button::ALL.iter().position(|x| *x == b) {
             Some(i) => (ProfileTab::Buttons, i as f32 / Button::ALL.len() as f32),
+            None if Button::PADDLES.contains(&b) => {
+                let i = Button::PADDLES.iter().position(|x| *x == b).unwrap_or_default();
+                (ProfileTab::Buttons, (Button::ALL.len() + i) as f32 / (Button::ALL.len() + Button::PADDLES.len()) as f32)
+            }
             None => {
                 let right = b.stick_direction().is_some_and(|(s, _)| s == Stick::Right);
                 (ProfileTab::Sticks, if right { 0.75 } else { 0.25 })
@@ -1643,6 +1681,7 @@ impl App {
             found: self.found,
             analog_triggers: self.analog_triggers(),
             any_gyro: self.any_gyro(),
+            any_paddles: self.any_paddles(),
             live_sticks: self.live.as_ref().map(|l| [l.left_stick, l.right_stick]),
             family: self.glyph_family(),
             nintendo_layout: self.nintendo_layout(),
@@ -1834,7 +1873,7 @@ mod tests {
         assert!(!app.finding, "one press ends find mode");
         assert_eq!((app.game_tab, app.profile_tab, app.found), (GameTab::Profiles, ProfileTab::Buttons, Some(Button::West)));
         let names = Names::default();
-        let ui = Ui { names: &names, expanded: &app.expanded, found: app.found, analog_triggers: true, any_gyro: false, live_sticks: None, family: PadFamily::default(), nintendo_layout: false, layer: None };
+        let ui = Ui { names: &names, expanded: &app.expanded, found: app.found, analog_triggers: true, any_gyro: false, any_paddles: false, live_sticks: None, family: PadFamily::default(), nintendo_layout: false, layer: None };
         assert!(ui.is_open(Target::Button(Button::West)));
         // Presses while not finding don't move the editor.
         let _ = app.update(Message::LiveInput(Some(snapshot(&[Button::West, Button::North], (0.0, 0.0)))));
@@ -1854,11 +1893,11 @@ mod tests {
         let _ = app.update(Message::ToggleExpanded(a));
         assert!(!app.expanded.contains(&a));
         let _ = app.update(Message::ExpandAll(true));
-        assert_eq!(app.expanded.len(), Button::ALL.len());
+        assert_eq!(app.expanded.len(), Button::ALL.len() + Button::PADDLES.len());
         let _ = app.update(Message::SelectProfileTab(ProfileTab::Sticks));
         let _ = app.update(Message::ExpandAll(true));
-        assert_eq!(app.expanded.len(), Button::ALL.len() + 8);
+        assert_eq!(app.expanded.len(), Button::ALL.len() + Button::PADDLES.len() + 8);
         let _ = app.update(Message::ExpandAll(false));
-        assert_eq!(app.expanded.len(), Button::ALL.len(), "collapse all only touches the current section");
+        assert_eq!(app.expanded.len(), Button::ALL.len() + Button::PADDLES.len(), "collapse all only touches the current section");
     }
 }

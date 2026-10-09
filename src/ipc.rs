@@ -166,6 +166,9 @@ pub struct DeviceInfo {
     /// A motion-sensor device is paired with it.
     #[serde(default)]
     pub gyro: bool,
+    /// Has back paddles.
+    #[serde(default)]
+    pub paddles: bool,
     /// Whose button glyphs it uses, when it's recognized (for a managed controller).
     #[serde(default)]
     pub family: Option<crate::info::PadFamily>,

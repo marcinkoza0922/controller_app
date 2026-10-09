@@ -195,6 +195,11 @@ impl App {
         self.status.as_ref().is_some_and(|s| s.devices.iter().any(|d| d.gyro))
     }
 
+    /// Whether any managed controller has back paddles (only affects hints).
+    pub(super) fn any_paddles(&self) -> bool {
+        self.status.as_ref().is_some_and(|s| s.devices.iter().any(|d| d.paddles))
+    }
+
     /// `p` with the layers the daemon says are on right now (they belong to the active game).
     pub(super) fn with_active_layers(&self, p: &Profile) -> Profile {
         let layers = self.status.as_ref().map(|s| s.active_layers.as_slice()).unwrap_or_default();
@@ -518,6 +523,7 @@ impl App {
                     let state = if d.analog_triggers { state.to_string() } else { format!("{state} · on/off triggers") };
                     let state = if d.rumble { state } else { format!("{state} · no rumble") };
                     let state = if d.gyro { format!("{state} · gyro") } else { state };
+                    let state = if d.paddles { format!("{state} · back paddles") } else { state };
                     let calibrate: Element<'_, Message> = if d.gyro {
                         button(text("Calibrate gyro").size(13))
                             .style(style::secondary)

@@ -47,6 +47,12 @@ pub enum Button {
     RightStickDown,
     RightStickLeft,
     RightStickRight,
+    /// Back paddles, on controllers that have them (see [`Button::PADDLES`]). Inputs only:
+    /// the virtual pad is an Xbox 360 pad, so they can't be gamepad outputs.
+    LeftPaddle,
+    RightPaddle,
+    LeftPaddle2,
+    RightPaddle2,
 }
 
 impl Button {
@@ -95,6 +101,9 @@ impl Button {
         Button::RightStickRight,
     ];
 
+    /// The back paddles, kept apart from [`Button::ALL`] because only some controllers have them.
+    pub const PADDLES: [Button; 4] = [Button::LeftPaddle, Button::RightPaddle, Button::LeftPaddle2, Button::RightPaddle2];
+
     /// A stick's direction buttons: up, down, left, right.
     pub fn stick_directions(s: Stick) -> [Button; 4] {
         match s {
@@ -137,6 +146,10 @@ impl fmt::Display for Button {
             Button::DpadDown => "D-pad Down",
             Button::DpadLeft => "D-pad Left",
             Button::DpadRight => "D-pad Right",
+            Button::LeftPaddle => "Left Paddle",
+            Button::RightPaddle => "Right Paddle",
+            Button::LeftPaddle2 => "Left Paddle 2",
+            Button::RightPaddle2 => "Right Paddle 2",
             Button::LeftStickUp => "Left Stick Up",
             Button::LeftStickDown => "Left Stick Down",
             Button::LeftStickLeft => "Left Stick Left",
@@ -1722,14 +1735,16 @@ pub enum Refit {
 #[serde(rename_all = "snake_case")]
 pub enum Feature {
     Gyro,
+    BackPaddles,
 }
 
 impl Feature {
-    pub const ALL: [Feature; 1] = [Feature::Gyro];
+    pub const ALL: [Feature; 2] = [Feature::Gyro, Feature::BackPaddles];
 
     pub fn label(self) -> &'static str {
         match self {
             Feature::Gyro => "gyro",
+            Feature::BackPaddles => "back paddles",
         }
     }
 
@@ -1737,6 +1752,7 @@ impl Feature {
     pub fn missing(self) -> &'static str {
         match self {
             Feature::Gyro => "gyro controls won't work",
+            Feature::BackPaddles => "paddle buttons won't work",
         }
     }
 }
@@ -3617,5 +3633,16 @@ key_threshold = 0.2
         assert!(Config::load_from(&path).unwrap() == Config::default());
         assert!(!dir.join("nested").join("config.toml.old").exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn paddle_buttons_round_trip_and_profiles_need_the_feature_for_them() {
+        let mut p = Profile::passthrough("Paddles");
+        p.set_button(Button::LeftPaddle, ButtonAction::Gamepad(Button::South));
+        p.requires = vec![Feature::BackPaddles];
+        let text = toml::to_string(&p).unwrap();
+        assert_eq!(toml::from_str::<Profile>(&text).unwrap(), p);
+        assert!(!p.usable_with(&[Feature::Gyro]) && p.usable_with(&[Feature::BackPaddles]));
+        assert_eq!(Feature::BackPaddles.label(), "back paddles");
     }
 }

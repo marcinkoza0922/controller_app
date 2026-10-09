@@ -326,10 +326,15 @@ impl App {
         }
     }
 
-    /// Whether any connected controller has a gyro: `None` with none connected.
-    fn pad_has_gyro(&self) -> Option<bool> {
+    /// Whether any connected controller has `f`: `None` with none connected.
+    fn pad_has(&self, f: pack::Feature) -> Option<bool> {
         let pads: Vec<_> = self.status.as_ref()?.devices.iter().filter(|d| !d.ignored).collect();
-        (!pads.is_empty()).then(|| pads.iter().any(|d| d.gyro))
+        (!pads.is_empty()).then(|| {
+            pads.iter().any(|d| match f {
+                pack::Feature::Gyro => d.gyro,
+                pack::Feature::BackPaddles => d.paddles,
+            })
+        })
     }
 
     pub(super) fn view_dialog<'a>(&'a self, dialog: &'a Dialog) -> Element<'a, Message> {
@@ -396,7 +401,7 @@ impl App {
         match selected.and_then(|i| self.library.get(i).map(|e| (i, e))) {
             Some((i, entry)) => {
                 let p = &entry.pack;
-                details = details.push(text(p.pack.name.clone()).size(20)).push(pack_summary(p, self.pad_has_gyro()));
+                details = details.push(text(p.pack.name.clone()).size(20)).push(pack_summary(p, |f| self.pad_has(f)));
                 details = details.push(match added(&p.pack.id) {
                     Some(g) => button(text("Open it")).on_press(Message::SelectPage(Page::Game(Some(g.name.clone())))),
                     None => button(text("Preview & add…")).on_press(Message::PreviewLibrary(i)),
@@ -420,7 +425,7 @@ impl App {
     fn view_import<'a>(&'a self, plan: &'a Plan, choices: &'a Choices) -> Element<'a, Message> {
         let p = &plan.pack;
         let verb = plan.update_kind.map_or("Add", |k| k.verb());
-        let mut col = column![text(format!("{verb} {}", p.pack.name)).size(22), pack_summary(p, self.pad_has_gyro())].spacing(12);
+        let mut col = column![text(format!("{verb} {}", p.pack.name)).size(22), pack_summary(p, |f| self.pad_has(f))].spacing(12);
 
         if let Some(name) = &plan.update_of {
             let installed = self.config.game(Some(name)).and_then(|g| g.origin.as_ref()).map(|o| o.version.clone()).unwrap_or_default();
@@ -716,7 +721,7 @@ fn feature_notes<'a>(mut col: Column<'a, Message>, out: &pack::Export) -> Column
 }
 
 /// A pack's description, contents, game IDs and controller needs, for the picker and preview.
-fn pack_summary<'a>(p: &pack::Pack, gyro: Option<bool>) -> Element<'a, Message> {
+fn pack_summary<'a>(p: &pack::Pack, pad_has: impl Fn(pack::Feature) -> Option<bool>) -> Element<'a, Message> {
     let h = &p.pack;
     let mut col = column![].spacing(6);
     let mut by = Vec::new();
@@ -749,7 +754,7 @@ fn pack_summary<'a>(p: &pack::Pack, gyro: Option<bool>) -> Element<'a, Message> 
             continue;
         }
         let list = needing.join(", ");
-        let line = match gyro {
+        let line = match pad_has(f) {
             Some(false) if needing.len() == p.profiles.len() => {
                 text(format!("Every profile needs {}, and your controller has none: {}.", f.label(), f.missing())).color(ERROR_COLOR)
             }

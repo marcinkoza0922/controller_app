@@ -55,7 +55,7 @@ impl App {
         let Some(after) = self.layer_view.clone() else { return };
         let i = self.layer;
         let Some(layer) = self.game_mut().layers.get_mut(i) else { return };
-        for b in Button::EVERY {
+        for b in Button::EVERY.into_iter().chain(Button::PADDLES) {
             if before.buttons.get(&b) != after.buttons.get(&b) {
                 layer.buttons.insert(b, after.button(b).clone());
             }
