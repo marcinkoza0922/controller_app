@@ -123,19 +123,29 @@ pub fn rules(config: &Config) -> impl Iterator<Item = (&str, &Rule)> {
     config.games.iter().flat_map(|g| g.rules.iter().filter(|r| r.enabled).map(move |r| (g.name.as_str(), r)))
 }
 
-/// Profile for a focused window: the first matching rule's, `None` if it isn't a game's.
-pub fn profile_for(config: &Config, info: &WindowInfo) -> Option<ProfileRef> {
-    rules(config)
-        .find(|(_, r)| rule_matches(r.kind, &r.value, info))
-        .map(|(game, r)| ProfileRef::new(Some(game), &r.profile))
+/// The first rule that matches a focused window, with its game's name.
+pub fn matching_rule<'a>(config: &'a Config, info: &WindowInfo) -> Option<(&'a str, &'a Rule)> {
+    rules(config).find(|(_, r)| rule_matches(r.kind, &r.value, info))
 }
 
-/// Profile from running processes, for desktops without focus information: the first rule
-/// (in rule order) that matches any running process.
+/// Profile for a focused window: the first matching rule's, `None` if it isn't a game's.
+pub fn profile_for(config: &Config, info: &WindowInfo) -> Option<ProfileRef> {
+    matching_rule(config, info).map(|(game, r)| ProfileRef::new(Some(game), &r.profile))
+}
+
+/// The first rule (in rule order) that matches any running process, with that process.
+pub fn matching_process<'a>(config: &'a Config, processes: &'a [WindowInfo]) -> Option<(&'a str, &'a Rule, &'a WindowInfo)> {
+    rules(config).find_map(|(game, r)| processes.iter().find(|p| rule_matches(r.kind, &r.value, p)).map(|p| (game, r, p)))
+}
+
+/// Profile from running processes, for desktops without focus information.
 pub fn profile_for_processes(config: &Config, processes: &[WindowInfo]) -> Option<ProfileRef> {
-    rules(config)
-        .find(|(_, r)| processes.iter().any(|p| rule_matches(r.kind, &r.value, p)))
-        .map(|(game, r)| ProfileRef::new(Some(game), &r.profile))
+    matching_process(config, processes).map(|(game, r, _)| ProfileRef::new(Some(game), &r.profile))
+}
+
+/// A rule as people read it, for the reason a profile was switched: `Executable "doom.exe"`.
+pub fn rule_text(rule: &Rule) -> String {
+    format!("{} “{}”", rule.kind, rule.value)
 }
 
 /// Whether rules can pick `game`, so it has focus only while one matches.

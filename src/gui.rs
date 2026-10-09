@@ -29,6 +29,7 @@ use crate::{
     },
     engine::Opener,
     info::PadFamily,
+    inputlog::LogView,
     ipc::{self, InputSnapshot, Request, Response, Status, WindowInfo},
     keyboard::{self, Layout},
     launchers, library,
@@ -37,6 +38,7 @@ use crate::{
 };
 
 mod actions;
+mod activity;
 mod checks;
 mod games;
 mod items;
@@ -116,6 +118,8 @@ struct App {
     message: Option<(String, bool)>,
     /// Latest physical input streamed from the daemon.
     live: Option<InputSnapshot>,
+    /// The latest presses and what each did, streamed from the daemon.
+    feed: Option<LogView>,
     picker: Option<KeyPicker>,
     dialog: Option<Dialog>,
     profile_tab: ProfileTab,
@@ -269,6 +273,7 @@ fn unique_name(base: &str, taken: impl Fn(&str) -> bool) -> String {
 enum Message {
     Poll,
     LiveInput(Option<InputSnapshot>),
+    LiveFeed(Option<LogView>),
     StatusLoaded(Result<Status, String>),
     ConfigLoaded(Box<Config>, Option<String>),
     SetEnabled(bool),
@@ -494,6 +499,7 @@ impl App {
             game_search: String::new(),
             message: None,
             live: None,
+            feed: None,
             picker: None,
             dialog: None,
             profile_tab: ProfileTab::Buttons,
@@ -525,20 +531,7 @@ impl App {
             last_edit: None,
             quit_after_save: false,
         };
-        let load = Task::perform(
-            async {
-                match call(Request::GetConfig).await {
-                    Ok(Response::Config(c)) => (c, None),
-                    _ => match tokio::task::spawn_blocking(Config::load).await {
-                        Ok(Ok(c)) => (Box::new(c), None),
-                        Ok(Err(e)) => (Box::default(), Some(format!("{e:#}"))),
-                        Err(e) => (Box::default(), Some(e.to_string())),
-                    },
-                }
-            },
-            |(c, err)| Message::ConfigLoaded(c, err),
-        );
-        (app, Task::batch([load, Task::done(Message::Poll), iced::system::theme().map(Message::SystemMode)]))
+        (app, Task::batch([load_config(), Task::done(Message::Poll), iced::system::theme().map(Message::SystemMode)]))
     }
 
     /// The button glyphs to draw: the family of the controller in use, else the one set in Settings.
@@ -560,6 +553,7 @@ impl App {
         Subscription::batch([
             iced::time::every(Duration::from_secs(1)).map(|_| Message::Poll),
             Subscription::run(watch_input),
+            Subscription::run(watch_feed),
             iced::event::listen_with(undo_shortcut),
             iced::window::close_requests().map(|_| Message::CloseRequested),
             iced::system::theme_changes().map(Message::SystemMode),
@@ -678,7 +672,7 @@ impl App {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         // Polling and live input don't change the config, and arrive many times a second.
-        let edits = !matches!(message, Message::Poll | Message::LiveInput(_) | Message::StatusLoaded(_));
+        let edits = !matches!(message, Message::Poll | Message::LiveInput(_) | Message::LiveFeed(_) | Message::StatusLoaded(_));
         let message = self.new_layer_for(message);
         // Loading the config and undoing aren't edits to take back.
         let undoable = edits && !matches!(message, Message::ConfigLoaded(..) | Message::Undo);
@@ -751,6 +745,7 @@ impl App {
                 }
                 self.live = snapshot;
             }
+            Message::LiveFeed(feed) => self.feed = feed,
             Message::StatusLoaded(Ok(status)) => {
                 // Mirror daemon-owned fields so both copies stay comparable.
                 let active = ProfileRef { game: status.active_game.clone(), profile: status.active_profile.clone() };
@@ -911,6 +906,8 @@ impl App {
             Page::Overview => column![
                 self.view_live(self.config.active().map(|p| self.with_active_layers(p)).as_ref(), false),
                 rule::horizontal(1),
+                self.view_activity(),
+                rule::horizontal(1),
                 self.view_devices()
             ]
                 .spacing(16)
@@ -1010,13 +1007,44 @@ fn undo_shortcut(event: iced::Event, _: iced::event::Status, _: iced::window::Id
     }
 }
 
+/// The config as the daemon has it, or read from disk when the daemon isn't running.
+fn load_config() -> Task<Message> {
+    Task::perform(
+        async {
+            match call(Request::GetConfig).await {
+                Ok(Response::Config(c)) => (c, None),
+                _ => match tokio::task::spawn_blocking(Config::load).await {
+                    Ok(Ok(c)) => (Box::new(c), None),
+                    Ok(Err(e)) => (Box::default(), Some(format!("{e:#}"))),
+                    Err(e) => (Box::default(), Some(e.to_string())),
+                },
+            }
+        },
+        |(c, err)| Message::ConfigLoaded(c, err),
+    )
+}
+
 /// Streams live input from the daemon, reconnecting every second while it is unavailable.
 fn watch_input() -> impl iced::futures::Stream<Item = Message> {
+    watch(Request::WatchInput, Message::LiveInput)
+}
+
+/// Streams the latest presses and what they did, like [`watch_input`].
+fn watch_feed() -> impl iced::futures::Stream<Item = Message> {
+    watch(Request::WatchFeed, Message::LiveFeed)
+}
+
+/// Streams the values a watch request sends, each wrapped by `wrap`; `None` when the daemon
+/// isn't available.
+fn watch<T: serde::de::DeserializeOwned + Send + 'static>(
+    request: Request,
+    wrap: fn(Option<T>) -> Message,
+) -> impl iced::futures::Stream<Item = Message> {
     use iced::futures::{SinkExt, channel::mpsc};
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-    iced::stream::channel(16, async |mut output: mpsc::Sender<Message>| {
-        let mut request = serde_json::to_string(&Request::WatchInput).unwrap();
+    iced::stream::channel(16, async move |mut output: mpsc::Sender<Message>| {
+        let mut request = serde_json::to_string(&request).unwrap();
         request.push('\n');
         loop {
             if let Ok(mut stream) = tokio::net::UnixStream::connect(ipc::socket_path()).await
@@ -1024,12 +1052,12 @@ fn watch_input() -> impl iced::futures::Stream<Item = Message> {
             {
                 let mut lines = BufReader::new(stream).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
-                    if let Ok(snapshot) = serde_json::from_str(&line) {
-                        let _ = output.send(Message::LiveInput(snapshot)).await;
+                    if let Ok(value) = serde_json::from_str::<Option<T>>(&line) {
+                        let _ = output.send(wrap(value)).await;
                     }
                 }
             }
-            let _ = output.send(Message::LiveInput(None)).await;
+            let _ = output.send(wrap(None)).await;
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
     })
