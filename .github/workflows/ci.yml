@@ -50,6 +50,15 @@ jobs:
       - name: Docs, pack format, links, Flatpak sources, fonts
         run: python3 scripts/check-project.py
 
+  install-files:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validators
+        run: sudo apt-get update && sudo apt-get install -y desktop-file-utils appstream python3-yaml
+      - name: Service units, udev rule, desktop entry, metainfo, Flatpak manifest
+        run: scripts/check-install.sh
+
   audit:
     runs-on: ubuntu-latest
     steps:

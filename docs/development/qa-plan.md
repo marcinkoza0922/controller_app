@@ -46,8 +46,8 @@ Each item has the expected result in the last column. Record the OS, compositor,
 | # | Steps | Expected |
 |---|---|---|
 | H-1 | Test each controller type you can get: Xbox (wired and wireless), DualSense, DualShock 4, Switch Pro, a Switch-style or 8BitDo pad, a generic pad. Run passthrough and a remapped profile on each. | Every button, stick and trigger produces the right output. Triggers and sticks are centred at rest. |
-| H-2 | Unplug the pad while a button is held, a macro is running, and a menu is open. | All held keys are released. The menu closes. A toast names the controller. |
-| H-3 | Plug it back in. Repeat with a different pad in the same slot. | The profile returns on reconnect, unless changed in the meantime. A pad without gyro doesn't get a gyro profile. |
+| H-2 | Unplug while a button is held: the held key and button are released, and the daemon keeps running | Done in the container: `tests/hotplug.rs` makes the controller with uhid, holds a key and a button, drops the controller, and reads the release from the virtual devices (which stay up). Menus closing isn't checked. |
+| H-3 | Replug the same controller: it is managed again and its mappings work | Done in the container for the same controller (`hotplug_replugging_the_same_controller_works_again`). Not covered: a different controller in the same slot, and the gyro fallback. The fallback needs a real motion sensor (INPUT_PROP_ACCELEROMETER), which a simulated controller can't provide. |
 | H-4 | Plug in a PlayStation or Switch pad, first without and then with the udev motion rule. | Without the rule, gyro is unavailable and the app says so. With it, gyro works. The profile doesn't flicker when the motion sensor appears a moment after the pad (two 2 s scans). |
 | H-5 | Touchpad on DualSense/DS4 in touchpad-as-mouse mode. | Click and movement behave as configured. |
 | H-6 | Rumble test button on a pad that supports it and one that doesn't. | Rumble works, or the app says it isn't supported. |
@@ -124,51 +124,5 @@ These need a person with the controller in hand. Record the values used, so a ch
 | I-6 | Suspend and resume with a pad connected. | The pad comes back and works. |
 | I-7 | Log in and out. Check the service starts at login. | Works. |
 | I-8 | Read the daemon logs (`src/daemon/logs.rs`) after a full session. | No errors or panics. Messages are clear to a user. |
-| I-9 | On a machine without `XDG_RUNTIME_DIR`, start the daemon and check the socket: `stat` on its directory shows `0700`, and on the socket `0600`. Run `padwight status` from another user's shell and check it is refused. | Only this user can reach the daemon (F2). |
-
-## 4. Security review (for a human)
-
-Automated checks can't judge these. Each needs a reviewer to decide what's acceptable.
-
-| # | Question |
-|---|---|
-| H-SEC-1 | **IPC socket (F2).** Fixed for permissions. Should any request be refused by a non-owner even with the socket reachable? Which requests (`SetConfig`, `TestRumble`, …) are most sensitive? |
-| H-SEC-2 | **Pack import (F4).** The only host-program actions a pack can contain are Screenshot and ToggleRecording. Should the import preview list them, so a player sees a pack can take screenshots or record the screen? |
-| H-SEC-3 | **Virtual input.** The app creates a keyboard and mouse that any local program can use. Is that clear to users? |
-| H-SEC-4 | **Flatpak sandbox.** `--device=all` lets the sandbox read and send input on the whole machine. Is the README's warning enough? |
-| H-SEC-5 | **Config file.** The daemon is the only writer while it runs. Is the file written atomically? Are its permissions `0600`? |
-| H-SEC-6 | **Dependencies.** Read the `cargo audit` warnings (four today, all in transitive crates) and the licenses of direct dependencies. |
-
-## 5. Judgement calls for a reviewer
-
-- Are the shipped packs' mappings sensible for the games they cover? The tests only check the format, not whether the mapping is good.
-- Are the defaults right: Gamepad passthrough, the Desktop mouse mapping, the 60 ms combo window, and the turbo range?
-- Does the copy make sense to a new user? Read the GUI text as someone who hasn't seen the app.
-- Is the scope of the wiki right? It repeats the README in several places, and the two should be kept in step (A-4).
-- Which unsupported setups should be documented as unsupported (Sway and Hyprland, the Flatpak focus path, GNOME)?
-
-## 6. Remaining work, in order
-
-1. Run the CI workflow on GitHub and fix whatever its first run finds (A-0).
-2. Check the tray's Quit on a desktop session, and check on libinput that a desktop releases keys when a virtual keyboard disappears (SIGKILL is the case where only that can help).
-3. Check the socket on a machine without `XDG_RUNTIME_DIR` (I-9, F2).
-4. Run the manual sections on the controllers and compositors you have, in this order: H, D, O, G, I, U, T.
-5. Do the security review (section 4) before the next release, and get a second reviewer for H-SEC-1 and H-SEC-2.
-
-## Commands
-
-From `CLAUDE.md`:
-
-```sh
-cargo check --all-targets --message-format=short 2>&1 | head -40
-cargo clippy --all-targets -- -D warnings
-RUST_BACKTRACE=0 cargo nextest run --profile agent --hide-progress-bar --cargo-quiet
-cargo test -- --ignored rumble      # needs /dev/uinput
-```
-
-Project checks, and dependency audit:
-
-```sh
-python3 scripts/check-project.py
-cargo audit
-```
+| I-9 | Without `XDG_RUNTIME_DIR` the socket is private to its user: the directory is 0700 and owned by the user, the socket is 0600, another user is refused, and the daemon refuses a directory it doesn't own | Done, in the container. `tests/socket_fallback.rs` runs the daemon with no runtime dir and checks the modes and ownership; a second user (via `setpriv`) is refused with "Permission denied", after a positive control. It also checks the daemon refuses a fallback directory owned by someone else. Removing the 0600 step makes the first test fail. Run with `scripts/kernel-test-docker.sh socket_fallback`. |
+| I-10 | Install files are valid: systemd units, udev rule, desktop entry, metainfo, Flatpak manifest | Done in CI. `scripts/check-install.sh` runs `systemd-analyze verify`, `udevadm verify`, `desktop-file-validate`, `appstreamcli validate` and checks the manifest's required keys. A missing validator is an error. Checked that a broken `command` in the manifest fails. |

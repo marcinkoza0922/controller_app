@@ -157,7 +157,8 @@ Library packs are read at build time (`build.rs`) and checked by `cargo test` (`
 | `cargo nextest run` | The same tests under nextest. `.config/nextest.toml` has a quiet `agent` profile. |
 | `cargo test -- --ignored rumble` | The end-to-end rumble check. It needs `/dev/uinput`, so it is opt-in. |
 | `python3 scripts/check-project.py` | Checks that the docs match the code: CLI commands, the pack format number, links and anchors, `flatpak/cargo-sources.json` against `Cargo.lock`, and bundled font licenses. CI runs it. |
-| `scripts/kernel-test-docker.sh` | Runs the kernel-level tests in a Docker container, so the account needs no `input` group membership: `nothing_stays` (uinput) and `daemon_` (the daemon-exit tests, which also need `/dev/uhid`). |
+| `scripts/kernel-test-docker.sh` | Runs the kernel-level tests in a Docker container, so the account needs no `input` group membership: `nothing_stays` (uinput), `daemon_` (the daemon-exit tests, which also need `/dev/uhid`) `socket_fallback` (run as root, since it makes a second user). `hotplug_` covers unplug and replug with a simulated controller. The KWin unit test (`focus::kwin`) needs the desktop session bus, so it runs on the host, not in the container. |
+| `scripts/check-install.sh` | Validates the installed files: the systemd units, the udev rule, the desktop entry, the metainfo and the Flatpak manifest. Errors if a validator is missing. CI runs it. |
 | `cargo audit` | Known vulnerabilities in `Cargo.lock`. CI runs it. |
 
 A few conventions to know:
