@@ -29,7 +29,7 @@ Scripted checks live in `scripts/check-project.py` and `scripts/check-install.sh
 | A-6 | Config migration: the backup is written, the converted file reloads unchanged, and a second load changes nothing | Done. `Config::load_from` takes a path, so the tests use a temporary directory and never touch the real config. Covers the `config.toml.old` backup (a byte-for-byte copy), a second load (no new backup, same file), and a second conversion (keeps the earlier backup, writes `.old.2`). The `before-guide` backup is not tested. | `config::tests::a_legacy_config_*`, `a_later_conversion_*` |
 | A-7 | `cargo-sources.json` matches `Cargo.lock` | Done | `check-project.py` |
 | A-8 | Damaged pack and config text is refused or handled without panicking | Done, as a deterministic sweep (truncations, deleted and replaced characters). Not coverage-guided fuzzing; that would need `cargo-fuzz`. | `library::tests::damaged_packs_…`, `config::tests::damaged_configs_…` |
-| A-9 | Engine outputs stay in range | Partly done. Pad-axis outputs are checked to be finite and within -1..=1 over random input. Ring sector coverage is not checked. | `engine::release_tests` |
+| A-9 | Engine outputs stay in range | Done. Pad-axis outputs are checked to be finite and within -1..=1 over random input. Ring sectors are checked to cover the full circle with no gaps, for 4, 8 and 12 sectors and several start angles. | `engine::release_tests`, `engine::stick::tests::rings_cover_the_whole_circle_without_gaps` |
 | A-10 | No stuck keys, buttons or mouse buttons after releasing everything | Partly done. Engine-level: random input sequences on four profiles, followed by `release_all`, leave nothing held (`engine::release_tests`; checked by breaking `release_all` on purpose). Kernel-level: written (`daemon::kernel_tests::nothing_stays_pressed_in_the_kernel`, ignored, needs `/dev/uinput`). It runs the engine's output through the daemon's `dispatch` into the real virtual keyboard and mouse, reads what the kernel reports, and checks it against an independent count, with an unplug-style release every 50 steps. A write the kernel refuses is no longer dropped: the press state keeps what was not sent, and the daemon's periodic scan sends it again (`output::tests`, which fail when the old error handling is put back). Run in a container with `scripts/kernel-test-docker.sh`, where it passes (twice). It also runs on a host where the account is in the `input` group: `cargo test -- --ignored nothing_stays`. | | `engine::release_tests`, `daemon::kernel_tests` (container), `output::tests` |
 | A-11 | Virtual devices and grabs are released when the daemon exits or is killed; keys it holds are released before it exits | Done for SIGTERM, SIGINT, SIGKILL, and the tray's Quit path (the tray is not exercised by the test; it needs a session). `tests/daemon_exit.rs` runs the real daemon against a fake controller made with uhid (`/dev/uhid`, a real HID path; the daemon ignores uinput devices). It holds a key and a mouse button, then stops the daemon. SIGTERM and SIGINT release what the daemon holds before it exits (a handler writes to a pipe, and the loop releases and exits). SIGKILL can't be handled: the test checks only that the grab is released and the virtual devices disappear. Run with `scripts/kernel-test-docker.sh daemon_`. | | `tests/daemon_exit.rs` (container) |
 | A-12 | Known vulnerabilities in dependencies | Done in CI. Currently four unmaintained or unsound warnings from transitive crates (for example `ttf-parser`, `lru`) and no vulnerabilities, so the job passes. | `cargo audit` in CI |
@@ -47,16 +47,17 @@ Each item has the expected result in the last column. Record the OS, compositor,
 |---|---|---|
 | H-1 | Test each controller type you can get: Xbox (wired and wireless), DualSense, DualShock 4, Switch Pro, a Switch-style or 8BitDo pad, a generic pad. Run passthrough and a remapped profile on each. | Every button, stick and trigger produces the right output. Triggers and sticks are centred at rest. |
 | H-2 | Unplug while a button is held: the held key and button are released, and the daemon keeps running | Done in the container: `tests/hotplug.rs` makes the controller with uhid, holds a key and a button, drops the controller, and reads the release from the virtual devices (which stay up). Menus closing isn't checked. |
-| H-3 | Replug the same controller: it is managed again and its mappings work | Done in the container for the same controller (`hotplug_replugging_the_same_controller_works_again`). Not covered: a different controller in the same slot, and the gyro fallback. The fallback needs a real motion sensor (INPUT_PROP_ACCELEROMETER), which a simulated controller can't provide. |
+| H-3 | Replug the same controller: it is managed again and its mappings work | Done in the container for the same controller (`hotplug_replugging_the_same_controller_works_again`). Done for a different controller too (`hotplug_a_different_controller_takes_over_and_is_remapped`): a second, differently named controller is grabbed, remapped, and the first one's grab is released. The slot number itself isn't reported outside the daemon, so the test checks the behaviour, not the number. Not covered: the gyro fallback. The fallback needs a real motion sensor (INPUT_PROP_ACCELEROMETER), which a simulated controller can't provide. |
 | H-4 | Plug in a PlayStation or Switch pad, first without and then with the udev motion rule. | Without the rule, gyro is unavailable and the app says so. With it, gyro works. The profile doesn't flicker when the motion sensor appears a moment after the pad (two 2 s scans). |
 | H-5 | Touchpad on DualSense/DS4 in touchpad-as-mouse mode. | Click and movement behave as configured. |
 | H-6 | Rumble test button on a pad that supports it and one that doesn't. | Rumble works, or the app says it isn't supported. |
-| H-7 | Run for several hours with the pad idle, then use it. | No drift, no lost input, no CPU use while idle (check `top`). |
+| H-7 | Run for several hours with the pad idle, then use it. | No drift, no lost input, no CPU use while idle (check `top`). Partly done in the container: `tests/daemon_health.rs` idles a fake controller for 5 s and fails if the daemon uses 1% of a core or more (measured 0.2%, one clock tick). The several-hour run, drift and lost input still need a person. |
 
 ### 3.2 Desktop focus and auto-switching
 
 | # | Steps | Expected |
 |---|---|---|
+| D-0 | Process-scan fallback (no tracker): a game's rule switches the profile while its process runs, and back when it exits. | Done in the container (`tests/process_focus.rs`). The daemon used to forget the game when the first focus report arrived after its startup scan, so a game that exited soon after start left the game's profile active. Now only a change of backend resets the scan. |
 | D-1 | On KDE (KWin), add a game with a rule. Launch and switch between the game and the desktop. | The right profile is active in each. Alt+Tab from a game works. |
 | D-2 | Repeat on Sway, and on Hyprland. | Same as D-1. The README says the Hyprland and Sway support is untested in the sandbox; mark each result as tested or not. |
 | D-3 | Use the Flatpak build on KWin, with the window matched by class and title only. | Auto-switching works. Note any window that is matched wrongly. |
@@ -102,6 +103,7 @@ These need a person with the controller in hand. Record the values used, so a ch
 
 | # | Check |
 |---|---|
+| U-0 | The settings window opens and draws under a display. | Done in the container under Xvfb (`tests/gui_smoke.rs`, `scripts/kernel-test-docker.sh gui_`). It renders with the CPU fallback where there is no GPU. Clicking through the tabs in the real window is still manual. |
 | U-1 | Light and dark themes. `todo.md` says dark mode was not checked. Check every page and every dialog. |
 | U-2 | Every tab, sub-tab and empty state (no games, no profiles, no macros, no layers). |
 | U-3 | Resize the window to its minimum size. Nothing is clipped. |
@@ -123,7 +125,7 @@ These need a person with the controller in hand. Record the values used, so a ch
 | I-5 | `systemctl --user restart padwight` mid-macro and mid-layer. Also kill the daemon with `SIGKILL`. | The daemon comes back, releases everything, and doesn't grab the pad twice. After `SIGKILL` the pad and virtual devices are free again (A-11). |
 | I-6 | Suspend and resume with a pad connected. | The pad comes back and works. |
 | I-7 | Log in and out. Check the service starts at login. | Works. |
-| I-8 | Read the daemon logs (`src/daemon/logs.rs`) after a full session. | No errors or panics. Messages are clear to a user. |
+| I-8 | Read the daemon logs (`src/daemon/logs.rs`) after a full session. | No errors or panics. Messages are clear to a user. Partly done: `common::assert_log_clean` fails on a panic or an output error, and runs at the end of the daemon-exit, hotplug and idle tests (container). It doesn't check other error lines, and the user-facing wording still needs a read. |
 | I-9 | On a machine without `XDG_RUNTIME_DIR`, start the daemon and check the socket: `stat` on its directory shows `0700`, and on the socket `0600`. Run `padwight status` from another user's shell and check it is refused. | Only this user can reach the daemon (F2). |
 | I-10 | Install files are valid: systemd units, udev rule, desktop entry, metainfo, Flatpak manifest | Done in CI. `scripts/check-install.sh` runs `systemd-analyze verify`, `udevadm verify`, `desktop-file-validate`, `appstreamcli validate` and checks the manifest's required keys. A missing validator is an error. Checked that a broken `command` in the manifest fails. |
 
@@ -137,7 +139,7 @@ Automated checks can't judge these. Each needs a reviewer to decide what's accep
 | H-SEC-2 | **Pack import (F4).** The only host-program actions a pack can contain are Screenshot and ToggleRecording. Should the import preview list them, so a player sees a pack can take screenshots or record the screen? |
 | H-SEC-3 | **Virtual input.** The app creates a keyboard and mouse that any local program can use. Is that clear to users? |
 | H-SEC-4 | **Flatpak sandbox.** `--device=all` lets the sandbox read and send input on the whole machine. Is the README's warning enough? |
-| H-SEC-5 | **Config file.** The daemon is the only writer while it runs. Is the file written atomically? Are its permissions `0600`? |
+| H-SEC-5 | **Config file.** The daemon is the only writer while it runs. Is the file written atomically? Are its permissions `0600`? Saved files are `0600` (tested). Backup copies (`config.toml.old`, `.before-guide`) keep the original file's mode, so a reviewer should decide whether they need the same. |
 | H-SEC-6 | **Dependencies.** Read the `cargo audit` warnings (four today, all in transitive crates) and the licenses of direct dependencies. |
 
 ## 5. Judgement calls for a reviewer
@@ -152,12 +154,12 @@ Automated checks can't judge these. Each needs a reviewer to decide what's accep
 
 Automatable, not yet done:
 
-1. **Idle CPU and log checks (H-7, I-8).** Measure the daemon's CPU use over a few idle seconds, and check its log for panics and output errors at the end of each daemon test.
-2. **Config file permissions (H-SEC-5, partly).** A test that the saved config isn't world-readable. The write is atomic, so only the mode is in question.
-3. **Process-based focus switching (D-partial).** The process-scan backend needs no desktop session: a test can start a dummy process named like a game and check the profile switches and back. KWin, Sway and Hyprland stay manual.
-4. **GUI smoke test (U-partial).** Under Xvfb (not installed here), start the GUI, open each tab, and fail on panics.
-5. **Ring sector coverage (A-9).** A test that the 4, 8 and 12 sector rings cover the full circle with no gaps.
-6. **Controller in the same slot (H-3).** A test with a second, differently named uhid controller replacing the first.
+1. ~~**Idle CPU and log checks (H-7, I-8).**~~ Done, see H-7 and I-8 above.
+2. ~~**Config file permissions (H-SEC-5, partly).**~~ Done: the saved config is `0600` (`config::tests::a_saved_config_is_readable_only_by_its_owner`). The save used to leave it `0644`; it now creates the temporary file private and sets its mode again before the rename.
+3. ~~**Process-based focus switching (D-partial).**~~ Done: `tests/process_focus.rs` starts the daemon with a game rule, runs a stand-in process named like the game, and checks the profile switches to the game's and back when it exits. The test found a race (fixed, see below). KWin, Sway and Hyprland stay manual.
+4. ~~**GUI smoke test (U-partial).**~~ Done in the container: `tests/gui_smoke.rs` starts the real settings window under Xvfb against a daemon, checks that a window titled "Padwight" is on the display, keeps it open for 5 s, and fails on a panic. Tabs are not clicked through: nothing drives the window. Every page and tab is built in-process by `gui::tests::every_page_tab_and_dialog_builds`.
+5. ~~**Ring sector coverage (A-9).**~~ Done: `engine::stick::tests::rings_cover_the_whole_circle_without_gaps`. A sweep of directions finds no gaps for 4, 8 and 12 sectors and several start angles. Breaking the sector offset makes it fail.
+6. ~~**Controller in the same slot (H-3).**~~ Done: `hotplug_a_different_controller_takes_over_and_is_remapped` (container).
 
 Needs a person or a real session:
 
@@ -190,5 +192,8 @@ Container tests (need `/dev/uinput` and `/dev/uhid`; run as root in the containe
 scripts/kernel-test-docker.sh nothing_stays   # A-10, kernel level
 scripts/kernel-test-docker.sh daemon_         # A-11, daemon exit
 scripts/kernel-test-docker.sh hotplug_        # H-2, H-3
+scripts/kernel-test-docker.sh idle_           # H-7 (idle CPU)
+scripts/kernel-test-docker.sh process_        # D-0, process-scan switching
+scripts/kernel-test-docker.sh gui_            # U-0, the settings window under Xvfb
 scripts/kernel-test-docker.sh socket_fallback # I-9
 ```
