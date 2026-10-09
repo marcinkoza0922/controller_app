@@ -363,6 +363,8 @@ enum Message {
     RemoveInfoCell(usize, usize, usize),
     SetInfoGlyphs(PadFamily),
     SetAppearance(Appearance),
+    SetNintendoLayout(bool),
+    SetGameNintendoLayout(Option<bool>),
     NewLog,
     ToggleLog(usize),
     ToggleLogAppearance(usize),
@@ -538,6 +540,12 @@ impl App {
     fn glyph_family(&self) -> PadFamily {
         let managed = self.status.as_ref().and_then(|s| s.devices.iter().find(|d| d.managed));
         managed.and_then(|d| d.family).unwrap_or(self.config.info_glyphs)
+    }
+
+    /// Whether button glyphs use the Nintendo layout here: the game on screen's own choice, else
+    /// the one set in Settings.
+    fn nintendo_layout(&self) -> bool {
+        self.game().nintendo_layout.unwrap_or(self.config.nintendo_layout)
     }
 
     fn theme(&self) -> iced::Theme {

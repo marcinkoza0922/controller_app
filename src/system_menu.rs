@@ -56,6 +56,8 @@ enum Row {
     InvertY,
     /// Next or previous profile of the active game.
     Profile,
+    /// Button labels swapped to the Nintendo layout, for the active game.
+    NintendoLayout,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -307,6 +309,7 @@ fn quick_rows(config: &Config) -> Vec<Row> {
         }
         rows.push(Row::InvertY);
     }
+    rows.push(Row::NintendoLayout);
     if config.active_game().profiles.len() > 1 {
         rows.push(Row::Profile);
     }
@@ -336,6 +339,7 @@ fn label(row: Row, config: &Config) -> String {
             format!("Invert Y: {}", if on { "on" } else { "off" })
         }
         Row::Profile => format!("Profile: {}", config.active_ref().profile),
+        Row::NintendoLayout => format!("Nintendo button layout: {}", if config.active_nintendo_layout() { "on" } else { "off" }),
     }
 }
 
@@ -372,6 +376,13 @@ fn adjust(row: Row, dir: i32, config: &mut Config) -> Option<Outcome> {
     if let Row::Profile = row {
         return next_profile(dir, config).map(Outcome::Switch);
     }
+    if let Row::NintendoLayout = row {
+        // A game's own choice, so it's set on the game the menu is over, not on the profile.
+        let on = !config.active_nintendo_layout();
+        let at = config.active_ref();
+        config.game_mut(at.game.as_deref())?.nintendo_layout = Some(on);
+        return Some(Outcome::Changed);
+    }
     let profile = active_profile_mut(config)?;
     match row {
         Row::StickSpeed(stick) => {
@@ -390,7 +401,7 @@ fn adjust(row: Row, dir: i32, config: &mut Config) -> Option<Outcome> {
                 *flag = !on;
             }
         }
-        Row::Profile => {}
+        Row::Profile | Row::NintendoLayout => {}
     }
     Some(Outcome::Changed)
 }
@@ -486,11 +497,25 @@ mod tests {
     fn quick_settings_only_lists_what_the_profile_uses() {
         let mut config = mouse_config();
         config.general.profiles.truncate(1);
-        assert_eq!(quick_rows(&config), [Row::StickSpeed(Stick::Left), Row::InvertY]);
+        assert_eq!(quick_rows(&config), [Row::StickSpeed(Stick::Left), Row::InvertY, Row::NintendoLayout]);
         // A second profile adds the profile switch.
         config.general.profiles.push(config.general.profiles[0].clone());
         config.general.profiles[1].name = "Other".into();
-        assert_eq!(quick_rows(&config), [Row::StickSpeed(Stick::Left), Row::InvertY, Row::Profile]);
+        assert_eq!(quick_rows(&config), [Row::StickSpeed(Stick::Left), Row::InvertY, Row::NintendoLayout, Row::Profile]);
+    }
+
+    #[test]
+    fn quick_nintendo_layout_sets_the_active_game_only() {
+        let mut config = mouse_config();
+        assert!(!config.active_nintendo_layout());
+        // Picking the row turns it on for the game the menu is over, and leaves Settings alone.
+        assert_eq!(adjust(Row::NintendoLayout, 1, &mut config), Some(Outcome::Changed));
+        assert!(config.active_nintendo_layout());
+        assert_eq!(config.general.nintendo_layout, Some(true));
+        assert!(!config.nintendo_layout);
+        assert_eq!(label(Row::NintendoLayout, &config), "Nintendo button layout: on");
+        assert_eq!(adjust(Row::NintendoLayout, 1, &mut config), Some(Outcome::Changed));
+        assert_eq!(config.general.nintendo_layout, Some(false));
     }
 
     #[test]

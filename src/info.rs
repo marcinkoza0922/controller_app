@@ -555,10 +555,30 @@ pub fn recording_view() -> InfoView {
     }
 }
 
+/// The face button whose glyph `b` shows once the Nintendo layout swaps A with B and X with Y:
+/// the bottom button shows B, not A. Other buttons are unchanged.
+pub fn nintendo_face(b: Button) -> Button {
+    match b {
+        Button::South => Button::East,
+        Button::East => Button::South,
+        Button::West => Button::North,
+        Button::North => Button::West,
+        other => other,
+    }
+}
+
+/// How button glyphs are drawn: whose labels, and whether the face buttons use the Nintendo layout.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Glyphs {
+    pub family: PadFamily,
+    pub nintendo_layout: bool,
+}
+
 /// A button's glyph as the given family labels it. Face buttons are round and, for Xbox
-/// and PlayStation, in their usual colors.
-pub fn button_glyph(b: Button, family: PadFamily) -> Segment {
+/// and PlayStation, in their usual colors. `swapped` draws the Nintendo layout's labels.
+pub fn button_glyph(b: Button, family: PadFamily, swapped: bool) -> Segment {
     use PadFamily::*;
+    let b = if swapped { nintendo_face(b) } else { b };
     const GREEN: [u8; 3] = [0x3c, 0xa0, 0x3c];
     const RED: [u8; 3] = [0xc8, 0x3c, 0x3c];
     const BLUE: [u8; 3] = [0x2f, 0x6c, 0xc8];
@@ -626,6 +646,8 @@ pub struct Live {
     /// Active layers, oldest first.
     pub layers: Vec<String>,
     pub family: PadFamily,
+    /// Face buttons drawn with the Nintendo layout's labels (see [`nintendo_face`]).
+    pub nintendo_layout: bool,
     pub system: SystemStats,
     /// Charge of the controller in use, where it reports one.
     pub controller_battery: Option<Charge>,
@@ -645,6 +667,7 @@ impl Live {
             controller: format!("{family} controller"),
             layers: vec!["Hotkeys".into()],
             family,
+            nintendo_layout: false,
             system: SystemStats {
                 cpu: Some(23.0),
                 ram: Some((7.4, 31.2)),
@@ -656,6 +679,11 @@ impl Live {
             form: FormFactor::Laptop,
             inputs: crate::inputlog::Inputs::sample(),
         }
+    }
+
+    /// The same values, with face buttons in the Nintendo layout or not.
+    pub fn with_layout(self, nintendo_layout: bool) -> Self {
+        Live { nintendo_layout, ..self }
     }
 }
 
@@ -692,11 +720,11 @@ fn cell_segments(overlay: &InfoOverlay, cell: &str, live: &Live) -> Vec<Segment>
         let segment = match part {
             Err(Token::CurrentInput { device, gap_ms, stay_ms }) => {
                 let settings = token_settings(&overlay.current_input, device, gap_ms, stay_ms);
-                segments.extend(live.inputs.current(&settings, live.family));
+                segments.extend(live.inputs.current(&settings, live.family, live.nintendo_layout));
                 continue;
             }
             Ok(text) => Segment::Text(text),
-            Err(Token::Button(b)) => button_glyph(b, live.family),
+            Err(Token::Button(b)) => button_glyph(b, live.family, live.nintendo_layout),
             Err(Token::Trigger(t)) => trigger_glyph(t, live.family),
             Err(Token::Stick(Stick::Left)) => glyph("LS", None, true),
             Err(Token::Stick(Stick::Right)) => glyph("RS", None, true),
@@ -990,6 +1018,25 @@ mod tests {
         assert!(matches!(&ps.rows[0][1][0], Segment::Glyph { label, .. } if label == "L2"), "tokens are case-insensitive");
         let switch = resolve(&o, &Live::sample(PadFamily::Nintendo));
         assert!(matches!(&switch.rows[0][1][2], Segment::Glyph { label, .. } if label == "B"), "Nintendo's bottom button is B");
+    }
+
+    #[test]
+    fn nintendo_layout_swaps_face_labels_only() {
+        // On an Xbox pad the bottom button shows B, and the right one A; the bindings don't move.
+        let o = overlay(&[&["{south} {east} {west} {north} {LB}"]]);
+        let swapped = resolve(&o, &Live::sample(PadFamily::Xbox).with_layout(true));
+        let labels: Vec<&str> = swapped.rows[0][0]
+            .iter()
+            .filter_map(|s| match s {
+                Segment::Glyph { label, .. } => Some(label.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(labels, ["B", "A", "Y", "X", "LB"]);
+        let plain = resolve(&o, &Live::sample(PadFamily::Xbox));
+        assert!(matches!(&plain.rows[0][0][0], Segment::Glyph { label, .. } if label == "A"), "off by default");
+        assert_eq!(nintendo_face(Button::South), Button::East);
+        assert_eq!(nintendo_face(Button::LeftBumper), Button::LeftBumper);
     }
 
     #[test]
