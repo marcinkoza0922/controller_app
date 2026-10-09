@@ -212,3 +212,13 @@ the tracker is found, a terminal's window is seen, its rule switches the profile
 falls back when the window closes. Set `DESKTOP_TEST_QMP` to the VM's QMP socket to close the GNOME
 Overview first. Run it only against a throwaway VM: the daemon grabs gamepads and creates virtual
 input devices. Record the versions it prints with the result.
+
+Last run, 2026-10-09, kernel 7.2.9. Each row is the native build, with the Flatpak in the last column where it was run:
+
+| Desktop | Version | Checks | Flatpak |
+|---|---|---|---|
+| GNOME | 51.0 | all pass (overlay skipped) | all pass (overlay skipped) |
+| KDE Plasma | 6.7.5 | all pass | all pass |
+| Sway | 1.12 | all pass | focus falls back to processes; overlay and rules skipped |
+| Hyprland | 0.56.2 | all pass | all pass except the overlay, skipped (layer-shell hidden) |
+| labwc | 0.20.2 | all pass | focus falls back to processes; overlay and rules skipped |

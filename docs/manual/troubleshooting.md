@@ -18,11 +18,11 @@ The Overview page's **What's happening** section lists the last few profile swit
 
 - Check the setup's rules on its **Details** tab, and that the rule is switched on.
 - Check that no other rule also matches the game.
-- Check that your desktop supports window tracking: KDE Plasma, GNOME, Sway or Hyprland.
+- Check that your desktop supports window tracking: KDE Plasma, GNOME, Hyprland, Sway, or a wlroots compositor such as labwc (which matches by window class only).
 
 ## The keyboard, menus or overlays don't appear
 
-They need a desktop that supports them: KDE Plasma, Sway or Hyprland. GNOME doesn't have the layer-shell they use.
+They need a desktop that supports them: KDE Plasma, Sway, Hyprland or labwc. GNOME doesn't have the layer-shell they use. In a Flatpak, they don't show on Sway, labwc or Hyprland.
 
 ## Gyro does nothing on a PlayStation or Switch controller
 

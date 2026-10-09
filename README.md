@@ -247,6 +247,7 @@ Focus tracking depends on your desktop. The daemon picks the right method by its
 - **KDE Plasma** (Wayland or X11): a small KWin script.
 - **Sway**: the compositor's IPC socket (`$SWAYSOCK`).
 - **Hyprland**: its event and command sockets.
+- **wlroots compositors** (labwc, Wayfire, river, and others that offer `wlr-foreign-toplevel-management`): the protocol's window list. It doesn't say which process owns a window, so these match windows by class only, and executable-name rules don't match.
 - **GNOME** (Mutter): a small GNOME Shell extension, which the daemon installs and enables itself. A log out and back in may be needed the first time.
 
 GNOME can't show the on-screen keyboard, menus or overlays, because Mutter has no layer-shell. Focus tracking works, through the extension. On other desktops, rules apply while a matching process is running.

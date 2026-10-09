@@ -33,7 +33,7 @@ Everything the daemon knows about the desktop comes from focus trackers (see bel
                   is up)
                        ▲
                        │ focus changes
-        focus/ (kwin, sway, hyprland, identify.rs → /proc)
+        focus/ (sway, hyprland, kwin, gnome, wlroots, identify.rs → /proc)
 
  gui.rs ◄──── IPC: $XDG_RUNTIME_DIR/padwight.sock (ipc.rs, one JSON line per request)
    │
@@ -90,6 +90,7 @@ Line counts are approximate and change; `scripts/long-files.sh` lists the files 
 | `focus/kwin.rs`, `focus/dbus.rs` | KDE Plasma: a KWin script reports focus changes over D-Bus. |
 | `focus/sway.rs` | Sway (and i3-IPC compositors) over `$SWAYSOCK`. |
 | `focus/hyprland.rs` | Hyprland's event and command sockets. |
+| `focus/wlroots.rs` | wlroots compositors (labwc, Wayfire, river, …) over `wlr-foreign-toplevel-management`. Matches windows by class only, since the protocol doesn't give the process. |
 | `focus/gnome.rs` | GNOME Shell: installs and enables the extension in `gnome-extension/`, which reports focus over the same D-Bus service. |
 | `focus/identify.rs` | Identifies a window's executable, Steam App ID and class from `/proc`, including Wine/Proton `.exe` names. |
 | `launchers.rs` | Which games are installed (Steam, Heroic, Lutris) or running, for the library picker. |
@@ -174,10 +175,12 @@ A few conventions to know:
 
 The daemon picks the profile from the focused window. The tracker is chosen by the desktop:
 
-1. **KDE Plasma** (`kwin.rs`): a small KWin script sends each focus change to the daemon's D-Bus service (`dbus.rs`).
-2. **Sway** (`sway.rs`): subscribes to window events on `$SWAYSOCK`.
-3. **Hyprland** (`hyprland.rs`): follows the event socket and asks the command socket for details.
-4. **Fallback**: no tracker. Rules apply while a matching process runs.
+1. **Sway** (`sway.rs`): subscribes to window events on `$SWAYSOCK`.
+2. **Hyprland** (`hyprland.rs`): follows the event socket and asks the command socket for details.
+3. **KDE Plasma** (`kwin.rs`): a small KWin script sends each focus change to the daemon's D-Bus service (`dbus.rs`).
+4. **GNOME** (`gnome.rs`): a GNOME Shell extension sends each focus change over the same D-Bus service.
+5. **wlroots compositors** (`wlroots.rs`): the `wlr-foreign-toplevel-management` protocol (labwc, Wayfire, river, and others). Windows match by class only.
+6. **Fallback**: no tracker. Rules apply while a matching process runs.
 
 `identify.rs` resolves a window to an executable name, Steam App ID (from `SteamAppId`/`STEAM_COMPAT_APP_ID` or Proton's `steam_app_<id>` class) and window class. Wine/Proton games are matched by their `.exe`, not the Wine loader. GNOME has no layer-shell, so the overlays can't be shown there. Focus tracking works through the GNOME Shell extension in `gnome-extension/`.
 
