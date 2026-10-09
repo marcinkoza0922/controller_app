@@ -22,7 +22,8 @@ Conventions for choosing where actions go when setting up a game's controller bi
 - **Mirrored** actions, such as switching to the next or previous item, or rotating the camera, should typically be on **D-pad Left/Right** or the **shoulder buttons**.
 - **Lean** can go on **D-pad Left/Right**. An acceptable alternative is a layer on a face button or shoulder button, where the **left stick** acts as the lean while the layer is held.
 - **Scroll** (mouse wheel) can go on the **D-pad** or the **shoulder buttons**.
-- **Multiple use actions**, such as open and pick up, should share the same button but use different gestures. For example, if pick up is a long press of **A**, open is a short press of **A**.
+- **Related actions** should share the same button and use different gestures: a multi tap or a long press. For example, if pick up is a long press of **A**, open is a short press of **A**.
+- **Changing ammo type** should share the button with **Reload**, as a long press of it.
 
 ## Hotkeys and menus
 
