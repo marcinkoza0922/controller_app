@@ -10,7 +10,11 @@ use std::{
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::config::{Button, Config, ProfileRef};
+use crate::{
+    config::{Button, Config, ProfileRef},
+    info::PadModel,
+    input::Axis,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Request {
@@ -49,6 +53,26 @@ pub enum Request {
     /// the latest presses of the most recently used controller, with what each did. `null` when
     /// no controller is active.
     WatchFeed,
+    /// Debug mode only (the daemon must run with `--debug`): adds a controller that no hardware
+    /// backs, and replies `Attached` with its device path. Its output is recorded, and also sent
+    /// to real virtual devices if `live`.
+    DebugAttach { model: Option<PadModel>, live: bool },
+    /// Debug mode only: input from the injected controller at this path.
+    DebugInput { path: String, events: Vec<DebugEvent> },
+    /// Debug mode only: what the injected controller's mappings have output, as `Lines`.
+    DebugOutput { path: String, clear: bool },
+    /// Debug mode only: removes the injected controller at this path, or every one for `all`.
+    DebugDetach(String),
+}
+
+/// One input from an injected controller.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum DebugEvent {
+    Button(Button, bool),
+    /// Sticks are -1.0..1.0 (Y positive = down), triggers 0.0..1.0.
+    Axis(Axis, f32),
+    /// One motion reading: angular velocity in degrees/second (pitch, yaw, roll) over `ms`.
+    Motion { gyro: [f32; 3], ms: u32 },
 }
 
 // One reply per connection, so the size difference doesn't matter.
@@ -58,6 +82,9 @@ pub enum Response {
     Ok,
     Status(Status),
     Config(Box<Config>),
+    /// The device path of an injected controller.
+    Attached(String),
+    Lines(Vec<String>),
     Error(String),
 }
 

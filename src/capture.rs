@@ -58,6 +58,24 @@ pub fn on_path(program: &str) -> bool {
     std::env::var_os("PATH").is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(program).is_file()))
 }
 
+/// Where captures go instead of the user's Pictures and Videos, when set (debug mode).
+static REDIRECT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Sends every screenshot and recording from now on to `dir`, in the same layout as the usual
+/// folders. The daemon does this in debug mode, so test captures don't land among real ones.
+pub fn redirect_to(dir: PathBuf) {
+    let _ = REDIRECT.set(dir);
+}
+
+/// The folder captures of one kind go under: the redirect, else the user's own `dir` (their
+/// Pictures or Videos), else `fallback` in their home.
+pub fn media_base(dir: Option<PathBuf>, fallback: &str) -> Result<PathBuf> {
+    if let Some(dir) = REDIRECT.get() {
+        return Ok(dir.clone());
+    }
+    dir.or_else(|| dirs::home_dir().map(|h| h.join(fallback))).with_context(|| format!("no {fallback} folder"))
+}
+
 /// A game's name as a folder name: no path separators or leading dots.
 fn folder_name(game: &str) -> String {
     let name: String = game.chars().map(|c| if c == '/' || c == '\\' || c.is_control() { '_' } else { c }).collect();
@@ -88,7 +106,7 @@ pub fn timestamp() -> String {
 pub fn screenshot(game: &str) -> Result<PathBuf> {
     let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
     let tool = pick_tool(&desktop, on_path).context("no screenshot tool found (install spectacle, grim or gnome-screenshot)")?;
-    let pictures = dirs::picture_dir().or_else(|| dirs::home_dir().map(|h| h.join("Pictures"))).context("no Pictures folder")?;
+    let pictures = media_base(dirs::picture_dir(), "Pictures")?;
     let path = media_path(&pictures, "Screenshots", game, &timestamp(), "png");
     std::fs::create_dir_all(path.parent().context("no folder")?).with_context(|| format!("creating {}", path.display()))?;
     let status = Command::new(tool.program()).args(tool.args(&path)).status().with_context(|| format!("running {}", tool.program()))?;

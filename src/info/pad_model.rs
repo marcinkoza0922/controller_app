@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::PadFamily;
+
 /// A controller model whose picture the editor draws differently. Models share their family's
 /// button names; a pad of any other model is drawn with the generic picture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,6 +26,81 @@ pub enum PadModel {
 }
 
 impl PadModel {
+    /// Every model, for pickers and galleries.
+    pub const ALL: [PadModel; 13] = [
+        Self::DualShock4,
+        Self::DualSense,
+        Self::DualSenseEdge,
+        Self::ProController,
+        Self::Switch2Pro,
+        Self::JoyCons,
+        Self::JoyCons2,
+        Self::Xbox360,
+        Self::XboxOne,
+        Self::XboxSeries,
+        Self::XboxElite,
+        Self::SteamController,
+        Self::WiiUPro,
+    ];
+
+    /// The short lowercase name the debug command line uses.
+    pub fn slug(self) -> &'static str {
+        match self {
+            Self::DualShock4 => "dualshock4",
+            Self::DualSense => "dualsense",
+            Self::DualSenseEdge => "dualsense-edge",
+            Self::ProController => "pro-controller",
+            Self::Switch2Pro => "switch2-pro",
+            Self::JoyCons => "joycons",
+            Self::JoyCons2 => "joycons2",
+            Self::Xbox360 => "xbox360",
+            Self::XboxOne => "xbox-one",
+            Self::XboxSeries => "xbox-series",
+            Self::XboxElite => "xbox-elite",
+            Self::SteamController => "steam-controller",
+            Self::WiiUPro => "wiiu-pro",
+        }
+    }
+
+    /// The model's name for people.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::DualShock4 => "DualShock 4",
+            Self::DualSense => "DualSense",
+            Self::DualSenseEdge => "DualSense Edge",
+            Self::ProController => "Switch Pro Controller",
+            Self::Switch2Pro => "Switch 2 Pro Controller",
+            Self::JoyCons => "Joy-Cons",
+            Self::JoyCons2 => "Switch 2 Joy-Cons",
+            Self::Xbox360 => "Xbox 360",
+            Self::XboxOne => "Xbox One",
+            Self::XboxSeries => "Xbox Series",
+            Self::XboxElite => "Xbox Elite",
+            Self::SteamController => "Steam Controller",
+            Self::WiiUPro => "Wii U Pro Controller",
+        }
+    }
+
+    /// The model called `name` (see [`PadModel::slug`]); `generic` is the picture of no model.
+    /// Case, dashes and underscores don't matter.
+    pub fn parse(name: &str) -> Option<Option<Self>> {
+        let norm = |s: &str| s.to_lowercase().replace(['-', '_', ' '], "");
+        let want = norm(name);
+        if want == "generic" {
+            return Some(None);
+        }
+        Self::ALL.into_iter().find(|m| norm(m.slug()) == want).map(Some)
+    }
+
+    /// Whose button glyphs the model uses.
+    pub fn family(self) -> PadFamily {
+        match self {
+            Self::DualShock4 | Self::DualSense | Self::DualSenseEdge => PadFamily::PlayStation,
+            Self::ProController | Self::Switch2Pro | Self::JoyCons | Self::JoyCons2 | Self::WiiUPro => PadFamily::Nintendo,
+            Self::Xbox360 | Self::XboxOne | Self::XboxSeries | Self::XboxElite | Self::SteamController => PadFamily::Xbox,
+        }
+    }
+
     /// Recognizes the model from the USB/Bluetooth vendor and product IDs, then the device
     /// name; `None` when neither gives it away.
     pub fn detect(vendor: u16, product: u16, name: &str) -> Option<Self> {
@@ -86,6 +163,18 @@ mod tests {
         assert_eq!(PadModel::detect(0x054c, 0x0df2, "DualSense Edge Wireless Controller"), Some(PadModel::DualSenseEdge));
         assert_eq!(PadModel::detect(0x057e, 0x2009, "Pro Controller"), Some(PadModel::ProController));
         assert_eq!(PadModel::detect(0x0000, 0x0000, "Wireless DualShock Gamepad"), Some(PadModel::DualShock4));
+    }
+
+    #[test]
+    fn slugs_round_trip_and_families_are_known() {
+        for m in PadModel::ALL {
+            assert_eq!(PadModel::parse(m.slug()), Some(Some(m)));
+        }
+        assert_eq!(PadModel::parse("DualSense_Edge"), Some(Some(PadModel::DualSenseEdge)));
+        assert_eq!(PadModel::parse("generic"), Some(None));
+        assert_eq!(PadModel::parse("nope"), None);
+        assert_eq!(PadModel::XboxElite.family(), PadFamily::Xbox);
+        assert_eq!(PadModel::JoyCons.family(), PadFamily::Nintendo);
     }
 
     #[test]

@@ -150,6 +150,11 @@ pub fn wait_for<T>(what: &str, mut f: impl FnMut() -> Option<T>) -> T {
 /// set it gets that as `XDG_RUNTIME_DIR`; without, it has none and uses its temp-dir fallback.
 /// Its output goes to `root/daemon.log`.
 pub fn spawn_daemon(root: &Path, runtime: Option<&Path>) -> Daemon {
+    spawn_daemon_with(root, runtime, &[])
+}
+
+/// [`spawn_daemon`] with more arguments for `padwight daemon`, such as `--debug`.
+pub fn spawn_daemon_with(root: &Path, runtime: Option<&Path>, args: &[&str]) -> Daemon {
     let config = root.join("config/padwight");
     if !config.join("config.toml").exists() {
         install_config(&config, &default_config());
@@ -160,6 +165,7 @@ pub fn spawn_daemon(root: &Path, runtime: Option<&Path>) -> Daemon {
     let mut command = Command::new(env!("CARGO_BIN_EXE_padwight"));
     command
         .arg("daemon")
+        .args(args)
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_STATE_HOME", root.join("state"))
         .env("XDG_DATA_HOME", root.join("data"))

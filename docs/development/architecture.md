@@ -11,6 +11,7 @@ One binary, `padwight`, runs as several processes. `main.rs` picks the role from
 | `padwight` / `padwight gui` | Settings window (iced) | Talks to the daemon over IPC. If no daemon is running, it edits `config.toml` directly. |
 | `padwight daemon` | The long-running service | The only process that grabs controllers and writes to uinput. The systemd unit in `dist/padwight.service` runs this. |
 | `padwight overlay` | On-screen overlay (layer-shell surface) | Spawned by the daemon (`daemon.rs`, `current_exe()` + `overlay`). It stays running invisibly between uses so menus appear instantly. |
+| `padwight debug` | Debug mode (CLI only) | A virtual controller of any model, in a window or `--headless`, driven by clicks or by `padwight debug <command>` from another terminal. Never touches real controllers or the daemon. See [Debug mode](#debug-mode). |
 | `padwight status`, `profile <name>`, `reload`, `menu <name>`, … | One-shot CLI | Sends one request to the daemon and exits. |
 
 Everything the daemon knows about the desktop comes from focus trackers (see below). Everything the GUI shows comes from the daemon or from the config file.
@@ -94,6 +95,26 @@ Line counts are approximate and change; `scripts/long-files.sh` lists the files 
 | `focus/gnome.rs` | GNOME Shell: installs and enables the extension in `gnome-extension/`, which reports focus over the same D-Bus service. |
 | `focus/identify.rs` | Identifies a window's executable, Steam App ID and class from `/proc`, including Wine/Proton `.exe` names. |
 | `launchers.rs` | Which games are installed (Steam, Heroic, Lutris) or running, for the library picker. |
+
+### Debug mode
+
+| Path | Responsibility |
+|---|---|
+| `debug.rs` | `padwight debug`: starts a session (window or `--headless`), or sends commands and scripts (`run`) to a running one. |
+| `debug/pad.rs` | The virtual controller's state; `snapshot()` gives the same `InputSnapshot` the daemon reports. |
+| `debug/protocol.rs` | Request/response types and the command words that parse into them, including `expect` assertions. |
+| `debug/bridge.rs` | `--attach`: has the daemon run the virtual controller as a controller of its own, sending each change as it is made. |
+| `daemon/inject.rs` | The daemon's end: controllers no hardware backs (`DebugAttach`, `DebugInput`, `DebugOutput`, `DebugDetach`), with their output recorded. Only a daemon started with `--debug` accepts them. |
+| `debug/server.rs` | The session socket (`padwight-debug.sock`, or `$PADWIGHT_DEBUG_SOCKET`) and its client. |
+| `debug/window.rs` | The iced window: clickable virtual controller plus every model's drawing. |
+| `pad_svg/hit.rs` | Which part of a model's drawing a point falls on, for clicking. |
+| `pad_widget.rs` | The drawing as an iced widget, shared with the settings window. |
+
+**Testing mappings end to end.** Run `padwight daemon --debug` (stop the service first, or give the test daemon its own `XDG_RUNTIME_DIR` and `XDG_CONFIG_HOME`), then `padwight debug --headless --attach`. The daemon treats the virtual controller like a real one: the active profile's mappings, layers, menus and overlays all react, and `padwight debug output` lists what the mappings produced (`key KEY_A down`, `pad South up`, `mouse-move 3 -2`, ...). That output is only recorded; `--live` also sends it to the real virtual keyboard, mouse and pad. Mapping actions that aren't output (screenshots, recording, force quit, the on-screen keyboard) happen either way, which is why the daemon needs `--debug`. A `--debug` daemon saves screenshots and recordings under `$TMPDIR/padwight-debug-<uid>/` (the same `Screenshots/<game>/` layout) instead of Pictures and Videos. Each command returns once the daemon has handled its input, so `expect output ...` right after `press ...` doesn't race. `padwight debug detach-all` removes a controller a crashed session left behind.
+
+`tests/debug_session.rs` uses all of this. Its session tests (commands, scripts, expectations, every model's drawing, sockets) need only the binary and run with the rest. Its daemon tests start a `--debug` daemon of their own and drive it through an attached session; they need `/dev/uinput`, and two of them read the virtual keyboard from `/dev/input`, so they're opt-in: `cargo test --test debug_session -- --ignored`, or `scripts/kernel-test-docker.sh debug_`.
+
+Quick test loop: `padwight debug --headless &`, then `padwight debug --wait 3000 press south`, `padwight debug expect pressed south` (non-zero exit on failure), `padwight debug quit`. `padwight debug help` lists every command.
 
 ### Overlays and display
 

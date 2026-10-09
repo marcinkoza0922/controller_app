@@ -1,6 +1,7 @@
 mod capture;
 mod config;
 mod daemon;
+mod debug;
 mod engine;
 mod focus;
 mod font;
@@ -23,6 +24,7 @@ mod output;
 mod overlay;
 mod pack;
 mod pad_svg;
+mod pad_widget;
 mod radial;
 mod quit;
 mod record;
@@ -42,7 +44,7 @@ usage: padwight [command]
 
 commands:
   gui              open the settings window (default)
-  daemon           run the background remapping service
+  daemon [--debug] run the background remapping service (--debug lets `debug --attach` inject controllers)
   status           show daemon status and detected controllers
   enable|disable   turn remapping on or off
   profile <name>   switch to a profile (in the current game, General, or any game)
@@ -50,7 +52,8 @@ commands:
   reload           re-read the config file
   overlay-toggle   open or close the on-screen keyboard overlay
   numpad-toggle    open or close the on-screen numpad overlay
-  menu <name>      show an on-screen menu";
+  menu <name>      show an on-screen menu
+  debug            virtual controller for development and tests (debug help)";
 
 #[expect(clippy::print_stdout, reason = "CLI output")]
 fn main() -> Result<()> {
@@ -58,7 +61,8 @@ fn main() -> Result<()> {
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     match args.as_slice() {
         [] | ["gui"] => gui::run().map_err(Into::into),
-        ["daemon"] => daemon::run(),
+        ["daemon"] => daemon::run(false),
+        ["daemon", "--debug"] => daemon::run(true),
         ["status"] => status(),
         ["enable"] => send(&Request::SetEnabled(true)),
         ["disable"] => send(&Request::SetEnabled(false)),
@@ -69,6 +73,7 @@ fn main() -> Result<()> {
         ["overlay-toggle"] => send(&Request::ToggleOverlay),
         ["numpad-toggle"] => send(&Request::ToggleNumpad),
         ["menu", name] => send(&Request::OpenMenu(name.to_string())),
+        ["debug", rest @ ..] => debug::run(rest),
         ["-h" | "--help" | "help"] => {
             println!("{USAGE}");
             Ok(())

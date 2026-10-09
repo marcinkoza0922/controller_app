@@ -5,6 +5,7 @@ use iced::widget::{Column, column, rich_text, row, span};
 use super::*;
 use crate::config::{FlickVertical, MouseResponse};
 use crate::info::Glyphs;
+use crate::pad_widget::controller_drawing;
 
 /// Sections of the profile editor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -210,49 +211,6 @@ impl fmt::Display for Template {
             Template::Duplicate => "Copy of this profile",
         })
     }
-}
-
-/// The controller SVG with button letters and mapping-label pills placed over it. (iced's
-/// SVG renderer may not draw SVG text, so text is real widgets pinned at drawing
-/// coordinates; the drawing is shown at 1:1.)
-pub(super) fn controller_drawing<'a>(
-    input: Option<&InputSnapshot>,
-    model: Option<PadModel>,
-    glyphs: Glyphs,
-    labels_from: Option<&Profile>,
-    greyed: bool,
-) -> Element<'a, Message> {
-    let labels = labels_from.map(drawing_labels).unwrap_or_default();
-    let handle = svg::Handle::from_memory(pad_svg::render(input, model, glyphs, &labels).into_bytes());
-    let mut layers: Vec<Element<'a, Message>> =
-        vec![svg(handle).width(pad_svg::WIDTH).height(pad_svg::HEIGHT).opacity(if greyed { 0.3_f32 } else { 1.0 }).into()];
-
-    for o in pad_svg::overlays(input, model, glyphs) {
-        let [r, g, b] = o.color;
-        let letter = container(text(o.text).size(12).color(Color::from_rgb8(r, g, b)))
-            .center_x(24)
-            .center_y(20);
-        layers.push(pin(letter).x(o.x - 12.0).y(o.y - 10.0).into());
-    }
-    for l in pad_svg::place_labels(&labels, model) {
-        let label = text(l.text).size(pad_svg::LABEL_TEXT_SIZE).wrapping(text::Wrapping::None);
-        let pill = container(label.color(Color::from_rgb8(0xe6, 0xed, 0xf3)))
-            .padding([2, 6])
-            .style(|_: &iced::Theme| container::Style {
-                background: Some(Color::from_rgb8(0x1d, 0x20, 0x26).into()),
-                border: iced::Border { width: 1.0, radius: 5.0.into(), color: Color::from_rgb8(0x4e, 0xa1, 0xff) },
-                ..container::Style::default()
-            });
-        // Each column is a box the width of the margin; pills hug its inner edge.
-        let column = container(pill).width(pad_svg::LABEL_COLUMN);
-        let (column, x) = if l.right {
-            (column.align_x(iced::alignment::Horizontal::Left), pad_svg::RIGHT_COLUMN_X)
-        } else {
-            (column.align_x(iced::alignment::Horizontal::Right), 0.0)
-        };
-        layers.push(pin(column).x(x).y(l.y).into());
-    }
-    stack(layers).width(pad_svg::WIDTH).height(pad_svg::HEIGHT).into()
 }
 
 /// Labels for the controller drawing: every input that doesn't simply pass through.
@@ -1739,7 +1697,13 @@ impl App {
         let pad = self.shown_pad();
         column![
             title,
-            container(controller_drawing(self.shown_input(), pad.model, Glyphs { family: pad.family, nintendo_layout: self.nintendo_layout() }, labels_from, self.status.is_none())).center_x(Length::Fill),
+            container(controller_drawing(
+                    self.shown_input(),
+                    pad.model,
+                    Glyphs { family: pad.family, nintendo_layout: self.nintendo_layout() },
+                    &labels_from.map(drawing_labels).unwrap_or_default(),
+                    self.status.is_none(),
+                )).center_x(Length::Fill),
             container(text(caption).size(13).color(MUTED_COLOR)).center_x(Length::Fill),
         ]
         .spacing(8)

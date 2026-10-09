@@ -15,7 +15,7 @@ use evdev::KeyCode;
 use iced::{
     Alignment, Color, Element, Length, Subscription, Task,
     widget::{
-        button, center, checkbox, column, container, mouse_area, opaque, pick_list, pin, row, rule,
+        button, center, checkbox, column, container, mouse_area, opaque, pick_list, row, rule,
         scrollable, slider, space, stack, svg, text, text_input, toggler, tooltip,
     },
 };

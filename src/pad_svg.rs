@@ -4,9 +4,13 @@
 
 use std::fmt::Write;
 
+mod hit;
 mod labels;
 mod layout;
 
+pub use hit::{Part, hit, stick_value, trigger_value};
+#[cfg(test)]
+pub use hit::{face_center, stick_center};
 pub use labels::{HEIGHT, LABEL_COLUMN, LABEL_TEXT_SIZE, MARGIN, RIGHT_COLUMN_X, WIDTH, place_labels};
 use layout::{DpadKind, Layout, Mark};
 
@@ -29,7 +33,10 @@ const IDLE: &str = "#1d2026";
 const IDLE_EDGE: &str = "#5d6470";
 const ACTIVE: &str = "#4ea1ff";
 
+const TRIGGER_TOP: f32 = 6.0;
 const TRIGGER_HEIGHT: f32 = 30.0;
+const BUMPER_TOP: f32 = 40.0;
+const BUMPER_HEIGHT: f32 = 14.0;
 
 /// How a face button is drawn: its label and color for the controller's family (as the overlays
 /// draw it), and whether that color fills it when pressed. Nintendo's have no color, so they're
@@ -123,19 +130,19 @@ fn shoulders(s: &mut String, layout: &Layout, sides: [(f32, Button); 2], pressed
         let h = value.clamp(0.0, 1.0) * TRIGGER_HEIGHT;
         let _ = write!(
             s,
-            r#"<rect x="{x}" y="6" width="{tw}" height="{TRIGGER_HEIGHT}" rx="8" fill="{IDLE}" stroke="{IDLE_EDGE}" stroke-width="2"/>"#
+            r#"<rect x="{x}" y="{TRIGGER_TOP}" width="{tw}" height="{TRIGGER_HEIGHT}" rx="8" fill="{IDLE}" stroke="{IDLE_EDGE}" stroke-width="2"/>"#
         );
         if h > 0.5 {
             let _ = write!(
                 s,
                 r#"<rect x="{x}" y="{y}" width="{tw}" height="{h}" rx="6" fill="{ACTIVE}"/>"#,
-                y = 6.0 + TRIGGER_HEIGHT - h
+                y = TRIGGER_TOP + TRIGGER_HEIGHT - h
             );
         }
         let fill = if pressed(bumper) { ACTIVE } else { IDLE };
         let _ = write!(
             s,
-            r#"<rect x="{}" y="40" width="{w}" height="14" rx="7" fill="{fill}" stroke="{IDLE_EDGE}" stroke-width="2"/>"#,
+            r#"<rect x="{}" y="{BUMPER_TOP}" width="{w}" height="{BUMPER_HEIGHT}" rx="7" fill="{fill}" stroke="{IDLE_EDGE}" stroke-width="2"/>"#,
             cx - w / 2.0
         );
     }
