@@ -1275,9 +1275,14 @@ impl Daemon {
             }
             Msg::Tray(cmd) => self.tray_command(cmd),
             Msg::Focus(FocusEvent::Backend(backend)) => {
-                self.focus_backend = backend;
-                // Re-evaluate from scratch the next time processes are scanned.
-                self.scan_target = None;
+                // Only a change of backend starts the process scan again. The first report can
+                // arrive after a scan that already switched for a running game, and clearing then
+                // would leave the daemon unable to notice that game exit.
+                if self.focus_backend != backend {
+                    self.focus_backend = backend;
+                    // Re-evaluate from scratch the next time processes are scanned.
+                    self.scan_target = None;
+                }
             }
             Msg::Focus(FocusEvent::Focused(window)) => self.window_focused(&window),
             Msg::Toast(lines) => self.say(lines),
