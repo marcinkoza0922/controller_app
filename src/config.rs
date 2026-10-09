@@ -2835,9 +2835,16 @@ impl Config {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        // Write-then-rename so the daemon never reads a half-written file.
+        // Write-then-rename so the daemon never reads a half-written file. The file is private from
+        // the moment it is created, and set again in case an earlier run left one with a looser mode.
         let tmp = path.with_extension("toml.tmp");
-        std::fs::write(&tmp, toml::to_string_pretty(self)?)?;
+        {
+            use std::io::Write;
+            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+            let mut file = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp)?;
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+            file.write_all(toml::to_string_pretty(self)?.as_bytes())?;
+        }
         std::fs::rename(&tmp, path)?;
         Ok(())
     }
@@ -3751,6 +3758,25 @@ steps = [{ wait = 10 }]
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn a_saved_config_is_readable_only_by_its_owner() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        let dir = scratch_dir("private-save");
+        let path = dir.join("config.toml");
+
+        Config::default().save_to(&path).unwrap();
+        assert_eq!(mode(&path), 0o600, "a new config is private");
+
+        // A temporary file left loose by an earlier run must not keep its mode.
+        let tmp = dir.join("config.toml.tmp");
+        std::fs::write(&tmp, "left over").unwrap();
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o644)).unwrap();
+        Config::default().save_to(&path).unwrap();
+        assert_eq!(mode(&path), 0o600, "a save over a loose temporary file is private too");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
