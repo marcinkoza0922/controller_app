@@ -42,6 +42,7 @@ mod games;
 mod items;
 mod layers;
 mod logs;
+mod manual;
 mod overlays;
 mod packs;
 mod profile;
@@ -65,6 +66,7 @@ pub fn run() -> iced::Result {
     }
     let app = iced::application(App::boot, App::update, App::view)
         .title("Padwight")
+        .theme(App::theme)
         .subscription(App::subscription)
         .exit_on_close_request(false)
         .window(iced::window::Settings {
@@ -96,6 +98,12 @@ struct App {
     /// The profile being edited, by index in the current game's profiles.
     editing: usize,
     game_tab: GameTab,
+    /// The chapter open on the Manual page, by index in `manual::CHAPTERS`.
+    manual_chapter: usize,
+    /// The manual's chapters, parsed for drawing (see `manual.rs`).
+    manual: Vec<iced::widget::markdown::Content>,
+    /// Light or dark, from the system; the app's theme follows it.
+    theme_mode: iced::theme::Mode,
     /// On General's Macros, Menus, Info and Log overlays tabs: show the shared items (usable by
     /// every game) instead of General's own.
     shared_view: bool,
@@ -169,6 +177,8 @@ struct App {
 enum Page {
     Overview,
     Settings,
+    /// The in-app manual.
+    Manual,
     /// A game's page; `None` is General.
     Game(Option<String>),
 }
@@ -265,6 +275,10 @@ enum Message {
     SelectPage(Page),
     SetGameSearch(String),
     SelectGameTab(GameTab),
+    SelectChapter(usize),
+    /// A link in the manual; relative links name another chapter's file.
+    ManualLink(String),
+    SystemMode(iced::theme::Mode),
     SetSharedView(bool),
     ToggleSharedSection,
     RenameGame(String),
@@ -470,6 +484,8 @@ impl App {
             page: Page::Overview,
             editing: 0,
             game_tab: GameTab::Profiles,
+            manual_chapter: 0,
+            manual: manual::load(), theme_mode: iced::theme::Mode::default(),
             shared_view: false,
             shared_open: false,
             game_search: String::new(),
@@ -519,7 +535,11 @@ impl App {
             },
             |(c, err)| Message::ConfigLoaded(c, err),
         );
-        (app, Task::batch([load, Task::done(Message::Poll)]))
+        (app, Task::batch([load, Task::done(Message::Poll), iced::system::theme().map(Message::SystemMode)]))
+    }
+
+    fn theme(&self) -> iced::Theme {
+        <iced::Theme as iced::theme::Base>::default(self.theme_mode)
     }
 
     fn subscription(&self) -> Subscription<Message> {
@@ -528,6 +548,7 @@ impl App {
             Subscription::run(watch_input),
             iced::event::listen_with(undo_shortcut),
             iced::window::close_requests().map(|_| Message::CloseRequested),
+            iced::system::theme_changes().map(Message::SystemMode),
         ])
     }
 
@@ -704,7 +725,7 @@ impl App {
                 return Task::perform(call(Request::Status), |r| {
                     Message::StatusLoaded(r.and_then(|r| match r {
                         Response::Status(s) => Ok(s),
-                        other => Err(format!("unexpected reply: {other:?}")),
+                        other => Err(format!("The daemon sent an unexpected reply: {other:?}")),
                     }))
                 });
             }
@@ -741,7 +762,7 @@ impl App {
                     self.show_game(if exists { key } else { None });
                 }
                 if let Some(e) = err {
-                    self.message = Some((format!("Could not load config: {e}"), true));
+                    self.message = Some((format!("Couldn't load the config file: {e}"), true));
                 }
             }
             Message::SetEnabled(on) => return call_ok(Request::SetEnabled(on)),
@@ -749,7 +770,7 @@ impl App {
                 if self.saved.profile(&at).is_some() {
                     return Task::batch([call_ok(Request::Activate(at)), Task::done(Message::Poll)]);
                 }
-                self.message = Some(("Save the new profile before activating it.".into(), true));
+                self.message = Some(("Save the new profile, then make it active.".into(), true));
             }
             Message::Done(Ok(())) => return Task::done(Message::Poll),
             Message::Done(Err(e)) => self.message = Some((e, true)),
@@ -881,6 +902,7 @@ impl App {
                 .spacing(16)
                 .into(),
             Page::Settings => self.view_settings(),
+            Page::Manual => self.view_manual(),
             Page::Game(_) => self.view_game(),
         };
         let content = column![self.view_header(), rule::horizontal(1), page].spacing(16).padding(20);
@@ -931,7 +953,7 @@ impl App {
 
         if !running {
             header = header.push(
-                text("The daemon isn't running. Start it with `systemctl --user start padwight` or `padwight daemon`. You can still edit: changes are saved to the config file and apply once the daemon starts.")
+                text("The background service isn't running. Start it with `systemctl --user start padwight` (or `padwight daemon`). You can still edit: your changes are saved and take effect once it starts.")
                     .size(13)
                     .color(MUTED_COLOR),
             );
@@ -1059,7 +1081,7 @@ mod tests {
         app.config.games[0].layers.push(crate::config::Layer::new("Hotkeys"));
         app.status = Some(Status { devices: vec![device("Pad", true, false)], active_layers: vec!["Hotkeys".into()], ..Default::default() });
         let _ = app.view();
-        for page in [Page::Overview, Page::Settings, Page::Game(None), Page::Game(Some("Doom".into()))] {
+        for page in [Page::Overview, Page::Settings, Page::Manual, Page::Game(None), Page::Game(Some("Doom".into()))] {
             let _ = app.update(Message::SelectPage(page));
             for tab in GameTab::ALL {
                 let _ = app.update(Message::SelectGameTab(tab));

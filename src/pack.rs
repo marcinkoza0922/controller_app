@@ -785,7 +785,7 @@ mod tests {
         assert_eq!(p.update_of.as_deref(), Some("Doom (2)"));
         assert_eq!(p.update_kind, Some(UpdateKind::Update));
         assert_eq!(p.edited, ["macro “Dodge”"]);
-        assert!(p.rule_clashes.is_empty(), "rules the game had keep their decision");
+        assert!(p.rule_clashes.is_empty(), "rules the setup had keep their decision");
         apply(&mut config, &p, &Choices::default());
         assert_eq!(config.games.len(), 2);
         assert_eq!(config.games[1].origin.as_ref().unwrap().version, "1.1");
@@ -802,12 +802,12 @@ mod tests {
         let mut pack = export(&config.games[0], &config.shared, &draft(&config.games[0], false)).pack;
         pack.pack.id = new_id();
         let p = plan(&config, pack, false);
-        assert_eq!(p.rule_clashes.len(), 1, "with the same-named game, until it's replaced");
+        assert_eq!(p.rule_clashes.len(), 1, "with the same-named setup, until it's replaced");
         let choices = Choices { replace: true, keep_mine: vec![true] };
         assert_eq!(live_clashes(&p, &choices).count(), 0);
         assert_eq!(apply(&mut config, &p, &choices), "Doom");
         assert_eq!(config.games.len(), 1, "replaced in place");
-        assert!(config.games[0].rules[0].enabled, "no clash left with the game it replaced");
+        assert!(config.games[0].rules[0].enabled, "no clash left with the setup it replaced");
         assert!(config.games[0].origin.is_some());
     }
 

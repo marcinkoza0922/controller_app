@@ -19,7 +19,7 @@ pub(super) fn item_problem(menu: &Menu, action: &ButtonAction, menus: &[&Menu], 
                 } else if let Some(child) = menus.iter().find(|m| &m.name == name)
                     && child.kind.tag() != menu.kind.tag()
                 {
-                    problem = Some(format!("{name:?} isn't a {} menu", menu.kind.tag().short().to_lowercase()));
+                    problem = Some(format!("“{name}” isn't a {} menu", menu.kind.tag().short().to_lowercase()));
                 }
             }
         });
@@ -121,11 +121,11 @@ pub(super) fn action_problem(action: &ButtonAction, names: &Names) -> Option<Str
         match a {
             ButtonAction::Keys(keys) => {
                 if let Some(bad) = keys.iter().find(|k| KeyCode::from_str(k).is_err()) {
-                    problem = Some(format!("unknown key {:?}", short_key(bad)));
+                    problem = Some(format!("unknown key “{}”", short_key(bad)));
                 }
             }
             ButtonAction::Macro { name, .. } if !names.macros.contains(name) => {
-                problem = Some(format!("missing macro {name:?}"));
+                problem = Some(format!("missing macro “{name}”"));
             }
             // A macro that grew longer than the turbo's gap would overlap its own presses.
             ButtonAction::Turbo { action, every_ms, .. } => {
@@ -134,30 +134,30 @@ pub(super) fn action_problem(action: &ButtonAction, names: &Names) -> Option<Str
                     && macro_ms > *every_ms
                 {
                     problem = Some(format!(
-                        "turbo of macro {name:?} presses every {every_ms} ms, but the macro takes {macro_ms} ms: raise the turbo's gap"
+                        "turbo of macro “{name}” presses every {every_ms} ms, but the macro takes {macro_ms} ms to play: raise the turbo's gap to at least {macro_ms} ms"
                     ));
                 }
             }
             ButtonAction::OpenMenu(name) if !names.menus.contains(name) => {
-                problem = Some(format!("missing menu {name:?}"));
+                problem = Some(format!("missing menu “{name}”"));
             }
             ButtonAction::ShowInfo(name) if names.always_infos.contains(name) => {
-                problem = Some(format!("info overlay {name:?} is always shown, so an action can't show it"));
+                problem = Some(format!("info overlay “{name}” is always shown, so an action can't show it"));
             }
             ButtonAction::ShowInfo(name) if !names.infos.contains(name) => {
-                problem = Some(format!("missing info overlay {name:?}"));
+                problem = Some(format!("missing info overlay “{name}”"));
             }
             ButtonAction::ShowLog(name) if names.always_logs.contains(name) => {
-                problem = Some(format!("log overlay {name:?} is always shown, so an action can't show it"));
+                problem = Some(format!("log overlay “{name}” is always shown, so an action can't show it"));
             }
             ButtonAction::ShowLog(name) if !names.logs.contains(name) => {
-                problem = Some(format!("missing log overlay {name:?}"));
+                problem = Some(format!("missing log overlay “{name}”"));
             }
             ButtonAction::Layer(_) if !names.layers_allowed => {
                 problem = Some("shared items can't use layers".into());
             }
             ButtonAction::Layer(name) if !names.layers.contains(name) => {
-                problem = Some(format!("missing layer {name:?}"));
+                problem = Some(format!("missing layer “{name}”"));
             }
             _ => {}
         }
@@ -212,52 +212,52 @@ pub(super) fn items_problem(macros: &[Macro], menus: &[Menu], info: &[InfoOverla
     let clash = |kind: ItemKind, name: &str| shared.is_some_and(|s| s.list(kind).iter().any(|n| n == name));
     for (i, m) in macros.iter().enumerate() {
         if m.name.trim().is_empty() {
-            return Some("Macro names cannot be empty.".into());
+            return Some("A macro needs a name.".into());
         }
         if macros[..i].iter().any(|o| o.name == m.name) {
-            return Some(format!("Two macros are named {:?}.", m.name));
+            return Some(format!("Two macros are named “{}”.", m.name));
         }
         if clash(ItemKind::Macro, &m.name) {
-            return Some(format!("Macro {:?} has the same name as a shared macro.", m.name));
+            return Some(format!("Macro “{}” has the same name as a shared macro.", m.name));
         }
         let keys = m.steps.iter().filter_map(MacroStep::action).flat_map(|a| a.key_names());
         if let Some(bad) = keys.into_iter().find(|k| KeyCode::from_str(k).is_err()) {
-            return Some(format!("Macro {:?}: unknown key {:?}", m.name, short_key(bad)));
+            return Some(format!("Macro “{}”: unknown key “{}”", m.name, short_key(bad)));
         }
         if m.steps.iter().filter_map(MacroStep::action).any(|a| {
             let mut layer = false;
             a.walk(&mut |a| layer |= matches!(a, ButtonAction::Layer(_)));
             layer
         }) {
-            return Some(format!("Macro {:?}: macros can't hold layers.", m.name));
+            return Some(format!("Macro “{}”: macros can't hold layers.", m.name));
         }
         if let Some(problem) = m.steps.iter().filter_map(MacroStep::action).find_map(|a| action_problem(a, names)) {
-            return Some(format!("Macro {:?}: {problem}", m.name));
+            return Some(format!("Macro “{}”: {problem}", m.name));
         }
     }
     for (i, m) in menus.iter().enumerate() {
         if m.name.trim().is_empty() {
-            return Some("Menu names cannot be empty.".into());
+            return Some("A menu needs a name.".into());
         }
         if menus[..i].iter().any(|o| o.name == m.name) {
-            return Some(format!("Two menus are named {:?}.", m.name));
+            return Some(format!("Two menus are named “{}”.", m.name));
         }
         if clash(ItemKind::Menu, &m.name) {
-            return Some(format!("Menu {:?} has the same name as a shared menu.", m.name));
+            return Some(format!("Menu “{}” has the same name as a shared menu.", m.name));
         }
         if let Some(problem) = m.items.iter().find_map(|item| item_problem(m, &item.action, reachable, names)) {
-            return Some(format!("Menu {:?}: {problem}", m.name));
+            return Some(format!("Menu “{}”: {problem}", m.name));
         }
     }
     for (i, o) in info.iter().enumerate() {
         if o.name.trim().is_empty() {
-            return Some("Info overlay names cannot be empty.".into());
+            return Some("An info overlay needs a name.".into());
         }
         if info[..i].iter().any(|other| other.name == o.name) {
-            return Some(format!("Two info overlays are named {:?}.", o.name));
+            return Some(format!("Two info overlays are named “{}”.", o.name));
         }
         if clash(ItemKind::Info, &o.name) {
-            return Some(format!("Info overlay {:?} has the same name as a shared one.", o.name));
+            return Some(format!("Info overlay “{}” has the same name as a shared one.", o.name));
         }
     }
     None
@@ -269,13 +269,13 @@ pub(super) fn logs_problem(logs: &[LogOverlay], shared: Option<&Names>) -> Optio
     let clash = |name: &str| shared.is_some_and(|s| s.logs.iter().chain(&s.always_logs).any(|n| n == name));
     for (i, o) in logs.iter().enumerate() {
         if o.name.trim().is_empty() {
-            return Some("Log overlay names cannot be empty.".into());
+            return Some("A log overlay needs a name.".into());
         }
         if logs[..i].iter().any(|other| other.name == o.name) {
-            return Some(format!("Two log overlays are named {:?}.", o.name));
+            return Some(format!("Two log overlays are named “{}”.", o.name));
         }
         if clash(&o.name) {
-            return Some(format!("Log overlay {:?} has the same name as a shared one.", o.name));
+            return Some(format!("Log overlay “{}” has the same name as a shared one.", o.name));
         }
     }
     None
@@ -340,18 +340,18 @@ pub(super) fn game_problem(config: &Config, g: &Game) -> Option<String> {
     }
     for (i, p) in g.profiles.iter().enumerate() {
         if p.name.trim().is_empty() {
-            return Some("Profile names cannot be empty.".into());
+            return Some("A profile needs a name.".into());
         }
         if g.profiles[..i].iter().any(|o| o.name == p.name) {
-            return Some(format!("Two profiles are named {:?}.", p.name));
+            return Some(format!("Two profiles are named “{}”.", p.name));
         }
         if let Some(problem) = p.actions().into_iter().find_map(|a| {
             action_problem(a, &names).filter(|problem| !problem.starts_with("unknown key"))
         }) {
-            return Some(format!("Profile {:?}: {problem}.", p.name));
+            return Some(format!("Profile “{}”: {problem}.", p.name));
         }
         if let Some(c) = p.combos.iter().find(|c| c.buttons.len() < 2) {
-            return Some(format!("Profile {:?}: a combo needs at least two buttons (has {}).", p.name, c.buttons.len()));
+            return Some(format!("Profile “{}”: a combo needs at least two buttons (has {}).", p.name, c.buttons.len()));
         }
         let analogs = [
             Analog::Stick(Stick::Left),
@@ -360,17 +360,17 @@ pub(super) fn game_problem(config: &Config, g: &Game) -> Option<String> {
             Analog::Trigger(Trigger::Right),
         ];
         if analogs.into_iter().any(|a| p.zones(a).iter().any(|z| z.min >= z.max)) {
-            return Some(format!("Profile {:?}: a zone's range must start below where it ends.", p.name));
+            return Some(format!("Profile “{}”: a zone's range must start below where it ends.", p.name));
         }
         if [Stick::Left, Stick::Right].into_iter().all(|s| matches!(p.stick(s).action, StickAction::Flick { .. })) {
-            return Some(format!("Profile {:?}: only one stick can be a flick stick.", p.name));
+            return Some(format!("Profile “{}”: only one stick can be a flick stick.", p.name));
         }
         let mut keys: Vec<&String> = p.actions().into_iter().flat_map(|a| a.key_names()).collect();
         for s in [Stick::Left, Stick::Right] {
             keys.extend(p.stick(s).action.ring_actions().iter().flat_map(|a| a.key_names()));
         }
         if let Some(bad) = keys.iter().find(|k| KeyCode::from_str(k).is_err()) {
-            return Some(format!("Profile {:?}: unknown key {:?}", p.name, short_key(bad)));
+            return Some(format!("Profile “{}”: unknown key “{}”", p.name, short_key(bad)));
         }
     }
     layers_problem(g, &names).or_else(|| rules_problem(g))
@@ -381,19 +381,19 @@ pub(super) fn layers_problem(g: &Game, names: &Names) -> Option<String> {
     use crate::config::Indicator;
     for (i, l) in g.layers.iter().enumerate() {
         if l.name.trim().is_empty() {
-            return Some("Layer names cannot be empty.".into());
+            return Some("A layer needs a name.".into());
         }
         if g.layers[..i].iter().any(|o| o.name == l.name) {
-            return Some(format!("Two layers are named {:?}.", l.name));
+            return Some(format!("Two layers are named “{}”.", l.name));
         }
-        let label = format!("Layer {:?}", l.name);
+        let label = format!("Layer “{}”", l.name);
         if let Indicator::Info(info) = &l.indicator
             && !names.infos.contains(info)
         {
             return Some(if names.always_infos.contains(info) {
-                format!("{label}: info overlay {info:?} is always shown, so it can't show the layer is on.")
+                format!("{label}: info overlay “{info}” is always shown, so it can't show that the layer is on.")
             } else {
-                format!("{label}: missing info overlay {info:?} to show.")
+                format!("{label}: missing info overlay “{info}” to show.")
             });
         }
         if let Some(problem) = l.actions().into_iter().find_map(|a| action_problem(a, names)) {
@@ -415,7 +415,7 @@ pub(super) fn layers_problem(g: &Game, names: &Names) -> Option<String> {
             .flatten()
             .flat_map(|s| s.action.ring_actions().iter().flat_map(|a| a.key_names()));
         if let Some(bad) = stick_keys.into_iter().find(|k| KeyCode::from_str(k).is_err()) {
-            return Some(format!("{label}: unknown key {:?}", short_key(bad)));
+            return Some(format!("{label}: unknown key “{}”", short_key(bad)));
         }
     }
     None
@@ -424,10 +424,10 @@ pub(super) fn layers_problem(g: &Game, names: &Names) -> Option<String> {
 /// What's wrong with a game's auto-switch rules, if anything.
 pub(super) fn rules_problem(g: &Game) -> Option<String> {
     if let Some(r) = g.rules.iter().find(|r| r.value.trim().is_empty()) {
-        return Some(format!("A per-game rule for profile {:?} has no {} to match.", r.profile, r.kind));
+        return Some(format!("A rule for profile “{}” has no {} to match.", r.profile, r.kind));
     }
     if let Some(r) = g.rules.iter().find(|r| g.profile(&r.profile).is_none()) {
-        return Some(format!("A per-game rule points to missing profile {:?}.", r.profile));
+        return Some(format!("A rule points to a profile that doesn't exist: “{}”.", r.profile));
     }
     None
 }
@@ -445,10 +445,10 @@ impl App {
         }
         for (i, g) in config.games.iter().enumerate() {
             if g.name.trim().is_empty() {
-                return Some("Game names cannot be empty.".into());
+                return Some("A setup needs a name.".into());
             }
             if config.games[..i].iter().any(|o| o.name == g.name) {
-                return Some(format!("Two games are named {:?}.", g.name));
+                return Some(format!("Two setups are named “{}”.", g.name));
             }
         }
         for (key, g) in config.all_games() {
@@ -458,7 +458,7 @@ impl App {
             }
         }
         if let Some(d) = config.auto_switch.default_profile.as_ref().filter(|d| config.profile(d).is_none()) {
-            return Some(format!("The per-game default profile {d} no longer exists."));
+            return Some(format!("The setup's default profile {d} no longer exists."));
         }
         None
     }
@@ -476,9 +476,9 @@ mod tests {
             ButtonAction::Mouse(MouseButton::Left),
             ButtonAction::toggle(ButtonAction::Keys(vec!["KEY_NOPE".into()])),
         ]);
-        assert_eq!(action_problem(&nested, &names).as_deref(), Some("unknown key \"NOPE\""));
+        assert_eq!(action_problem(&nested, &names).as_deref(), Some("unknown key \u{201c}NOPE\u{201d}"));
         let missing = ButtonAction::Macro { name: "Gone".into(), repeat: false };
-        assert_eq!(action_problem(&missing, &names).as_deref(), Some("missing macro \"Gone\""));
+        assert_eq!(action_problem(&missing, &names).as_deref(), Some("missing macro \u{201c}Gone\u{201d}"));
         assert_eq!(action_problem(&ButtonAction::Macro { name: "Known".into(), repeat: false }, &names), None);
         // A turbo's gap must cover its macro's length; a longer macro is caught here.
         let turbo = |every_ms| ButtonAction::Turbo {

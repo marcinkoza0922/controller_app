@@ -848,7 +848,7 @@ pub mod draw {
                 hint("Y  space"),
                 hint("Start  enter"),
                 hint("hold LT  shift"),
-                hint("Shift/Ctrl/Alt keys latch"),
+                hint("Shift, Ctrl and Alt stay on for one key"),
                 space::horizontal(),
                 hint("hold B to close"),
             ]

@@ -696,7 +696,7 @@ impl App {
                 button(text("+ New macro")).style(style::secondary).on_press(Message::NewMacro),
                 text("A macro plays a sequence of inputs.").size(13).color(MUTED_COLOR),
                 space::horizontal(),
-                button(text("Copy from another game…").size(13)).style(button::text).on_press(Message::OpenBrowse(ItemKind::Macro)),
+                button(text("Copy from another setup…").size(13)).style(button::text).on_press(Message::OpenBrowse(ItemKind::Macro)),
                 help(
                     "A macro plays a sequence of inputs. Map it to any button, gesture, combo, trigger, \
                      zone or menu item with the \"Macro…\" action."
@@ -711,7 +711,7 @@ impl App {
         .style(style::card);
         let mut col = column![add].spacing(16);
         if self.macros().is_empty() {
-            col = col.push(text("This game has no macros yet.").color(MUTED_COLOR));
+            col = col.push(text("This setup has no macros yet.").color(MUTED_COLOR));
         }
         for (i, m) in self.macros().iter().enumerate() {
             col = col.push(self.view_macro_card(i, m, names));
@@ -902,7 +902,7 @@ impl App {
     pub(super) fn view_menus<'a>(&'a self, names: &Names, reachable: &[&Menu]) -> Element<'a, Message> {
         let mut col = column![view_new_menu_card()].spacing(16);
         if self.menus().is_empty() {
-            col = col.push(text("This game has no menus yet.").color(MUTED_COLOR));
+            col = col.push(text("This setup has no menus yet.").color(MUTED_COLOR));
         }
         for (i, menu) in self.menus().iter().enumerate() {
             col = col.push(self.view_menu_card(i, menu, names, reachable));
@@ -913,7 +913,7 @@ impl App {
     pub(super) fn view_infos(&self) -> Element<'_, Message> {
         let mut col = column![view_new_info_card()].spacing(16);
         if self.infos().is_empty() {
-            col = col.push(text("This game has no info overlays yet.").color(MUTED_COLOR));
+            col = col.push(text("This setup has no info overlays yet.").color(MUTED_COLOR));
         }
         for (i, o) in self.infos().iter().enumerate() {
             col = col.push(self.view_info_card(i, o));
@@ -969,7 +969,7 @@ impl App {
                 "Shown",
                 column![
                     checkbox(o.always)
-                        .label(if self.on_shared() { "Always, in every game" } else { "Always, while this game is active" })
+                        .label(if self.on_shared() { "Always, in every setup" } else { "Always, while this setup is active" })
                         .on_toggle(move |a| Message::SetInfoAlways(i, a)),
                 ]
                 .extend((!o.always).then(|| {
@@ -1383,7 +1383,7 @@ mod tests {
         let mut app = with_game();
         let _ = app.update(Message::NewMacro);
         assert_eq!(app.config.games[0].macros[0].name, "Macro");
-        assert!(app.config.general.macros.is_empty(), "a game's new items are its own");
+        assert!(app.config.general.macros.is_empty(), "a setup's new items are its own");
         // General's profiles can't use it.
         app.config.general.profiles[0].set_button(Button::West, ButtonAction::Macro { name: "Macro".into(), repeat: false });
         let err = app.validate().unwrap();

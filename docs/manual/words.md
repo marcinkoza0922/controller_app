@@ -1,0 +1,23 @@
+# Words used in this app
+
+- **Controller setup** (setup): everything padwight keeps for one game: its profiles, macros, menus, overlays and layers, and the rules that pick it. See [Controller setups](setups.md). General is a setup too.
+- **Profile**: a complete set of mappings. Each setup can have several, and you switch between them.
+- **Action**: what a button or stick does: a key, a mouse click, a gamepad button, a macro, and so on.
+- **Toggle**: press once to hold an action down, and press again to let it go.
+- **Turbo**: repeats an action as long as you hold the button.
+- **Combo**: two or more buttons pressed together, which act as their own input, such as LB + RB.
+- **Gesture**: a special press: a double tap, a triple tap, or a long press.
+- **Zone**: an extra action that applies while a stick or trigger is pushed part of the way.
+- **Layer**: a second set of mappings that applies while you hold a button. See [Layers](layers.md).
+- **Macro**: a saved sequence of presses, holds and waits, played with one press. See [Macros](macros.md).
+- **Menu**: a list or ring of choices that opens on screen while you hold a button. See [On-screen menus](menus.md).
+- **Info overlay**: text and button pictures drawn on screen, such as a cheat sheet.
+- **Log overlay**: a small on-screen list of the buttons you pressed lately, and what each one did.
+- **Gyro**: motion sensors in some controllers, used to aim or steer by turning or tilting. See [Gyro](gyro.md).
+- **Flick stick**: a stick that turns the camera in a direction at once, for quick turns.
+- **Deadzone**: how far a stick must move before it counts. It stops a stick that rests slightly off-centre from drifting.
+- **Guide**: the middle button (PlayStation, Xbox or Home). By default it's a modifier, so a plain press doesn't reach Steam. See [The Guide button](guide-button.md).
+- **Daemon**: the background part of padwight that does the remapping. It keeps running when the window is closed.
+- **Auto-switch rule**: a rule that picks a setup's profile when a matching window has focus.
+- **Pack**: a `.padpack` file that holds a setup's profiles and items, for sharing.
+- **Library**: ready-made setups for games that come with padwight, listed when you add a setup.

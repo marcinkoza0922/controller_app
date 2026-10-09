@@ -1,0 +1,43 @@
+# Troubleshooting
+
+## The game sees my controller twice
+
+If Steam Input manages the controller, the game sees Steam's virtual controller as well as padwight's. Turn off Steam Input for that controller.
+
+PlayStation and Switch controllers can also be read directly, so for those you may need to turn off Steam Input, or set `SDL_JOYSTICK_HIDAPI=0` for the game.
+
+## My controller doesn't show up
+
+Run `padwight status` in a terminal to see what the daemon has found. Your user needs access to the controller and to `/dev/uinput`. The README explains the udev rule, or joining the `input` group, that gives it.
+
+## The profile didn't switch when I opened a game
+
+- Check the setup's rules on its **Details** tab, and that the rule is switched on.
+- Check that no other rule also matches the game.
+- Check that your desktop supports window tracking: KDE Plasma, Sway or Hyprland. GNOME doesn't.
+
+## The keyboard, menus or overlays don't appear
+
+They need a desktop that supports them: KDE Plasma, Sway or Hyprland. GNOME doesn't.
+
+## Gyro does nothing on a PlayStation or Switch controller
+
+Those controllers' motion sensors need a permission rule of their own, which the README explains. Install it, then press **Calibrate gyro**.
+
+## The top bar says the daemon isn't running
+
+Start it with `systemctl --user start padwight`. You can still edit in the meantime. Your changes are kept, and they take effect once it starts.
+
+## I edited the config file by hand, and nothing changed
+
+Run `padwight reload`. The daemon reads the file only when it's told to.
+
+## Rumble doesn't reach my controller
+
+Only controllers with force feedback vibrate. Press **Test rumble** on the Overview page to check.
+
+## The profile changed after I unplugged my controller
+
+Unplugging releases everything the controller was holding, and a message says which controller left. When the same controller comes back, the profile you were using returns, unless you've changed it since.
+
+If a replacement controller lacks something the profile needs, such as gyro, a profile that doesn't need it takes over, and a message says so.

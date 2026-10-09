@@ -88,14 +88,14 @@ fn status() -> Result<()> {
         Some(game) => println!("profile: {} ({game})", s.active_profile),
         None => println!("profile: {}", s.active_profile),
     }
-    println!("per-game switching follows: {}", s.focus_backend.label());
+    println!("focus tracking: {}", s.focus_backend.label());
     if let Some(w) = &s.focused {
         let steam = w.steam_app_id.as_deref().map(|id| format!(", Steam {id}")).unwrap_or_default();
         println!("focused: {} (class {}{steam})", w.exe, w.class);
     }
     for d in s.devices {
         let state = if d.managed { "remapping" } else if d.ignored { "ignored" } else { "idle" };
-        let triggers = if d.analog_triggers { "" } else { ", digital triggers" };
+        let triggers = if d.analog_triggers { "" } else { ", on/off triggers" };
         let rumble = if d.rumble { "" } else { ", no rumble" };
         println!("  {} [{}] {state}{triggers}{rumble}", d.name, d.path);
     }

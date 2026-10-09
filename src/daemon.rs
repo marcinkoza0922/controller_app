@@ -1538,7 +1538,7 @@ impl Daemon {
         let active = self.config.active_ref();
         let lines = [format!("Controller profile active: {}", active.profile)]
             .into_iter()
-            .chain(active.game.map(|game| format!("Game: {game}")))
+            .chain(active.game.map(|game| format!("Setup: {game}")))
             .collect();
         self.toast = Some(crate::info::Toast::new(lines, Instant::now()));
         self.broadcast_overlay();
@@ -1699,7 +1699,7 @@ impl Daemon {
                     if let Some(Active::Settings(menu)) = &mut self.active {
                         menu.back_to_main();
                     }
-                    self.say(vec!["Edit Controls needs a game".into(), "Focus a game window first".into()]);
+                    self.say(vec!["Edit Controls needs a setup".into(), "Focus a game window first".into()]);
                     return false;
                 }
                 let general = self.config.general.clone();
@@ -1790,7 +1790,7 @@ impl Daemon {
                 let plan = crate::pack::plan(&config, entry.pack, true);
                 let choices = crate::pack::Choices { replace: false, keep_mine: vec![true; plan.rule_clashes.len()] };
                 let name = crate::pack::apply(&mut config, &plan, &choices);
-                log!("added library game {name}");
+                log!("added library setup {name}");
                 // The chosen profile is the one this window's rules pick.
                 if let (Some(profile), Some(window), Some(game)) =
                     (profile, &self.focused, config.games.iter_mut().find(|g| g.name == name))
@@ -1800,7 +1800,7 @@ impl Daemon {
                     }
                 }
                 if let Response::Error(e) = self.replace_config(config) {
-                    return self.say(vec!["Couldn't add the game".into(), e]);
+                    return self.say(vec!["Couldn't add the setup".into(), e]);
                 }
                 self.say(vec![format!("Added {name}")]);
                 if let Some(window) = self.focused.clone() {

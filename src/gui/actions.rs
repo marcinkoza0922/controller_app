@@ -131,8 +131,8 @@ impl fmt::Display for ActionKind {
             ActionKind::Mouse => "Mouse button",
             ActionKind::Wheel => "Scroll wheel",
             ActionKind::NextProfile => "Next profile",
-            ActionKind::Overlay => "Keyboard overlay",
-            ActionKind::Numpad => "Numpad overlay",
+            ActionKind::Overlay => "On-screen keyboard",
+            ActionKind::Numpad => "On-screen numpad",
             ActionKind::Screenshot => "Take screenshot",
             ActionKind::Recording => "Toggle recording",
             ActionKind::Media => "Media controls",
@@ -144,7 +144,7 @@ impl fmt::Display for ActionKind {
             ActionKind::Log => "Log overlay…",
             ActionKind::Layer => "Layer…",
             ActionKind::Turbo => "Turbo…",
-            ActionKind::Multiple => "Several outputs…",
+            ActionKind::Multiple => "Several at once…",
         })
     }
 }
@@ -375,7 +375,7 @@ fn turbo_editor<'a>(
                 .align_y(Alignment::Center);
             if shown != every_ms {
                 line = line
-                    .push(text(format!("(raised to {shown} ms: the macro takes that long)")).size(12).color(MUTED_COLOR));
+                    .push(text(format!("(raised to {shown} ms, because the macro takes that long to play)")).size(12).color(MUTED_COLOR));
             }
             line.into()
         }
@@ -502,9 +502,9 @@ pub(super) fn action_value<'a>(
             line.into()
         }
         ButtonAction::Disabled | ButtonAction::NextProfile | ButtonAction::Screenshot | ButtonAction::ToggleRecording => space().into(),
-        ButtonAction::ToggleMedia => text("D-pad: seek and volume, bumpers: tracks, A: play / pause, B closes.").size(12).color(MUTED_COLOR).into(),
+        ButtonAction::ToggleMedia => text("D-pad left and right seek, up and down change the volume, bumpers change track, A plays or pauses, B closes.").size(12).color(MUTED_COLOR).into(),
         ButtonAction::ForceQuit => {
-            text("Hold for 2 seconds to end the focused window's process (never the desktop).")
+            text("Hold for 2 seconds to close the program in the focused window. The desktop is never closed.")
                 .size(12)
                 .color(MUTED_COLOR)
                 .into()
@@ -513,7 +513,7 @@ pub(super) fn action_value<'a>(
             text("Hold B on the controller to close it.").size(12).color(MUTED_COLOR).into()
         }
         ButtonAction::ShowInfo(_) if names.infos.is_empty() => {
-            text("No info overlays to show. Create one on the Info overlays tab (one that isn't set to always show).")
+            text("No info overlays to show. Create one on the Info overlays tab, and turn off Always so an action can show it.")
                 .size(12)
                 .color(MUTED_COLOR)
                 .into()
@@ -530,7 +530,7 @@ pub(super) fn action_value<'a>(
             line.into()
         }
         ButtonAction::ShowLog(_) if names.logs.is_empty() => {
-            text("No log overlays to show. Create one on the Log overlays tab (one that isn't set to always show).")
+            text("No log overlays to show. Create one on the Log overlays tab, and turn off Always so an action can show it.")
                 .size(12)
                 .color(MUTED_COLOR)
                 .into()

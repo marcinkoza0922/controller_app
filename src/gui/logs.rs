@@ -67,7 +67,7 @@ impl App {
     pub(super) fn view_logs(&self) -> Element<'_, Message> {
         let mut col = column![view_new_log_card()].spacing(16);
         if self.logs().is_empty() {
-            col = col.push(text("This game has no log overlays yet.").color(MUTED_COLOR));
+            col = col.push(text("This setup has no log overlays yet.").color(MUTED_COLOR));
         }
         for (i, o) in self.logs().iter().enumerate() {
             col = col.push(self.view_log_card(i, o));
@@ -146,10 +146,10 @@ impl App {
             "Shown",
             column![
                 checkbox(o.always)
-                    .label(if self.on_shared() { "Always, in every game" } else { "Always, while this game is active" })
+                    .label(if self.on_shared() { "Always, in every setup" } else { "Always, while this setup is active" })
                     .on_toggle(move |a| e(&|o| o.always = a)),
                 text(if o.always {
-                    "Stays on screen whenever the game is active, so actions can't show it."
+                    "Stays on screen whenever the setup is active, so actions can't show it."
                 } else {
                     "Map \"Show log overlay…\" to a button: it shows while held, or until pressed again if \
                      wrapped in Toggle."

@@ -234,7 +234,7 @@ impl App {
                 dropdown(names, current, Message::SelectLayer).placeholder("No layers yet").width(220),
                 button(text("+ New layer")).style(style::secondary).on_press(Message::NewLayer),
                 space::horizontal(),
-                button(text("Copy from another game…").size(13)).style(button::text).on_press(Message::OpenBrowse(ItemKind::Layer)),
+                button(text("Copy from another setup…").size(13)).style(button::text).on_press(Message::OpenBrowse(ItemKind::Layer)),
                 help(
                     "A layer changes some of the controller's mappings while it's on, then restores them: e.g. hold LB, and the face buttons type F1–F4. Turn one on with \"Layer…\" on \
                      any button, trigger, stick direction, zone, gesture or combo: on while held, or wrapped \
@@ -250,7 +250,7 @@ impl App {
         let mut col = column![picker_row].spacing(16);
         let Some(layer) = game.layers.get(self.layer) else {
             return col
-                .push(text("This game has no layers yet.").color(MUTED_COLOR))
+                .push(text("This setup has no layers yet.").color(MUTED_COLOR))
                 .into();
         };
 
@@ -338,7 +338,7 @@ impl App {
             "Shown over",
             row![
                 dropdown(profiles, compared, Message::SetCompare).width(220),
-                help("Inputs the layer doesn't set show this profile's mapping. The layer applies over any of the game's profiles.".into()),
+                help("Buttons the layer doesn't change keep this profile's mapping. The layer works with any of the setup's profiles.".into()),
             ]
             .spacing(8)
             .align_y(Alignment::Center)

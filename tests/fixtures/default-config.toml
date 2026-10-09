@@ -1,7 +1,7 @@
 enabled = true
 ignored_devices = []
 info_glyphs = "Xbox"
-games = []
+setups = []
 guide_layer_adopted = true
 
 [active]

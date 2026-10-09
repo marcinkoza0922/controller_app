@@ -4,7 +4,7 @@ use super::{Config, Game, Profile, ProfileRef};
 use crate::ipc::WindowInfo;
 
 impl Config {
-    /// Adds a game for `window` holding `profile`, with a rule that picks it for the window.
+    /// Adds a setup for `window` holding `profile`, with a rule that picks it for the window.
     /// The game takes General's macros, menus, layers and overlays, so the profile's references
     /// still resolve. Returns the new profile.
     pub fn add_game_for_window(&mut self, window: &WindowInfo, profile: Profile) -> ProfileRef {
@@ -29,7 +29,7 @@ impl Config {
 /// The window's executable without `.exe`, else its class, else a plain name.
 fn window_game_name(window: &WindowInfo) -> String {
     let exe = window.exe.rsplit_once('.').filter(|(_, ext)| ext.eq_ignore_ascii_case("exe")).map_or(window.exe.as_str(), |(stem, _)| stem);
-    [exe, window.class.as_str()].into_iter().map(str::trim).find(|s| !s.is_empty()).unwrap_or("Game").to_string()
+    [exe, window.class.as_str()].into_iter().map(str::trim).find(|s| !s.is_empty()).unwrap_or("Setup").to_string()
 }
 
 #[cfg(test)]
@@ -54,6 +54,6 @@ mod tests {
         let mut config = Config::default();
         let profile = config.general.profiles[0].clone();
         let at = config.add_game_for_window(&WindowInfo::default(), profile);
-        assert_eq!(at.game.as_deref(), Some("Game"));
+        assert_eq!(at.game.as_deref(), Some("Setup"));
     }
 }

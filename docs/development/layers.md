@@ -61,7 +61,7 @@ The new action is `ButtonAction::Layer(name)`, like `Macro` and `OpenMenu`. It r
 of the same game.
 
 ```toml
-[[games]]
+[[setups]]
 name = "Skyrim"
 
 [[games.profiles]]
