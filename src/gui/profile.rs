@@ -1,6 +1,6 @@
 //! The profile editor (buttons, sticks and triggers, combos, gyro), also used for layers, and the controller drawing.
 
-use iced::widget::{Column, column, row};
+use iced::widget::{Column, column, rich_text, row, span};
 
 use super::*;
 use crate::config::{FlickVertical, MouseResponse};
@@ -782,18 +782,26 @@ pub(super) fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<
 
     for (kind, action) in set_gestures {
         rows.push(rule::horizontal(1).into());
-        rows.push(labeled(
-            format!("    {kind}"),
+        // The name and its remove button stay in the fixed label column, so they don't scroll with the editor.
+        let label = column![
+            text(kind.to_string()),
+            button(rich_text([span::<(), _>("Remove").underline(true).color(ERROR_COLOR).size(13)]))
+                .style(button::text)
+                .padding(0)
+                .on_press(Message::RemoveGesture(b, kind)),
+        ]
+        .width(LABEL_WIDTH)
+        .spacing(6)
+        .align_x(Alignment::Center);
+        rows.push(
             row![
+                label,
                 scroll_x(action_editor(action, b, &ACTION_KINDS, set_action(Target::Gesture(b, kind)), KeyField::root(Target::Gesture(b, kind)), ui.names)),
-                button(text("✕").size(13))
-                    .style(style::secondary)
-                    .on_press(Message::RemoveGesture(b, kind)),
             ]
-            .spacing(6)
-            .align_y(Alignment::Center)
+            .spacing(10)
+            .align_y(Alignment::Start)
             .into(),
-        ));
+        );
     }
     // Adding a gesture sits under the rows it extends, one click per kind.
     if !missing.is_empty() {

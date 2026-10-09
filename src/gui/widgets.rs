@@ -264,8 +264,10 @@ pub(super) fn labeled<'a>(label: impl text::IntoFragment<'a>, editor: Element<'a
 }
 
 /// Lets a wide row scroll sideways, with its bar below, instead of running off screen.
+/// Fills the row's free width, so buttons placed after it (such as a remove button) keep their space.
 pub(super) fn scroll_x<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
     scrollable(content)
+        .width(Length::Fill)
         .direction(scrollable::Direction::Horizontal(scrollable::Scrollbar::new().spacing(4)))
         .into()
 }

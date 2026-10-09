@@ -29,6 +29,17 @@ pub fn inset(theme: &Theme) -> container::Style {
     }
 }
 
+/// The outputs of a "Several at once" action: a faint accent tint, so the list reads as one group
+/// apart from the surrounding card. Translucent, so it works over either theme's surfaces.
+pub fn output_list(theme: &Theme) -> container::Style {
+    let p = theme.extended_palette();
+    container::Style {
+        background: Some(Color { a: 0.07, ..p.primary.base.color }.into()),
+        border: Border { width: 1.0, radius: 6.0.into(), color: Color { a: 0.3, ..p.primary.base.color } },
+        ..container::Style::default()
+    }
+}
+
 /// Tooltip bubbles.
 pub fn tooltip(theme: &Theme) -> container::Style {
     let p = theme.extended_palette();
