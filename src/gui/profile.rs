@@ -777,7 +777,7 @@ pub(super) fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<
     }
     rows.push(labeled(
         "    Press",
-        action_editor(p.button(b), b, &ACTION_KINDS, set_action(target), KeyField::root(target), ui.names),
+        scroll_x(action_editor(p.button(b), b, &ACTION_KINDS, set_action(target), KeyField::root(target), ui.names)),
     ));
 
     for (kind, action) in set_gestures {
@@ -785,7 +785,7 @@ pub(super) fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<
         rows.push(labeled(
             format!("    {kind}"),
             row![
-                action_editor(action, b, &ACTION_KINDS, set_action(Target::Gesture(b, kind)), KeyField::root(Target::Gesture(b, kind)), ui.names),
+                scroll_x(action_editor(action, b, &ACTION_KINDS, set_action(Target::Gesture(b, kind)), KeyField::root(Target::Gesture(b, kind)), ui.names)),
                 button(text("✕").size(13))
                     .style(style::secondary)
                     .on_press(Message::RemoveGesture(b, kind)),
@@ -876,7 +876,7 @@ pub(super) fn combo_rows<'a>(p: &'a Profile, ui: &Ui) -> Vec<Element<'a, Message
             ]
             .spacing(10)
             .align_y(Alignment::Center),
-            labeled("    Action", action_editor(&combo.action, Button::South, &ACTION_KINDS, set_action(target), KeyField::root(target), ui.names)),
+            labeled("    Action", scroll_x(action_editor(&combo.action, Button::South, &ACTION_KINDS, set_action(target), KeyField::root(target), ui.names))),
         ]
         .spacing(8);
         if let Some(problem) = problem {
@@ -1091,7 +1091,7 @@ fn ring_rows<'a>(
         let target = Target::RingSector(s, i);
         rows = rows.push(labeled(
             format!("    {arrow} Sector {}", i + 1),
-            container(action_editor(action, Button::South, &ACTION_KINDS, set_action(target), KeyField::root(target), names))
+            container(scroll_x(action_editor(action, Button::South, &ACTION_KINDS, set_action(target), KeyField::root(target), names)))
                 .padding(10)
                 .style(style::inset)
                 .into(),
@@ -1239,7 +1239,7 @@ pub(super) fn zone_editor<'a>(analog: Analog, zones: &'a [Zone], names: &Names) 
         .align_y(Alignment::Center);
         let mut body = column![
             range,
-            action_editor(&zone.action, Button::South, &ACTION_KINDS, set_action(Target::Zone(analog, i)), KeyField::root(Target::Zone(analog, i)), names),
+            scroll_x(action_editor(&zone.action, Button::South, &ACTION_KINDS, set_action(Target::Zone(analog, i)), KeyField::root(Target::Zone(analog, i)), names)),
         ]
         .spacing(8);
         if min >= max {

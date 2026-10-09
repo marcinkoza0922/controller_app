@@ -785,7 +785,7 @@ impl App {
                     let hold_ms = *hold_ms;
                     let held = action.clone();
                     column![
-                        action_editor(action, Button::South, MACRO_STEP_KINDS, set_action(Target::MacroStep(mi, i)), KeyField::root(Target::MacroStep(mi, i)), names),
+                        scroll_x(action_editor(action, Button::South, MACRO_STEP_KINDS, set_action(Target::MacroStep(mi, i)), KeyField::root(Target::MacroStep(mi, i)), names)),
                         row![
                             text("held for").size(13),
                             slider(10.0..=1000.0, hold_ms as f32, move |v| {
@@ -840,14 +840,14 @@ impl App {
                     }
                     body.into()
                 }
-                MacroStep::Press(action) | MacroStep::Release(action) => action_editor(
+                MacroStep::Press(action) | MacroStep::Release(action) => scroll_x(action_editor(
                     action,
                     Button::South,
                     MACRO_STEP_KINDS,
                     set_action(Target::MacroStep(mi, i)),
                     KeyField::root(Target::MacroStep(mi, i)),
                     names,
-                ),
+                )),
             };
             let small = |label: &'static str, msg: Option<Message>| {
                 button(text(label).size(13)).style(style::secondary).on_press_maybe(msg)
@@ -1239,12 +1239,11 @@ impl App {
                     button(text(label).size(13)).style(style::secondary).on_press_maybe(msg)
                 };
                 line = line
-                    .push(space::horizontal())
                     .push(small("↑", (i > 0).then_some(Message::MoveMenuItem(mi, i, true))))
                     .push(small("↓", (i < last).then_some(Message::MoveMenuItem(mi, i, false))))
                     .push(small("✕", Some(Message::RemoveMenuItem(mi, i))));
             }
-            let mut boxed = column![line].spacing(4);
+            let mut boxed = column![scroll_x(line)].spacing(4);
             if let Some(problem) = item_problem(menu, &item.action, reachable, names) {
                 boxed = boxed.push(text(format!("⚠ {problem}")).size(12).color(ERROR_COLOR));
             }
