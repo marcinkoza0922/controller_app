@@ -13,7 +13,7 @@ mod common;
 
 use std::{fs, thread, time::Duration};
 
-use common::{
+use common::{install_config, 
     Daemon, assert_log_clean, daemon_log, hold_config, input::{Reader, find_node, grabbed}, serial, spawn_daemon, temp_root,
     uhid::{BUTTON_EAST, BUTTON_SOUTH, HidPad}, wait_for,
 };
@@ -25,7 +25,7 @@ const HELD: u8 = BUTTON_SOUTH | BUTTON_EAST;
 fn start(root: &std::path::Path) -> Daemon {
     let config = root.join("config/padwight");
     fs::create_dir_all(&config).unwrap();
-    fs::write(config.join("config.toml"), hold_config()).unwrap();
+    install_config(&config, &hold_config());
     spawn_daemon(root, Some(&root.join("run")))
 }
 

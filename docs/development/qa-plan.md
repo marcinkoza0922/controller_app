@@ -10,7 +10,7 @@ What to check beyond `cargo test`, and what a human reviewer should look at. Aut
 | F2 | The IPC socket fell back to a file in the shared `/tmp` with no permissions set, so the daemon's control socket could be reached by other users. | Fixed. The socket is `0600`, in a directory the daemon checks is owned by this user and sets to `0700`. The `/tmp` fallback now uses a per-user directory. Covered by `daemon::tests::the_control_socket_is_private_to_this_user` and, without `XDG_RUNTIME_DIR`, by `tests/socket_fallback.rs` (I-9). |
 | F3 | No CI: nothing ran check, clippy, the tests or the audit automatically. | Fixed: `.github/workflows/ci.yml` runs on every pull request. Its first run found a problem in the install check, since fixed. |
 | F4 | Packs might be able to trigger host programs. | Corrected. A pack can't name an arbitrary program. The only host-program paths reachable from a pack are the built-in Screenshot and ToggleRecording actions, which run fixed tools (`grim` or a recorder). No code change; whether an import preview should list these is still a reviewer's call (H-SEC-2). |
-| F5 | `unwrap()` calls on daemon paths could panic and leave the pad grabbed. | Audited. The daemon had one production `unwrap()`, in `release_devices`; it is now a `let ... else`. The remaining production `unwrap`/`expect` calls are invariants or bundled assets: `config.rs` (legacy conversion), `icon.rs` (the bundled icon) and `monitor.rs` (a mutex). |
+| F5 | `unwrap()` calls on daemon paths could panic and leave the pad grabbed. | Audited. The daemon had one production `unwrap()`, in `release_devices`; it is now a `let ... else`. The remaining production `unwrap`/`expect` calls are invariants or bundled assets: `icon.rs` (the bundled icon) and `monitor.rs` (a mutex). |
 | F6 | `scripts/long-files.sh` lists files over 400 lines. | Unchanged. It's a maintainability note, not a defect. |
 | F7 | `flatpak/cargo-sources.json` could drift from `Cargo.lock`. | Checked. Enforced by check A-7; currently in sync. |
 
@@ -26,7 +26,7 @@ Scripted checks live in `scripts/check-project.py` and `scripts/check-install.sh
 | A-3 | Links and `#anchors` resolve; GitHub `blob/main` links point at real files and headings | Done | `check-project.py` |
 | A-4 | README and wiki don't contradict each other | Not automated: a review item. The wiki repeats README sections, so it's worth reading both when either changes. | Manual (section 3.6) |
 | A-5 | Every shipped pack survives a save and reload unchanged | Done | `library::tests::every_library_pack_survives_a_save_and_load` |
-| A-6 | Config migration: the backup is written, the converted file reloads unchanged, and a second load changes nothing | Done. `Config::load_from` takes a path, so the tests use a temporary directory and never touch the real config. Covers the `config.toml.old` backup (a byte-for-byte copy), a second load (no new backup, same file), and a second conversion (keeps the earlier backup, writes `.old.2`). The `before-guide` backup is not tested. | `config::tests::a_legacy_config_*`, `a_later_conversion_*` |
+| A-6 | Config folder: every setup, profile and shared item is saved as its own file, reloads unchanged, and a removed setup leaves no folder behind | Done. `Config::load_from` and `save_to` take a path, so the tests use a temporary directory and never touch the real config. Covers a full round trip (the app settings in `config.toml`, the setups as folders), the removal of a setup, a missing General folder falling back to the default, and file names made from unsafe item names. | `config::store::tests::*` |
 | A-7 | `cargo-sources.json` matches `Cargo.lock` | Done | `check-project.py` |
 | A-8 | Damaged pack and config text is refused or handled without panicking | Done, as a deterministic sweep (truncations, deleted and replaced characters). Not coverage-guided fuzzing; that would need `cargo-fuzz`. | `library::tests::damaged_packs_…`, `config::tests::damaged_configs_…` |
 | A-9 | Engine outputs stay in range | Done. Pad-axis outputs are checked to be finite and within -1..=1 over random input. Ring sectors are checked to cover the full circle with no gaps, for 4, 8 and 12 sectors and several start angles. | `engine::release_tests`, `engine::stick::tests::rings_cover_the_whole_circle_without_gaps` |
@@ -119,7 +119,7 @@ These need a person with the controller in hand. Record the values used, so a ch
 | # | Steps | Expected |
 |---|---|---|
 | I-1 | Fresh install on a clean machine, following README "Install", both with and without `uaccess`. | The daemon runs with no root. The udev rule fallback works. |
-| I-2 | Upgrade from the previous release with a real `config.toml`. | Config converts, the `.old` backup is written, and every game and profile is still there. |
+| I-2 | Upgrade from the previous single-file `config.toml`. | Not supported, by design: the format changed and old configs aren't converted. The old file is overwritten on the next save, so keep a copy before upgrading. |
 | I-3 | Downgrade attempt with a pack from a newer format. | The app refuses it and asks for an update. |
 | I-4 | Flatpak build from scratch, install, run, and use the daemon from the sandbox. | Matches the README's list of sandbox differences. |
 | I-5 | `systemctl --user restart padwight` mid-macro and mid-layer. Also kill the daemon with `SIGKILL`. | The daemon comes back, releases everything, and doesn't grab the pad twice. After `SIGKILL` the pad and virtual devices are free again (A-11). |
@@ -139,7 +139,7 @@ Automated checks can't judge these. Each needs a reviewer to decide what's accep
 | H-SEC-2 | **Pack import (F4).** The only host-program actions a pack can contain are Screenshot and ToggleRecording. Should the import preview list them, so a player sees a pack can take screenshots or record the screen? |
 | H-SEC-3 | **Virtual input.** The app creates a keyboard and mouse that any local program can use. Is that clear to users? |
 | H-SEC-4 | **Flatpak sandbox.** `--device=all` lets the sandbox read and send input on the whole machine. Is the README's warning enough? |
-| H-SEC-5 | **Config file.** The daemon is the only writer while it runs. Is the file written atomically? Are its permissions `0600`? Saved files are `0600` (tested). Backup copies (`config.toml.old`, `.before-guide`) keep the original file's mode, so a reviewer should decide whether they need the same. |
+| H-SEC-5 | **Config folder.** The daemon is the only writer while it runs. Saves build a staging folder and swap it in, so a failed save leaves the old setups. Are the files written atomically, and are their permissions `0600`? Every file is written `0600` through one helper (tested). No backup copies are made any more, so there is no second copy to protect. |
 | H-SEC-6 | **Dependencies.** Read the `cargo audit` warnings (four today, all in transitive crates) and the licenses of direct dependencies. |
 
 ## 5. Judgement calls for a reviewer

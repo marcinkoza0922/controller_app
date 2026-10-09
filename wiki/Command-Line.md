@@ -27,4 +27,4 @@ When `padwight daemon` runs in a terminal, it shows a live status line with each
 
 ## After editing the config by hand
 
-The daemon is the only writer of `~/.config/padwight/config.toml` while it runs. After editing the file yourself, run `padwight reload`.
+The daemon is the only writer of `~/.config/padwight/` (`config.toml` and the setup folders) while it runs. After editing the file yourself, run `padwight reload`.

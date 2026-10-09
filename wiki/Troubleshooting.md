@@ -44,9 +44,9 @@ The change is made once the controllers have looked the same for two 2-second sc
 
 Run `padwight reload`. The daemon is the only writer of the file while it runs, and it re-reads the file only on reload.
 
-## My old config was converted
+## My old single-file config stopped working
 
-padwight converts configs from before games existed on first load. The original is kept as `config.toml.old` (or `.old.2`, and so on). See [Games and profiles](Games-and-Profiles#older-configs).
+The config is now a folder: `config.toml` plus one folder per setup. Older single-file configs aren't read, and nothing converts them. See [Games and profiles](Games-and-Profiles).
 
 ## Rumble doesn't reach the controller
 

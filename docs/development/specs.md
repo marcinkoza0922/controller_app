@@ -10,7 +10,7 @@ Status: implemented (2026-10-06), except where the open questions below say othe
 3. **Ship a library of pre-baked games** for PC titles without proper controller support,
    authored by the maintainer in the app itself.
 
-Older configs are converted on first load (the original is kept as `config.toml.old`): each profile an auto-switch rule pointed to becomes a game with those rules, the others go to General, and macros, menus and info overlays go with their profiles' game, or to Shared.
+The config is a folder: `config.toml` for the app settings, and a folder per setup (`setups/`, plus `general/` and `shared/`) holding `setup.toml` and one file per item. Nothing is converted from older single-file configs.
 
 ## Decisions at a glance
 

@@ -16,7 +16,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use common::{Daemon, TIMEOUT, assert_log_clean, daemon_log, default_config, serial, spawn_daemon, temp_root, wait_for};
+use common::{install_config, Daemon, TIMEOUT, assert_log_clean, daemon_log, default_config, serial, spawn_daemon, temp_root, wait_for};
 
 /// The stand-in game's file name, which the rule matches.
 const GAME_EXE: &str = "padwight-fake-game";
@@ -74,7 +74,7 @@ fn a_game_process_switches_the_profile_and_back() {
     let root = temp_root();
     let config = root.join("config/padwight");
     fs::create_dir_all(&config).unwrap();
-    fs::write(config.join("config.toml"), game_config()).unwrap();
+    install_config(&config, &game_config());
     let mut daemon: Daemon = spawn_daemon(&root, Some(&root.join("run")));
 
     // With no session and no tracker, the daemon falls back to scanning processes.

@@ -17,7 +17,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use common::{
+use common::{install_config, 
     Daemon, TIMEOUT, assert_log_clean, daemon_log, hold_config, serial, spawn_daemon, temp_root, wait_for,
     input::{Reader, find_node, grabbed},
     uhid::{BUTTON_EAST, BUTTON_SOUTH, HidPad},
@@ -34,7 +34,7 @@ enum Signal {
 fn start_daemon(root: &Path) -> Daemon {
     let config = root.join("config/padwight");
     fs::create_dir_all(&config).unwrap();
-    fs::write(config.join("config.toml"), hold_config()).unwrap();
+    install_config(&config, &hold_config());
     spawn_daemon(root, Some(&root.join("run")))
 }
 

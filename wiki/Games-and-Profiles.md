@@ -56,7 +56,7 @@ The Guide button is the usual way to move between profiles in a game. In the def
 
 ## Older configs
 
-A config from before games existed is converted on first load. The original is kept as `config.toml.old`. Each profile that an auto-switch rule pointed to becomes a game of its own with those rules. The other profiles go to General. Macros, menus and info overlays that a single game's profiles used move into that game. The rest become shared.
+Each setup is a folder under `~/.config/padwight/setups/`, with its own `setup.toml` and a subfolder of files for its profiles, layers, macros, menus, overlays and logs. General and the shared items sit beside them. Copy a folder to move it to another machine.
 
 ## Games made from the in-game menu
 
