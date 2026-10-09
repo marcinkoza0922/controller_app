@@ -222,6 +222,16 @@ fn keyboard_sound(layout: Layout) -> sound::SoundOverlay {
     }
 }
 
+/// The sounds of whatever overlay is up.
+fn active_sound(active: &Active) -> sound::SoundOverlay {
+    match active {
+        Active::Keyboard(k) => keyboard_sound(k.layout()),
+        Active::Menu { .. } | Active::Settings(_) => sound::SoundOverlay::Menu,
+        Active::Media(_) => sound::SoundOverlay::Media,
+        Active::Offer(_) => sound::SoundOverlay::Offer,
+    }
+}
+
 /// What a press does on the media controls: a step for the volume and seek, a pick for the
 /// buttons that act.
 fn media_feedback(ev: InputEvent) -> Option<sound::Feedback> {
@@ -820,6 +830,7 @@ impl Daemon {
         controller.set_guide_held(self.devices.values().any(|d| d.view.buttons().any(|b| b == crate::config::Button::Guide)));
         self.active = Some(Active::Keyboard(controller));
         self.broadcast_overlay();
+        self.overlay_sound(keyboard_sound(layout), Some(sound::Feedback::Open));
     }
 
     /// Opens or closes the media controls.
@@ -840,6 +851,7 @@ impl Daemon {
         let guide_held = self.devices.values().any(|d| d.view.buttons().any(|b| b == crate::config::Button::Guide));
         self.active = Some(Active::Media(MediaSession::new(commands, guide_held, Instant::now())));
         self.broadcast_overlay();
+        self.overlay_sound(sound::SoundOverlay::Media, Some(sound::Feedback::Open));
     }
 
     fn update_media(&mut self, state: MediaState) {
@@ -869,6 +881,7 @@ impl Daemon {
         self.release_mappings();
         self.active = Some(Active::Menu { session, device });
         self.broadcast_overlay();
+        self.overlay_sound(sound::SoundOverlay::Menu, Some(sound::Feedback::Open));
     }
 
     /// Makes sure the (normally resident) overlay window process is running.
@@ -988,6 +1001,7 @@ impl Daemon {
     }
 
     fn close_overlay(&mut self) {
+        let closing = self.active.as_ref().map(active_sound);
         match self.active.take() {
             Some(Active::Keyboard(mut k)) => {
                 self.overlay_cursors.insert(k.layout(), k.cursor());
@@ -1007,6 +1021,9 @@ impl Daemon {
             dev.engine.forget_released(&down);
         }
         self.resync_all();
+        if let Some(overlay) = closing {
+            self.overlay_sound(overlay, Some(sound::Feedback::Close));
+        }
     }
 
     fn apply_keyboard(&mut self, actions: Vec<OverlayAction>) {
@@ -1727,6 +1744,7 @@ impl Daemon {
         self.release_mappings();
         self.active = Some(Active::Settings(SystemMenu::new(&self.config)));
         self.broadcast_overlay();
+        self.overlay_sound(sound::SoundOverlay::Menu, Some(sound::Feedback::Open));
     }
 
     /// Runs one event on the Guide + Start menu. `true` when the menu closed.
@@ -1830,6 +1848,7 @@ impl Daemon {
         let session = OfferSession::new(&library, &found, have.as_deref(), Instant::now());
         self.active = Some(Active::Offer(session));
         self.broadcast_overlay();
+        self.overlay_sound(sound::SoundOverlay::Offer, Some(sound::Feedback::Open));
     }
 
     /// Acts on the answer to the offer: adds the chosen pack, or remembers the refusal.
