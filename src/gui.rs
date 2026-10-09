@@ -44,6 +44,7 @@ mod layers;
 mod logs;
 mod manual;
 mod overlays;
+mod pieces;
 mod packs;
 mod profile;
 mod ring_preview;
@@ -56,6 +57,7 @@ use games::*;
 use items::*;
 use layers::IndicatorChoice;
 use packs::{BrowseSource, Dialog, PackField};
+use pieces::*;
 use profile::*;
 use tracking::*;
 use widgets::*;
@@ -536,6 +538,12 @@ impl App {
             |(c, err)| Message::ConfigLoaded(c, err),
         );
         (app, Task::batch([load, Task::done(Message::Poll), iced::system::theme().map(Message::SystemMode)]))
+    }
+
+    /// The button glyphs to draw: the family of the controller in use, else the one set in Settings.
+    fn glyph_family(&self) -> PadFamily {
+        let managed = self.status.as_ref().and_then(|s| s.devices.iter().find(|d| d.managed));
+        managed.and_then(|d| d.family).unwrap_or(self.config.info_glyphs)
     }
 
     fn theme(&self) -> iced::Theme {
@@ -1057,7 +1065,7 @@ mod tests {
     }
 
     pub(super) fn device(name: &str, analog_triggers: bool, ignored: bool) -> ipc::DeviceInfo {
-        ipc::DeviceInfo { name: name.into(), path: String::new(), managed: !ignored, ignored, analog_triggers, rumble: true, gyro: false }
+        ipc::DeviceInfo { name: name.into(), path: String::new(), managed: !ignored, ignored, analog_triggers, rumble: true, gyro: false, family: None }
     }
 
     pub(super) fn snapshot(buttons: &[Button], right_stick: (f32, f32)) -> InputSnapshot {

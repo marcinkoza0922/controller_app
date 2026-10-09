@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 mod log;
 mod summary;
+pub use summary::{Keyword, Piece};
 mod touchpad;
 mod window_game;
 

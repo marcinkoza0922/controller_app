@@ -1,4 +1,4 @@
-//! The sidebar, a game's page and Details tab, the Settings page, and the controller list.
+//! The sidebar, a game's page and Details tab, the App settings page, and the controller list.
 
 use iced::widget::{column, row};
 
@@ -207,11 +207,11 @@ impl App {
 
         let mut col = column![
             entry("Overview".into(), Page::Overview, None),
-            entry("Settings".into(), Page::Settings, None),
+            entry("App settings".into(), Page::Settings, None),
             entry("Manual".into(), Page::Manual, None),
             rule::horizontal(1),
-            entry("General".into(), Page::Game(None), playing(&None)),
             text("Setups").size(13).color(MUTED_COLOR),
+            entry("General".into(), Page::Game(None), playing(&None)),
             field("Search setups", &self.game_search).on_input(Message::SetGameSearch).size(14),
         ]
         .spacing(6);
@@ -661,7 +661,7 @@ impl App {
     }
 
     pub(super) fn view_media_card(&self) -> Element<'_, Message> {
-        let mut rows: Vec<Element<'_, Message>> = vec![labeled("", disclosure("Appearance", self.media_appearance, Message::ToggleMediaAppearance))];
+        let mut rows: Vec<Element<'_, Message>> = vec![disclosure("Appearance", self.media_appearance, Message::ToggleMediaAppearance)];
         if self.media_appearance {
             let style = &self.config.media_style;
             rows.push(style_editor(style, Rc::new(Message::SetMediaStyle)));
@@ -680,8 +680,7 @@ impl App {
     }
 
     pub(super) fn view_in_game_menu_card(&self) -> Element<'_, Message> {
-        let mut rows: Vec<Element<'_, Message>> =
-            vec![labeled("", disclosure("Appearance", self.menu_appearance, Message::ToggleInGameMenuAppearance))];
+        let mut rows: Vec<Element<'_, Message>> = vec![disclosure("Appearance", self.menu_appearance, Message::ToggleInGameMenuAppearance)];
         if self.menu_appearance {
             let style = &self.config.menu_style;
             rows.push(style_editor(style, Rc::new(Message::SetInGameMenuStyle)));

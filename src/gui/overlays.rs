@@ -62,7 +62,7 @@ impl App {
         crate::font::resolve(own.or(self.config.overlay_font.as_deref()))
     }
 
-    /// The Settings page's font card: used by every game that doesn't pick its own.
+    /// The App settings page's font card: used by every game that doesn't pick its own.
     pub(super) fn view_font_card(&self) -> Element<'_, Message> {
         section(
             "Overlay font",
@@ -77,7 +77,7 @@ impl App {
         crate::overlay::draw::MenuLook { colourblind: self.config.colourblind_tones, family: self.config.info_glyphs }
     }
 
-    /// The Settings page's colour card: the tints of added and removed rows.
+    /// The App settings page's colour card: the tints of added and removed rows.
     pub(super) fn view_colour_card(&self) -> Element<'_, Message> {
         section(
             "Menu colours",
@@ -173,7 +173,7 @@ fn game_overlay_card<'a>(
         rows.push(style_editor(style, on_style));
         rows.push(sample(style));
     } else {
-        rows.push(text("Following the appearance set on the Settings page.").size(13).color(MUTED_COLOR).into());
+        rows.push(text("Following the appearance set on the App settings page.").size(13).color(MUTED_COLOR).into());
     }
     section(title, None, rows)
 }

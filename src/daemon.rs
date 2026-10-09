@@ -2085,6 +2085,7 @@ impl Daemon {
                 gyro: self.devices.values().any(|d| &d.path == path && d.motion.is_some()),
                 analog_triggers: pad.analog_triggers,
                 rumble: pad.rumble,
+                family: self.devices.values().find(|d| &d.path == path).and_then(|d| d.family),
             })
             .collect();
         devices.sort_by(|a, b| a.path.cmp(&b.path));
