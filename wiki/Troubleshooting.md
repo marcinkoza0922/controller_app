@@ -25,7 +25,7 @@ Install the motion-sensor udev rule. See [Installation](Installation#gyro).
 ## The profile didn't change when I focused a game
 
 - Check the game's rules on its **Details** tab. Rules match on the executable, Steam App ID or window class, and for Wine and Proton games the match is on the `.exe`.
-- Check that the desktop supports focus tracking. See [Desktop support](Desktop-Support). On GNOME, switching doesn't happen.
+- Check that the desktop supports focus tracking. See [Desktop support](Desktop-Support). On GNOME, the extension must be enabled. A log out and back in may be needed after the first install.
 - Check that the rule is switched on, and that no earlier rule matches the same game.
 
 ## The on-screen keyboard, menus or overlays don't appear

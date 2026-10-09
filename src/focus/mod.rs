@@ -3,6 +3,7 @@
 //! profile. Desktops without a tracker fall back to matching running processes.
 
 mod dbus;
+mod gnome;
 mod hyprland;
 mod identify;
 mod kwin;
@@ -103,9 +104,15 @@ fn track(reporter: &mut Reporter, conn: Option<&Connection>) {
     }
 }
 
-/// The tracker for a desktop reached over D-Bus: KWin.
+/// The tracker for a desktop reached over D-Bus: KWin, or GNOME Shell with our extension.
 fn shell_backend(conn: &Connection) -> FocusBackend {
-    if kwin::ensure_script(conn).is_ok() { FocusBackend::Kwin } else { FocusBackend::ProcessScan }
+    if kwin::ensure_script(conn).is_ok() {
+        FocusBackend::Kwin
+    } else if gnome::is_running(conn) && gnome::ensure_extension(conn).is_ok() {
+        FocusBackend::GnomeShell
+    } else {
+        FocusBackend::ProcessScan
+    }
 }
 
 fn rule_matches(kind: RuleKind, value: &str, info: &WindowInfo) -> bool {

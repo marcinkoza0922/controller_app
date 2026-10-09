@@ -90,6 +90,7 @@ Line counts are approximate and change; `scripts/long-files.sh` lists the files 
 | `focus/kwin.rs`, `focus/dbus.rs` | KDE Plasma: a KWin script reports focus changes over D-Bus. |
 | `focus/sway.rs` | Sway (and i3-IPC compositors) over `$SWAYSOCK`. |
 | `focus/hyprland.rs` | Hyprland's event and command sockets. |
+| `focus/gnome.rs` | GNOME Shell: installs and enables the extension in `gnome-extension/`, which reports focus over the same D-Bus service. |
 | `focus/identify.rs` | Identifies a window's executable, Steam App ID and class from `/proc`, including Wine/Proton `.exe` names. |
 | `launchers.rs` | Which games are installed (Steam, Heroic, Lutris) or running, for the library picker. |
 
@@ -178,7 +179,7 @@ The daemon picks the profile from the focused window. The tracker is chosen by t
 3. **Hyprland** (`hyprland.rs`): follows the event socket and asks the command socket for details.
 4. **Fallback**: no tracker. Rules apply while a matching process runs.
 
-`identify.rs` resolves a window to an executable name, Steam App ID (from `SteamAppId`/`STEAM_COMPAT_APP_ID` or Proton's `steam_app_<id>` class) and window class. Wine/Proton games are matched by their `.exe`, not the Wine loader. GNOME is unsupported: Mutter has no layer-shell, so the overlays can't be shown.
+`identify.rs` resolves a window to an executable name, Steam App ID (from `SteamAppId`/`STEAM_COMPAT_APP_ID` or Proton's `steam_app_<id>` class) and window class. Wine/Proton games are matched by their `.exe`, not the Wine loader. GNOME has no layer-shell, so the overlays can't be shown there. Focus tracking works through the GNOME Shell extension in `gnome-extension/`.
 
 ## Where to start reading
 
