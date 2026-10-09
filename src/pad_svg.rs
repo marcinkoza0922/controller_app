@@ -4,8 +4,11 @@
 
 use std::fmt::Write;
 
+mod body;
+
 use crate::{
     config::{Button, Trigger},
+    info::{Glyphs, PadModel, Segment, button_glyph, trigger_glyph},
     ipc::InputSnapshot,
 };
 
@@ -42,27 +45,30 @@ pub const LABEL_TEXT_SIZE: f32 = 11.0;
 const LABEL_TEXT_WIDTH: f32 = LABEL_COLUMN - 14.0;
 
 const FACE_CENTER: (f32, f32) = (302.0, 118.0);
-struct FaceButton {
-    button: Button,
-    /// Offset from `FACE_CENTER`.
-    offset: (f32, f32),
-    letter: &'static str,
-    /// Xbox color.
-    rgb: [u8; 3],
-}
-
-const FACE_BUTTONS: [FaceButton; 4] = [
-    FaceButton { button: Button::South, offset: (0.0, 22.0), letter: "A", rgb: [0x3f, 0xb9, 0x50] },
-    FaceButton { button: Button::East, offset: (22.0, 0.0), letter: "B", rgb: [0xf8, 0x51, 0x49] },
-    FaceButton { button: Button::West, offset: (-22.0, 0.0), letter: "X", rgb: [0x58, 0xa6, 0xff] },
-    FaceButton { button: Button::North, offset: (0.0, -22.0), letter: "Y", rgb: [0xd2, 0x99, 0x22] },
+/// The face buttons, each with its offset from `FACE_CENTER`.
+const FACE_BUTTONS: [(Button, (f32, f32)); 4] = [
+    (Button::South, (0.0, 22.0)),
+    (Button::East, (22.0, 0.0)),
+    (Button::West, (-22.0, 0.0)),
+    (Button::North, (0.0, -22.0)),
 ];
+
+/// How a face button is drawn: its label and color for the controller's family (as the overlays
+/// draw it), and whether that color fills it when pressed. Nintendo's have no color, so they're
+/// plain light rings that light up blue.
+fn face_look(b: Button, glyphs: Glyphs) -> (String, [u8; 3], bool) {
+    match button_glyph(b, glyphs.family, glyphs.nintendo_layout) {
+        Segment::Glyph { label, fill: Some(rgb), .. } => (label, rgb, true),
+        Segment::Glyph { label, .. } => (label, [0xc9, 0xd1, 0xd9], false),
+        _ => (String::new(), [0xc9, 0xd1, 0xd9], false),
+    }
+}
 
 /// Text to draw over the SVG, centered at (`x`, `y`) in drawing coordinates.
 pub struct Overlay {
     pub x: f32,
     pub y: f32,
-    pub text: &'static str,
+    pub text: String,
     pub color: [u8; 3],
 }
 
@@ -100,10 +106,10 @@ const RIGHT_LABELS: [(Spot, (f32, f32)); 9] = [
     (Spot::Button(Button::RightStick), (255.0, 168.0)),
 ];
 
-/// Renders the controller, with `labels` (text per button) drawn in the side margins.
-/// With no input everything is drawn at rest.
+/// Renders the controller of `model` (the generic one when `None`), with `labels` (text per
+/// button) drawn in the side margins. With no input everything is drawn at rest.
 #[expect(clippy::too_many_lines, reason = "predates the size lints")]
-pub fn render(input: Option<&InputSnapshot>, labels: &[(Spot, String)]) -> String {
+pub fn render(input: Option<&InputSnapshot>, model: Option<PadModel>, glyphs: Glyphs, labels: &[(Spot, String)]) -> String {
     let pressed = |b: Button| input.is_some_and(|i| i.buttons.contains(&b));
     let fill = |b: Button| if pressed(b) { ACTIVE } else { IDLE };
     let (ls, rs, lt, rt) = input
@@ -142,11 +148,9 @@ pub fn render(input: Option<&InputSnapshot>, labels: &[(Spot, String)]) -> Strin
         );
     }
 
-    // Body.
-    let _ = write!(
-        s,
-        r#"<path d="M110 58 C150 49 270 49 310 58 C350 66 372 90 385 140 C400 200 405 245 375 258 C350 268 325 245 305 215 C290 207 130 207 115 215 C95 245 70 268 45 258 C15 245 20 200 35 140 C48 90 70 66 110 58 Z" fill="{BODY}" stroke="{BODY_EDGE}" stroke-width="3"/>"#
-    );
+    // Body, and the marks that tell the models apart.
+    s.push_str(&body::outline(model));
+    s.push_str(&body::marks(model));
 
     stick(&mut s, 118.0, 118.0, ls, pressed(Button::LeftStick));
     stick(&mut s, 255.0, 168.0, rs, pressed(Button::RightStick));
@@ -169,12 +173,13 @@ pub fn render(input: Option<&InputSnapshot>, labels: &[(Spot, String)]) -> Strin
         );
     }
 
-    // Face buttons, colored like an Xbox pad (letters come from `overlays`).
-    for face in &FACE_BUTTONS {
-        let [r, g, bl] = face.rgb;
+    // Face buttons, colored as the controller's family colors them (letters come from `overlays`).
+    for (button, offset) in FACE_BUTTONS {
+        let (_, [r, g, bl], filled) = face_look(button, glyphs);
         let color = format!("#{r:02x}{g:02x}{bl:02x}");
-        let bg = if pressed(face.button) { color.as_str() } else { IDLE };
-        let (x, y) = (FACE_CENTER.0 + face.offset.0, FACE_CENTER.1 + face.offset.1);
+        let lit = if filled { color.as_str() } else { ACTIVE };
+        let bg = if pressed(button) { lit } else { IDLE };
+        let (x, y) = (FACE_CENTER.0 + offset.0, FACE_CENTER.1 + offset.1);
         let _ = write!(
             s,
             r#"<circle cx="{x}" cy="{y}" r="11" fill="{bg}" stroke="{color}" stroke-width="2"/>"#
@@ -247,21 +252,29 @@ fn glyph_width(c: char) -> f32 {
 }
 
 /// Button letters and trigger names, drawn by the GUI over the SVG.
-pub fn overlays(input: Option<&InputSnapshot>) -> Vec<Overlay> {
+pub fn overlays(input: Option<&InputSnapshot>, glyphs: Glyphs) -> Vec<Overlay> {
     const LABEL_RGB: [u8; 3] = [0xc9, 0xd1, 0xd9];
     const IDLE_RGB: [u8; 3] = [0x1d, 0x20, 0x26];
     let pressed = |b: Button| input.is_some_and(|i| i.buttons.contains(&b));
     let mut list: Vec<Overlay> = FACE_BUTTONS
-        .iter()
-        .map(|f| Overlay {
-            x: FACE_CENTER.0 + f.offset.0 + MARGIN,
-            y: FACE_CENTER.1 + f.offset.1,
-            text: f.letter,
-            color: if pressed(f.button) { IDLE_RGB } else { f.rgb },
+        .into_iter()
+        .map(|(button, offset)| {
+            let (text, rgb, _) = face_look(button, glyphs);
+            Overlay {
+                x: FACE_CENTER.0 + offset.0 + MARGIN,
+                y: FACE_CENTER.1 + offset.1,
+                text,
+                color: if pressed(button) { IDLE_RGB } else { rgb },
+            }
         })
         .collect();
-    list.push(Overlay { x: 115.0 + MARGIN, y: 21.0, text: "LT", color: LABEL_RGB });
-    list.push(Overlay { x: 305.0 + MARGIN, y: 21.0, text: "RT", color: LABEL_RGB });
+    for (x, t) in [(115.0, Trigger::Left), (305.0, Trigger::Right)] {
+        let text = match trigger_glyph(t, glyphs.family) {
+            Segment::Glyph { label, .. } => label,
+            _ => String::new(),
+        };
+        list.push(Overlay { x: x + MARGIN, y: 21.0, text, color: LABEL_RGB });
+    }
     list
 }
 
@@ -294,9 +307,11 @@ mod tests {
 
     #[test]
     fn pressed_button_and_stick_change_the_drawing() {
-        let rest = render(None, &[]);
+        let rest = render(None, None, Glyphs::default(), &[]);
         let input = InputSnapshot {
             device: "Pad".into(),
+            model: None,
+            family: None,
             buttons: vec![Button::South],
             left_stick: (1.0, 0.0),
             right_stick: (0.0, 0.0),
@@ -304,7 +319,7 @@ mod tests {
             right_trigger: 1.0,
             gyro: None,
         };
-        let live = render(Some(&input), &[]);
+        let live = render(Some(&input), None, Glyphs::default(), &[]);
         assert_ne!(rest, live);
         // Left stick cap moved fully right.
         assert!(live.contains(r#"cx="131" cy="118" r="18""#));
@@ -313,9 +328,41 @@ mod tests {
     }
 
     #[test]
+    fn letters_follow_the_controllers_family_and_layout() {
+        use crate::info::PadFamily::{Nintendo, PlayStation, Xbox};
+        let texts = |family, nintendo_layout| -> Vec<String> {
+            overlays(None, Glyphs { family, nintendo_layout }).into_iter().map(|o| o.text).collect()
+        };
+        // South, East, West, North, then the triggers.
+        assert_eq!(texts(Xbox, false), ["A", "B", "X", "Y", "LT", "RT"]);
+        assert_eq!(texts(Nintendo, false), ["B", "A", "Y", "X", "ZL", "ZR"]);
+        assert_eq!(texts(PlayStation, false), ["✕", "○", "□", "△", "L2", "R2"]);
+        assert_eq!(texts(Xbox, true), ["B", "A", "Y", "X", "LT", "RT"], "the Nintendo layout swaps an Xbox pad's labels");
+    }
+
+    #[test]
+    fn face_button_colors_follow_the_family() {
+        let drawing = |family| render(None, None, Glyphs { family, nintendo_layout: false }, &[]);
+        assert!(drawing(crate::info::PadFamily::Xbox).contains("#3ca03c"), "A is green on Xbox");
+        assert!(!drawing(crate::info::PadFamily::Nintendo).contains("#3ca03c"));
+        assert_ne!(drawing(crate::info::PadFamily::PlayStation), drawing(crate::info::PadFamily::Xbox));
+    }
+
+    #[test]
+    fn each_model_has_its_own_picture() {
+        let models = [None, Some(PadModel::DualShock4), Some(PadModel::DualSense), Some(PadModel::ProController)];
+        let drawings: Vec<String> = models.iter().map(|m| render(None, *m, Glyphs::default(), &[])).collect();
+        for (i, a) in drawings.iter().enumerate() {
+            for b in &drawings[i + 1..] {
+                assert_ne!(a, b);
+            }
+        }
+    }
+
+    #[test]
     fn output_is_well_formed_svg() {
         let labels = [(Spot::Button(Button::South), "Jump & <run>".into())];
-        let svg = render(None, &labels);
+        let svg = render(None, None, Glyphs::default(), &labels);
         assert!(svg.starts_with("<svg") && svg.ends_with("</svg>"));
         assert!(!svg.contains("<text"), "text is drawn by the GUI, not the SVG");
         assert_eq!(svg.matches("<g").count(), svg.matches("</g>").count());
@@ -350,6 +397,8 @@ mod tests {
     fn pressed_face_button_letter_switches_color() {
         let input = InputSnapshot {
             device: "Pad".into(),
+            model: None,
+            family: None,
             buttons: vec![Button::South],
             left_stick: (0.0, 0.0),
             right_stick: (0.0, 0.0),
@@ -358,6 +407,6 @@ mod tests {
             gyro: None,
         };
         let a = |o: Vec<Overlay>| o.into_iter().find(|o| o.text == "A").unwrap().color;
-        assert_ne!(a(overlays(None)), a(overlays(Some(&input))));
+        assert_ne!(a(overlays(None, Glyphs::default())), a(overlays(Some(&input), Glyphs::default())));
     }
 }

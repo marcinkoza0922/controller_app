@@ -128,6 +128,8 @@ Line counts are approximate and change; `scripts/long-files.sh` lists the files 
 | `gui/packs.rs` | Library picker, import preview, export, delete, copy-from-another-game. |
 | `gui/checks.rs` | What "Save & apply" checks before writing: names, references, and rules. |
 | `gui/widgets.rs`, `gui/tracking.rs`, `gui/overlays.rs`, `gui/ring_preview.rs`, `gui/logs.rs` | Shared widgets and smaller tabs. |
+| `gui/tab_icons.rs` | The glyph before each editor tab; Profiles and Buttons take the controller in use's family colors. |
+| `pad_svg.rs`, `pad_svg/body.rs` | The live controller picture, with an outline and marks for each model (DualShock 4, DualSense, Pro Controller). |
 
 ## Configuration and state
 

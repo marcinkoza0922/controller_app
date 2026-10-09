@@ -137,6 +137,8 @@ impl InputView {
         let a = |axis| self.axes.get(&axis).copied().unwrap_or(0.0);
         InputSnapshot {
             device: device.to_string(),
+            model: None,
+            family: None,
             buttons: self.buttons.iter().copied().collect(),
             left_stick: (a(Axis::LeftX), a(Axis::LeftY)),
             right_stick: (a(Axis::RightX), a(Axis::RightY)),

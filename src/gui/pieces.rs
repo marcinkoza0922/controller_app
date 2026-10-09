@@ -57,29 +57,32 @@ fn swap_marker<'a>() -> Element<'a, Message> {
     .into()
 }
 
-/// A button's glyph. The overlay draws a cross for the D-pad and a pressed stick; here an arrow
-/// and the stick's name stand in for them.
+/// A button's glyph, as the overlays draw it. A stick press is named here, since its cap is too
+/// big for a line of text.
 fn pad_glyph(b: Button, family: PadFamily, swapped: bool) -> Segment {
     match button_glyph(b, family, swapped) {
-        Segment::Dpad(_) => glyph(
-            match b {
-                Button::DpadUp => "↑",
-                Button::DpadDown => "↓",
-                Button::DpadLeft => "←",
-                _ => "→",
-            },
-            None,
-            false,
-        ),
         Segment::StickClick { right } => glyph(if right { "R3" } else { "L3" }, None, false),
         other => other,
     }
 }
 
+/// The D-pad as the overlays draw it: a cross of cells, the pressed arms (`[up, down, left, right]`) lit.
+fn dpad_chip<'a>([up, down, left, right]: [bool; 4]) -> Element<'a, Message> {
+    let cell = |x: f32, y: f32, on: bool| {
+        let fill = if on { "#4ea1ff" } else { "#3a3f48" };
+        format!("<rect x='{x}' y='{y}' width='8' height='8' rx='1.5' fill='{fill}' stroke='#5d6470' stroke-width='1'/>")
+    };
+    let body = [cell(8.0, 0.0, up), cell(0.0, 8.0, left), cell(8.0, 8.0, false), cell(16.0, 8.0, right), cell(8.0, 16.0, down)].concat();
+    let svg_text = format!("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>{body}</svg>");
+    svg(svg::Handle::from_memory(svg_text.into_bytes())).width(22).height(22).into()
+}
+
 /// A glyph drawn the way the overlays draw it: round for face buttons, in its colour when it has one.
 fn chip<'a>(segment: Segment) -> Element<'a, Message> {
-    let Segment::Glyph { label, fill, round } = segment else {
-        return space().into();
+    let (label, fill, round) = match segment {
+        Segment::Dpad(lit) => return dpad_chip(lit),
+        Segment::Glyph { label, fill, round } => (label, fill, round),
+        _ => return space().into(),
     };
     let fill = fill.map(|[r, g, b]| Color::from_rgb8(r, g, b));
     let label = text(label).size(12);

@@ -4,6 +4,7 @@ use iced::widget::{Column, column, rich_text, row, span};
 
 use super::*;
 use crate::config::{FlickVertical, MouseResponse};
+use crate::info::Glyphs;
 
 /// Sections of the profile editor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -214,13 +215,19 @@ impl fmt::Display for Template {
 /// The controller SVG with button letters and mapping-label pills placed over it. (iced's
 /// SVG renderer may not draw SVG text, so text is real widgets pinned at drawing
 /// coordinates; the drawing is shown at 1:1.)
-pub(super) fn controller_drawing<'a>(input: Option<&InputSnapshot>, labels_from: Option<&Profile>, greyed: bool) -> Element<'a, Message> {
+pub(super) fn controller_drawing<'a>(
+    input: Option<&InputSnapshot>,
+    model: Option<PadModel>,
+    glyphs: Glyphs,
+    labels_from: Option<&Profile>,
+    greyed: bool,
+) -> Element<'a, Message> {
     let labels = labels_from.map(drawing_labels).unwrap_or_default();
-    let handle = svg::Handle::from_memory(pad_svg::render(input, &labels).into_bytes());
+    let handle = svg::Handle::from_memory(pad_svg::render(input, model, glyphs, &labels).into_bytes());
     let mut layers: Vec<Element<'a, Message>> =
         vec![svg(handle).width(pad_svg::WIDTH).height(pad_svg::HEIGHT).opacity(if greyed { 0.3_f32 } else { 1.0 }).into()];
 
-    for o in pad_svg::overlays(input) {
+    for o in pad_svg::overlays(input, glyphs) {
         let [r, g, b] = o.color;
         let letter = container(text(o.text).size(12).color(Color::from_rgb8(r, g, b)))
             .center_x(24)
@@ -1662,9 +1669,10 @@ impl App {
             .align_y(Alignment::Center)
             .into()
         };
+        let family = self.glyph_family();
         let sub_tab = |t: ProfileTab| {
             let label = if section_has_problem(p, t, names) { format!("{t}  ⚠") } else { t.to_string() };
-            button(text(label).size(14))
+            button(row![t.glyph(family), text(label).size(14)].spacing(6).align_y(Alignment::Center))
                 .style(style::segment(self.profile_tab == t))
                 .padding([5, 14])
                 .on_press(Message::SelectProfileTab(t))
@@ -1690,7 +1698,7 @@ impl App {
             analog_triggers: self.analog_triggers(),
             any_gyro: self.any_gyro(),
             any_paddles: self.any_paddles(),
-            live_sticks: self.live.as_ref().map(|l| [l.left_stick, l.right_stick]),
+            live_sticks: self.shown_input().map(|l| [l.left_stick, l.right_stick]),
             family: self.glyph_family(),
             nintendo_layout: self.nintendo_layout(),
             layer,
@@ -1728,9 +1736,10 @@ impl App {
         if folded {
             return title;
         }
+        let pad = self.shown_pad();
         column![
             title,
-            container(controller_drawing(self.live.as_ref(), labels_from, self.status.is_none())).center_x(Length::Fill),
+            container(controller_drawing(self.shown_input(), pad.model, Glyphs { family: pad.family, nintendo_layout: self.nintendo_layout() }, labels_from, self.status.is_none())).center_x(Length::Fill),
             container(text(caption).size(13).color(MUTED_COLOR)).center_x(Length::Fill),
         ]
         .spacing(8)

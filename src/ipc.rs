@@ -178,6 +178,9 @@ pub struct DeviceInfo {
     /// Whose button glyphs it uses, when it's recognized (for a managed controller).
     #[serde(default)]
     pub family: Option<crate::info::PadFamily>,
+    /// Which model it is, when recognized (for its picture in the editor).
+    #[serde(default)]
+    pub model: Option<crate::info::PadModel>,
 }
 
 fn yes() -> bool {
@@ -188,6 +191,12 @@ fn yes() -> bool {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InputSnapshot {
     pub device: String,
+    /// The controller's model, when recognized: which picture the editor draws for it.
+    #[serde(default)]
+    pub model: Option<crate::info::PadModel>,
+    /// Whose button glyphs the controller uses, when recognized.
+    #[serde(default)]
+    pub family: Option<crate::info::PadFamily>,
     pub buttons: Vec<Button>,
     /// Sticks are -1.0..1.0 (Y positive = down).
     pub left_stick: (f32, f32),
