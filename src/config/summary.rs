@@ -112,7 +112,6 @@ impl ButtonAction {
             ButtonAction::Keys(keys) => vec![text(&keys.iter().map(|k| key_name(k)).collect::<Vec<_>>().join(" + "))],
             ButtonAction::Mouse(m) => vec![text(&format!("{m} click"))],
             ButtonAction::Wheel(d) => vec![text(&d.to_string())],
-            ButtonAction::NextProfile => vec![text("Next profile")],
             ButtonAction::ToggleOverlay => vec![text("On-screen keyboard")],
             ButtonAction::ToggleNumpad => vec![text("On-screen numpad")],
             ButtonAction::Screenshot => vec![text("Screenshot")],

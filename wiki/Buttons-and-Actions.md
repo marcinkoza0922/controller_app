@@ -6,7 +6,6 @@ Each button in a profile has an **action**. An action can be:
 - a key or key combo, such as `LEFTCTRL+C`,
 - a mouse button,
 - the scroll wheel (one notch per press, continuous while held),
-- **next profile**,
 - a [macro](Macros), [menu](Menus), [layer](Layers) or info overlay,
 - **several of these at once** (Multi),
 - **Disabled**.
@@ -72,7 +71,6 @@ Guide is special because Steam uses it. By default, Guide holds the **Guide laye
 | Right stick | Mouse |
 | B (held about 2 seconds) | Force quit the focused window |
 | D-pad Right / Down / Left | Enter / Tab / Escape |
-| D-pad Up | Next profile |
 
 Anything else pressed with Guide held does nothing, so it never reaches the game underneath. You can edit the Guide layer per game on its Layers tab.
 

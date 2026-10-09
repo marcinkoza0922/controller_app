@@ -24,6 +24,10 @@ Layers can turn on further layers.
 
 In the [in-game editor](Editing-Controls-in-Game), **Add layer** makes a layer, and **Hold a layer…** on a button's action list makes that button hold it.
 
+## Layers or profiles
+
+Use a layer when a game needs a different control scheme for part of play, such as driving or using a vehicle. Profiles stay separate from each other: a profile should be a complete scheme on its own, and switching between schemes inside a game is what layers are for.
+
 ## Several layers at once
 
 Layers stack. Where two layers disagree, the one turned on most recently wins.

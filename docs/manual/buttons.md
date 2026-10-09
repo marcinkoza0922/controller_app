@@ -7,7 +7,7 @@ Every button in a profile has an action. Click the button's name to change it.
 - press a gamepad button (A can act as B, for example)
 - press a key, or a key combination such as Left Ctrl + C
 - press a mouse button, or turn the scroll wheel
-- switch to the next profile, or do nothing with *Disabled*
+- do nothing, with *Disabled*
 - run a macro, open a menu, hold a layer, or show an overlay
 - do several of these at once
 

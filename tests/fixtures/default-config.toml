@@ -303,7 +303,6 @@ West = "toggle_overlay"
 LeftBumper = "toggle_media"
 RightBumper = "screenshot"
 LeftStick = "toggle_recording"
-DpadUp = "next_profile"
 
 [general.layers.buttons.DpadDown]
 keys = ["KEY_TAB"]

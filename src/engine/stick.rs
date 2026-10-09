@@ -17,7 +17,7 @@ impl Engine {
         apply_deadzone(x, y, deadzone)
     }
 
-    pub(super) fn stick(&mut self, profile: &Profile, s: Stick, out: &mut Vec<OutEvent>) -> bool {
+    pub(super) fn stick(&mut self, profile: &Profile, s: Stick, out: &mut Vec<OutEvent>) {
         let cfg = profile.stick(s);
         let (x, y) = self.stick_pos(s, cfg.deadzone);
         // A virtual stick no longer fed (a layer changed this stick's mode) recenters.
@@ -37,8 +37,8 @@ impl Engine {
             self.pad_sticks.insert(*stick, (x, if *invert_y { -y } else { y }));
             self.emit_pad_stick(*stick, out);
         }
-        let switch = self.update_ring(cfg, s, (x, y), out);
-        self.zones(profile, Analog::Stick(s), x.hypot(y).min(1.0), out) | switch
+        self.update_ring(cfg, s, (x, y), out);
+        self.zones(profile, Analog::Stick(s), x.hypot(y).min(1.0), out);
     }
 
     /// Sends a virtual-pad stick: the physical stick mapped to it plus gyro, macro and
@@ -214,7 +214,7 @@ pub(crate) fn ring_sector_at(pos: (f32, f32), sectors: u8, start_angle: f32, inn
 impl Engine {
     /// Holds the action of the ring sector the stick points into, releasing the previous one.
     /// A stick no longer in ring mode (a layer changed it) lets go of its sector.
-    pub(super) fn update_ring(&mut self, cfg: &StickConfig, s: Stick, pos: (f32, f32), out: &mut Vec<OutEvent>) -> bool {
+    pub(super) fn update_ring(&mut self, cfg: &StickConfig, s: Stick, pos: (f32, f32), out: &mut Vec<OutEvent>) {
         let current = self.ring_sector.get(&s).copied();
         let target = match &cfg.action {
             StickAction::Ring { sectors, start_angle, inner_radius, hysteresis, .. } => {
@@ -224,19 +224,17 @@ impl Engine {
             _ => None,
         };
         if target == current {
-            return false;
+            return;
         }
-        let mut switch = false;
         if let Some(old) = current {
             self.ring_sector.remove(&s);
-            switch |= self.digital(&Source::RingSector(s, old), &ButtonAction::Disabled, false, out);
+            self.digital(&Source::RingSector(s, old), &ButtonAction::Disabled, false, out);
         }
         if let Some(new) = target {
             self.ring_sector.insert(s, new);
             let action = cfg.action.ring_actions().get(new).cloned().unwrap_or(ButtonAction::Disabled);
-            switch |= self.digital(&Source::RingSector(s, new), &action, true, out);
+            self.digital(&Source::RingSector(s, new), &action, true, out);
         }
-        switch
     }
 }
 

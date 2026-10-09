@@ -20,7 +20,7 @@ Choosing a button opens its action list. The first two rows are the picker rows,
 
 - **Gamepad button…** sends another pad button, picked from the next page.
 - **Gestures…** (buttons only) opens the double tap, triple tap and long press of that button. Each can be set, or **Not set**.
-- **Disabled**, **Next profile**, **On-screen keyboard**, **Numpad**, **Screenshot**, **Start / stop recording**, **Media controls**, **Force quit (hold)**.
+- **Disabled**, **On-screen keyboard**, **Numpad**, **Screenshot**, **Start / stop recording**, **Media controls**, **Force quit (hold)**.
 - **Left**, **Right**, **Middle**, **Back** and **Forward click**, and **Wheel up**, **down**, **left**, **right**.
 - **Keys…** opens a picker of 26 common keys. Tick several to send them together, such as Ctrl and Esc. **Done** leaves the picker.
 - **Hold a layer…**, **Play a macro…**, **Open a menu…**, **Show an info overlay…** and **Show a log overlay…** each list what the game has, and pick one.

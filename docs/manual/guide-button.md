@@ -12,7 +12,6 @@ The Guide button (the PlayStation, Xbox or Home button) is special, because Stea
 - **Right stick**: moves the mouse.
 - **Hold B for 2 seconds**: force quit the focused window.
 - **D-pad Right, Down, Left**: Enter, Tab and Escape.
-- **D-pad Up**: next profile.
 
 Anything else pressed with Guide held does nothing, so it never reaches the game underneath. You can change these shortcuts for each setup, on its **Layers** tab.
 

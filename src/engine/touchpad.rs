@@ -10,8 +10,8 @@ use crate::{
 use super::{Engine, Source, take_whole};
 
 impl Engine {
-    /// Handles one touchpad event. Returns true if the click asked for the next profile.
-    pub(super) fn touchpad(&mut self, profile: &Profile, ev: TouchpadEvent, out: &mut Vec<OutEvent>) -> bool {
+    /// Handles one touchpad event.
+    pub(super) fn touchpad(&mut self, profile: &Profile, ev: TouchpadEvent, out: &mut Vec<OutEvent>) {
         match ev {
             TouchpadEvent::Click(pressed) => self.digital(&Source::Touchpad, &profile.touchpad.click, pressed, out),
             TouchpadEvent::Move(dx, dy) => {
@@ -21,7 +21,6 @@ impl Engine {
                         out.push(OutEvent::MouseMove(x, y));
                     }
                 }
-                false
             }
         }
     }

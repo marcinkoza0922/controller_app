@@ -19,7 +19,7 @@ screenshot, mouse clicks and so on).
 | Plain Guide | `Layer("Guide")`. While the daemon is controlling an app, it owns the Guide button: nothing reaches Steam on a press, hold or single tap. A **double tap** is a gesture that sends an ordinary Guide (`BTN_MODE`) to the virtual pad, which opens the Steam overlay. |
 | Unbound inputs while held | Swallowed (a layer option, on for the Guide layer): Guide+A does nothing rather than pressing A in the game. |
 | Where it lives | A copy of the layer in General and in every game and pack, all built by one `guide_layer()` function. Editable per game. |
-| Profile switching | Moves to Guide + D-pad Up (Next profile). |
+| Profile switching | Not from the controller. Quick Settings (Guide + Start) and the app switch profiles. |
 | New actions | `Screenshot`, `ToggleRecording`, `ForceQuit`. Built-in and named, never a generic "run command", because packs are shared files. |
 | Recording tool | gpu-screen-recorder. |
 | Force quit | Held for about 2 s inside the action itself (not the profile's long-press time), with a toast and rumble while it counts. |
@@ -39,7 +39,6 @@ screenshot, mouse clicks and so on).
 | + Right stick | Move the mouse |
 | + B (held ~2 s) | Force quit the focused window |
 | + D-pad Right / Down / Left | Enter / Tab / Escape |
-| + D-pad Up | Next profile |
 
 ## New actions
 
@@ -96,9 +95,8 @@ Holding Guide shows what it does, and games add to it.
 
 - **Templates and defaults.** `passthrough`, `pc_action`, `strategy` and the other templates
   set Guide to hold the layer instead of `NextProfile`; new games and General get the layer.
-- **Safety invariant.** The template test that "Guide always cycles profiles" becomes: every
-  profile's Guide holds the layer, and the Guide layer binds Next profile, so no profile can trap
-  you.
+- **Safety invariant.** Every profile's Guide holds the layer, so Guide always shows its
+  shortcuts. No Guide binding switches profiles, so a profile can't trap you.
 - **Existing configs.** A migration changes Guide only where it is still exactly
   `NextProfile`, and adds the `Guide` layer only when the game has no layer of that name.
   Edited bindings are left alone.
@@ -110,8 +108,8 @@ Holding Guide shows what it does, and games add to it.
 ## Build order
 
 1. Engine: the swallow-unbound layer option, with tests.
-2. `guide_layer()` with the config-only bindings (keyboard, numpad, clicks, mouse stick, keys,
-   next profile), wired into General, templates and the migration. Usable on its own.
+2. `guide_layer()` with the config-only bindings (keyboard, numpad, clicks, mouse stick, keys),
+   wired into General, templates and the migration. Usable on its own.
 3. `Screenshot`.
 4. `ForceQuit`.
 5. `ToggleRecording`.

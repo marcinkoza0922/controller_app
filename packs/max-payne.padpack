@@ -488,7 +488,6 @@ RightBumper = "screenshot"
 LeftBumper = "toggle_media"
 West = "toggle_overlay"
 North = "toggle_numpad"
-DpadUp = "next_profile"
 
 [layers.buttons.DpadRight]
 keys = ["KEY_ENTER"]
