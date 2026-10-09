@@ -128,6 +128,38 @@ impl std::fmt::Display for PadFamily {
     }
 }
 
+/// A controller model whose picture the editor draws differently. Models share their family's
+/// button names; a pad of any other model is drawn with the generic picture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PadModel {
+    DualShock4,
+    DualSense,
+    ProController,
+}
+
+impl PadModel {
+    /// Recognizes the model from the USB/Bluetooth vendor and product IDs (DualSense Edge
+    /// included), then the device name; `None` when neither gives it away.
+    pub fn detect(vendor: u16, product: u16, name: &str) -> Option<Self> {
+        match (vendor, product) {
+            (0x054c, 0x05c4 | 0x09cc) => return Some(PadModel::DualShock4),
+            (0x054c, 0x0ce6 | 0x0df2) => return Some(PadModel::DualSense),
+            (0x057e, 0x2009) => return Some(PadModel::ProController),
+            _ => {}
+        }
+        let name = name.to_lowercase();
+        if name.contains("dualsense") {
+            Some(PadModel::DualSense)
+        } else if name.contains("dualshock") {
+            Some(PadModel::DualShock4)
+        } else if name.contains("pro controller") {
+            Some(PadModel::ProController)
+        } else {
+            None
+        }
+    }
+}
+
 /// A live value an info overlay can show.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stat {
@@ -1196,6 +1228,17 @@ mod tests {
         assert_eq!(PadFamily::detect(0x0000, "Generic X-Box pad"), Some(PadFamily::Xbox));
         assert_eq!(PadFamily::detect(0x28de, "Steam Deck"), Some(PadFamily::Xbox));
         assert_eq!(PadFamily::detect(0x2dc8, "8BitDo Ultimate 2C"), None, "unknown pads use the fallback setting");
+    }
+
+    #[test]
+    fn models_from_ids_and_name() {
+        assert_eq!(PadModel::detect(0x054c, 0x05c4, "Wireless Controller"), Some(PadModel::DualShock4));
+        assert_eq!(PadModel::detect(0x054c, 0x09cc, "Wireless Controller"), Some(PadModel::DualShock4));
+        assert_eq!(PadModel::detect(0x054c, 0x0ce6, "DualSense Wireless Controller"), Some(PadModel::DualSense));
+        assert_eq!(PadModel::detect(0x054c, 0x0df2, "DualSense Edge Wireless Controller"), Some(PadModel::DualSense));
+        assert_eq!(PadModel::detect(0x057e, 0x2009, "Pro Controller"), Some(PadModel::ProController));
+        assert_eq!(PadModel::detect(0x0000, 0x0000, "Wireless DualShock Gamepad"), Some(PadModel::DualShock4));
+        assert_eq!(PadModel::detect(0x045e, 0x028e, "Xbox Controller"), None, "only the models with a picture of their own");
     }
 
     #[test]

@@ -19,7 +19,11 @@ pub fn colour(k: Keyword) -> [u8; 3] {
 /// The keyword's icon as SVG, in its colour: a hamburger for a menu, a circled "i" for info, and
 /// a picture of the idea for the rest.
 pub fn svg(k: Keyword) -> String {
-    let [r, g, b] = colour(k);
+    svg_in(k, colour(k))
+}
+
+/// The same icon in another colour, for the places that draw it neutral (the editor's tabs).
+pub fn svg_in(k: Keyword, [r, g, b]: [u8; 3]) -> String {
     let c = format!("#{r:02x}{g:02x}{b:02x}");
     let body = match k {
         // Three bars.

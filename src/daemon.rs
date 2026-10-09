@@ -106,6 +106,8 @@ struct Managed {
     name: String,
     /// Whose button names glyphs use, if recognized; otherwise `Config::info_glyphs`.
     family: Option<crate::info::PadFamily>,
+    /// Which model it is, if recognized; its picture in the editor depends on it.
+    model: Option<crate::info::PadModel>,
     engine: Engine,
     pad: VirtualPad,
     stop: Arc<AtomicBool>,
@@ -173,6 +175,11 @@ impl PairedNode {
 }
 
 impl Managed {
+    /// The controller's input as the GUI's live view receives it.
+    fn snapshot(&self) -> InputSnapshot {
+        InputSnapshot { model: self.model, family: self.family, ..self.view.snapshot(&self.name) }
+    }
+
     /// Brings `layered` up to date with the engine's layers. True if they changed.
     fn refresh_layers(&mut self, config: &Config) -> bool {
         let layers = self.engine.layers();
@@ -1377,7 +1384,7 @@ impl Daemon {
             }
             Msg::Watch(watcher) => {
                 let current = self.last_active.and_then(|id| self.devices.get(&id));
-                if watcher.send(current.map(|d| d.view.snapshot(&d.name))).is_ok() {
+                if watcher.send(current.map(Managed::snapshot)).is_ok() {
                     self.watchers.push(watcher);
                 }
             }
@@ -1446,7 +1453,7 @@ impl Daemon {
             self.last_draw = Instant::now();
         }
         if self.last_active == Some(id) && !self.watchers.is_empty() {
-            let snapshot = dev.view.snapshot(&dev.name);
+            let snapshot = dev.snapshot();
             self.watchers.retain(|w| w.send(Some(snapshot.clone())).is_ok());
         }
     }
@@ -1669,7 +1676,7 @@ impl Daemon {
         self.last_draw = Instant::now();
         self.last_active = Some(id);
         if !self.watchers.is_empty() {
-            let snapshot = dev.view.snapshot(&dev.name);
+            let snapshot = dev.snapshot();
             self.watchers.retain(|w| w.send(Some(snapshot.clone())).is_ok());
         }
         let toggle_overlay = dev.engine.take_overlay_toggle();
@@ -2220,6 +2227,7 @@ impl Daemon {
                 rumble: pad.rumble,
                 paddles: pad.paddles,
                 family: self.devices.values().find(|d| &d.path == path).and_then(|d| d.family),
+                model: self.devices.values().find(|d| &d.path == path).and_then(|d| d.model),
             })
             .collect();
         devices.sort_by(|a, b| a.path.cmp(&b.path));
@@ -2392,6 +2400,7 @@ impl Daemon {
     fn manage(&mut self, path: PathBuf, name: String, mut dev: Device) {
         let parent = hid_parent(&path);
         let family = crate::info::PadFamily::detect(dev.input_id().vendor(), &name);
+        let model = crate::info::PadModel::detect(dev.input_id().vendor(), dev.input_id().product(), &name);
         let uniq = dev.unique_name().map(str::to_string);
         let paddles = input::has_paddles(&dev);
         if let Err(e) = dev.grab() {
@@ -2416,6 +2425,7 @@ impl Daemon {
             path,
             name,
             family,
+            model,
             engine: {
                 let mut engine = Engine::default();
                 engine.set_macros(&self.scope.macros);

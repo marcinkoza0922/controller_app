@@ -282,11 +282,12 @@ impl App {
             GameTab::Logs => self.logs_have_problem(),
             GameTab::Details => !general && (rules_problem(game).is_some() || game.name.trim().is_empty()),
         };
+        let family = self.glyph_family();
         let mut segments = row![].spacing(2);
         for tab in GameTab::ALL.into_iter().filter(|t| !(general && *t == GameTab::Details)) {
             let label = if issue(tab) { format!("{tab}  ⚠") } else { tab.to_string() };
             segments = segments.push(
-                button(text(label).size(15))
+                button(row![tab.glyph(family), text(label).size(15)].spacing(6).align_y(Alignment::Center))
                     .style(style::segment(self.game_tab == tab))
                     .padding([6, 16])
                     .on_press(Message::SelectGameTab(tab)),

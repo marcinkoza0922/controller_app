@@ -29,7 +29,7 @@ use crate::{
     },
     engine::Opener,
     motion::{MotionStyle, OverlayKind},
-    info::PadFamily,
+    info::{PadFamily, PadModel},
     inputlog::LogView,
     ipc::{self, InputSnapshot, Request, Response, Status, WindowInfo},
     keyboard::{self, Layout},
@@ -53,6 +53,7 @@ mod pieces;
 mod packs;
 mod profile;
 mod ring_preview;
+mod tab_icons;
 mod tracking;
 mod widgets;
 
@@ -89,10 +90,37 @@ const UNDO_STEPS: usize = 100;
 /// Edits of the same kind this close together (a slider drag, typing) undo as one.
 const EDIT_RUN: Duration = Duration::from_secs(1);
 
+/// How long a controller's picture stays on the editor once shown, before another one replaces it.
+const PAD_HOLD: Duration = Duration::from_secs(2);
+
 const LABEL_WIDTH: f32 = 170.0;
 const SIDEBAR_WIDTH: f32 = 210.0;
 const ERROR_COLOR: Color = Color::from_rgb(0.9, 0.3, 0.3);
 const MUTED_COLOR: Color = Color::from_rgb(0.55, 0.55, 0.6);
+
+/// A controller as the editor sees it: its model (`None` for a generic pad) and the family whose
+/// button glyphs it uses.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PadPick {
+    model: Option<PadModel>,
+    family: PadFamily,
+}
+
+/// The controller on the editor, and when it went up.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PadShown {
+    pick: PadPick,
+    since: Instant,
+}
+
+/// The controller to show: `wanted`, unless the one up now went up less than [`PAD_HOLD`] ago.
+fn settle(shown: Option<PadShown>, wanted: PadPick, now: Instant) -> Option<PadShown> {
+    let held = shown.is_some_and(|s| now.duration_since(s.since) < PAD_HOLD);
+    match shown {
+        Some(s) if s.pick == wanted || held => shown,
+        _ => Some(PadShown { pick: wanted, since: now }),
+    }
+}
 
 struct App {
     /// Working copy being edited.
@@ -123,6 +151,8 @@ struct App {
     message: Option<(String, bool)>,
     /// Latest physical input streamed from the daemon.
     live: Option<InputSnapshot>,
+    /// The controller picture shown on the editor (see `settle_pad`).
+    pad_shown: Option<PadShown>,
     /// The latest presses and what each did, streamed from the daemon.
     feed: Option<LogView>,
     picker: Option<KeyPicker>,
@@ -521,6 +551,7 @@ impl App {
             game_search: String::new(),
             message: None,
             live: None,
+            pad_shown: None,
             feed: None,
             picker: None,
             dialog: None,
@@ -556,10 +587,39 @@ impl App {
         (app, Task::batch([load_config(), Task::done(Message::Poll), iced::system::theme().map(Message::SystemMode)]))
     }
 
-    /// The button glyphs to draw: the family of the controller in use, else the one set in Settings.
+    /// The button glyphs to draw: the family of the controller on the editor (see `shown_pad`), else
+    /// the one set in Settings.
     fn glyph_family(&self) -> PadFamily {
-        let managed = self.status.as_ref().and_then(|s| s.devices.iter().find(|d| d.managed));
-        managed.and_then(|d| d.family).unwrap_or(self.config.info_glyphs)
+        self.shown_pad().family
+    }
+
+    /// The controller to show: the one used most recently, or the first managed one before any
+    /// input has come in.
+    fn wanted_pad(&self) -> PadPick {
+        let fallback = self.config.info_glyphs;
+        match &self.live {
+            Some(live) => PadPick { model: live.model, family: live.family.unwrap_or(fallback) },
+            None => {
+                let managed = self.status.as_ref().and_then(|s| s.devices.iter().find(|d| d.managed));
+                PadPick { model: managed.and_then(|d| d.model), family: managed.and_then(|d| d.family).unwrap_or(fallback) }
+            }
+        }
+    }
+
+    /// Switches the editor to the wanted controller, but only once the current one has been up for
+    /// [`PAD_HOLD`], so two pads used in turn don't make it flicker.
+    fn settle_pad(&mut self, now: Instant) {
+        self.pad_shown = settle(self.pad_shown, self.wanted_pad(), now);
+    }
+
+    /// The controller on the editor.
+    fn shown_pad(&self) -> PadPick {
+        self.pad_shown.map_or_else(|| self.wanted_pad(), |shown| shown.pick)
+    }
+
+    /// The live input for the controller picture on the editor: only when it comes from that controller.
+    fn shown_input(&self) -> Option<&InputSnapshot> {
+        self.live.as_ref().filter(|live| live.model == self.shown_pad().model)
     }
 
     /// Whether button glyphs use the Nintendo layout here: the game on screen's own choice, else
@@ -758,6 +818,8 @@ impl App {
     fn handle(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Poll => {
+                // Polling is the only tick, so a picture waiting out its hold is put up here.
+                self.settle_pad(Instant::now());
                 return Task::perform(call(Request::Status), |r| {
                     Message::StatusLoaded(r.and_then(|r| match r {
                         Response::Status(s) => Ok(s),
@@ -772,6 +834,7 @@ impl App {
                     return self.jump_to(b);
                 }
                 self.live = snapshot;
+                self.settle_pad(Instant::now());
             }
             Message::LiveFeed(feed) => self.feed = feed,
             Message::StatusLoaded(Ok(status)) => {
@@ -1126,13 +1189,37 @@ mod tests {
         }
     }
 
+    #[test]
+    fn the_picture_holds_for_its_minimum_time_before_switching() {
+        let t0 = Instant::now();
+        let pick = |model| PadPick { model: Some(model), family: PadFamily::Xbox };
+        let ds = pick(PadModel::DualSense);
+        let pro = pick(PadModel::ProController);
+        let first = settle(None, ds, t0).unwrap();
+        assert_eq!(first.pick, ds, "the first controller goes up at once");
+        // Another controller used 0.5 s later waits for the hold.
+        let early = settle(Some(first), pro, t0 + Duration::from_millis(500)).unwrap();
+        assert_eq!(early.pick, ds);
+        assert_eq!(early.since, t0, "the hold is measured from when the picture went up");
+        // Once the hold has passed, it switches and starts a new hold.
+        let late = settle(Some(first), pro, t0 + PAD_HOLD).unwrap();
+        assert_eq!((late.pick, late.since), (pro, t0 + PAD_HOLD));
+        // A controller that is no longer wanted before the hold ends doesn't cause a switch back.
+        assert_eq!(settle(Some(first), ds, t0 + Duration::from_millis(100)), Some(first));
+        // A family change alone counts as another controller.
+        let generic = PadPick { model: None, family: PadFamily::Nintendo };
+        assert_eq!(settle(Some(first), generic, t0 + PAD_HOLD).unwrap().pick, generic);
+    }
+
     pub(super) fn device(name: &str, analog_triggers: bool, ignored: bool) -> ipc::DeviceInfo {
-        ipc::DeviceInfo { name: name.into(), path: String::new(), managed: !ignored, ignored, analog_triggers, rumble: true, gyro: false, paddles: false, family: None }
+        ipc::DeviceInfo { name: name.into(), path: String::new(), managed: !ignored, ignored, analog_triggers, rumble: true, gyro: false, paddles: false, family: None, model: None }
     }
 
     pub(super) fn snapshot(buttons: &[Button], right_stick: (f32, f32)) -> InputSnapshot {
         InputSnapshot {
             device: "Pad".into(),
+            model: None,
+            family: None,
             buttons: buttons.to_vec(),
             left_stick: (0.0, 0.0),
             right_stick,
