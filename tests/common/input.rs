@@ -23,6 +23,18 @@ pub fn find_node(name: &str) -> Option<PathBuf> {
     None
 }
 
+/// Like [`find_node`], but of several devices with the name, the newest: a test daemon's virtual
+/// devices are newer than those of a daemon already running on the machine.
+pub fn find_newest_node(name: &str) -> Option<PathBuf> {
+    let number = |path: &Path| path.file_name()?.to_str()?.strip_prefix("event")?.parse::<u32>().ok();
+    fs::read_dir("/dev/input")
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| number(path).is_some() && Device::open(path).is_ok_and(|dev| dev.name() == Some(name)))
+        .max_by_key(|path| number(path))
+}
+
 /// True when another process holds the controller's grab.
 pub fn grabbed(path: &Path) -> bool {
     let mut dev = Device::open(path).unwrap();
@@ -45,8 +57,16 @@ pub struct Reader {
 
 impl Reader {
     pub fn open(name: &str) -> Self {
-        let path = wait_for(&format!("the virtual device {name:?}"), || find_node(name));
-        let dev = Device::open(&path).unwrap();
+        Self::at(&wait_for(&format!("the virtual device {name:?}"), || find_node(name)))
+    }
+
+    /// Opens the newest device of that name (see [`find_newest_node`]).
+    pub fn open_newest(name: &str) -> Self {
+        Self::at(&wait_for(&format!("the virtual device {name:?}"), || find_newest_node(name)))
+    }
+
+    fn at(path: &Path) -> Self {
+        let dev = Device::open(path).unwrap();
         dev.set_nonblocking(true).unwrap();
         Reader { dev, pressed: BTreeSet::new() }
     }

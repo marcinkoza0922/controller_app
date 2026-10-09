@@ -10,7 +10,7 @@ mod touchpad;
 
 pub use touchpad::{TouchNormalizer, TouchpadEvent, is_touchpad};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Axis {
     LeftX,
     LeftY,

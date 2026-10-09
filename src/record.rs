@@ -58,7 +58,7 @@ pub fn start(game: &str) -> Result<(Child, PathBuf)> {
     if !on_path(PROGRAM) {
         bail!("{PROGRAM} is not installed");
     }
-    let videos = dirs::video_dir().or_else(|| dirs::home_dir().map(|h| h.join("Videos"))).context("no Videos folder")?;
+    let videos = crate::capture::media_base(dirs::video_dir(), "Videos")?;
     let path = media_path(&videos, "Recordings", game, &timestamp(), "mp4");
     std::fs::create_dir_all(path.parent().context("no folder")?).with_context(|| format!("creating {}", path.display()))?;
     for source in [Source::Screen, Source::Portal] {

@@ -35,5 +35,5 @@ exec docker run --rm \
     -w /src \
     -u 0 \
     rust:1 \
-    sh -c "apt-get update -qq && apt-get install -y -qq pkg-config libxkbcommon-dev libwayland-dev libudev-dev libfontconfig1-dev libdbus-1-dev xvfb xauth libxcursor1 libxrandr2 libxi6 libxinerama1 libxkbcommon-x11-0 x11-utils >/dev/null \
+    sh -c "apt-get update -qq && apt-get install -y -qq pkg-config libxkbcommon-dev libwayland-dev libudev-dev libfontconfig1-dev libdbus-1-dev libasound2-dev xvfb xauth libxcursor1 libxrandr2 libxi6 libxinerama1 libxkbcommon-x11-0 x11-utils >/dev/null \
         && xvfb-run -a cargo test -- --ignored $filter"

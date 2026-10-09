@@ -46,6 +46,7 @@ use crate::{
 };
 
 mod activity;
+mod inject;
 mod logs;
 
 /// Why a profile changed when someone picked it.
@@ -109,7 +110,11 @@ struct Managed {
     /// Which model it is, if recognized; its picture in the editor depends on it.
     model: Option<crate::info::PadModel>,
     engine: Engine,
-    pad: VirtualPad,
+    /// The virtual pad it feeds. `None` for an injected controller that stays off the real
+    /// virtual devices (see [`Request::DebugAttach`]).
+    pad: Option<VirtualPad>,
+    /// What an injected controller's mappings have output, newest last.
+    recorded: Option<Vec<String>>,
     stop: Arc<AtomicBool>,
     view: InputView,
     out_view: OutputView,
@@ -175,6 +180,18 @@ impl PairedNode {
 }
 
 impl Managed {
+    /// Sends what the mappings output to the virtual devices; an injected controller's output
+    /// is also recorded, and without a pad it goes no further.
+    fn dispatch(&mut self, kbm: &mut VirtualKbm, out: Vec<OutEvent>) {
+        if let Some(recorded) = &mut self.recorded {
+            inject::record(recorded, &out);
+        }
+        match &mut self.pad {
+            Some(pad) => dispatch(pad, &mut self.out_view, kbm, out),
+            None => out.iter().for_each(|ev| self.out_view.apply(ev)),
+        }
+    }
+
     /// The controller's input as the GUI's live view receives it.
     fn snapshot(&self) -> InputSnapshot {
         InputSnapshot { model: self.model, family: self.family, ..self.view.snapshot(&self.name) }
@@ -292,6 +309,8 @@ struct Daemon {
     kbm: VirtualKbm,
     devices: HashMap<u64, Managed>,
     next_id: u64,
+    /// Whether injected controllers are accepted, and how many there have been (see `inject.rs`).
+    injection: inject::Injection,
     /// Nodes already checked that we never manage (not a gamepad, or a virtual device).
     skipped: HashSet<NodeKey>,
     /// Gamepads we have seen, managed or not, for status reporting.
@@ -393,7 +412,8 @@ fn log_path() -> PathBuf {
     dirs::state_dir().unwrap_or_else(std::env::temp_dir).join("padwight").join("daemon.log")
 }
 
-pub fn run() -> Result<()> {
+/// Runs the service. With `debug`, controllers can also be injected over IPC (`padwight debug`).
+pub fn run(debug: bool) -> Result<()> {
     let config = Config::load()?;
     let (tx, rx) = mpsc::channel();
     stop_on_signals(tx.clone())?;
@@ -409,6 +429,7 @@ pub fn run() -> Result<()> {
         kbm,
         devices: HashMap::new(),
         next_id: 0,
+        injection: inject::Injection::new(debug)?,
         skipped: HashSet::new(),
         gamepads: HashMap::new(),
         motion_nodes: HashMap::new(),
@@ -514,14 +535,14 @@ fn bind_socket() -> Result<UnixListener> {
     bind_socket_at(&ipc::socket_path())
 }
 
-fn bind_socket_at(path: &std::path::Path) -> Result<UnixListener> {
+pub(crate) fn bind_socket_at(path: &std::path::Path) -> Result<UnixListener> {
     use std::os::unix::fs::PermissionsExt;
     if let Some(dir) = path.parent() {
         prepare_private_dir(dir)?;
     }
     if path.exists() {
         if UnixStream::connect(path).is_ok() {
-            bail!("another daemon is already running ({})", path.display());
+            bail!("another instance is already running ({})", path.display());
         }
         std::fs::remove_file(path)?;
     }
@@ -533,7 +554,7 @@ fn bind_socket_at(path: &std::path::Path) -> Result<UnixListener> {
 
 /// Creates `dir` (and any missing parents) as a directory only this user can use. An existing
 /// directory must be owned by this user, or the daemon refuses to put its socket there.
-fn prepare_private_dir(dir: &std::path::Path) -> Result<()> {
+pub(crate) fn prepare_private_dir(dir: &std::path::Path) -> Result<()> {
     use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
     std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
     let meta = std::fs::symlink_metadata(dir)?;
@@ -676,7 +697,7 @@ impl Daemon {
             if dev.refresh_layers(&self.config) {
                 dev.engine.resync(layered(&dev.layered, base), &mut out);
             }
-            dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
+            dev.dispatch(&mut self.kbm, out);
             toggle_overlay = dev.engine.take_overlay_toggle().or(toggle_overlay);
             screenshot |= dev.engine.take_screenshot();
             recording |= dev.engine.take_recording_toggle();
@@ -1002,7 +1023,7 @@ impl Daemon {
             let mut out = Vec::new();
             dev.engine.release_all(true, &mut out);
             dev.refresh_layers(&self.config);
-            dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
+            dev.dispatch(&mut self.kbm, out);
         }
     }
 
@@ -1055,7 +1076,7 @@ impl Daemon {
         {
             dev.engine.resync(layered(&dev.layered, base), &mut out);
         }
-        dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
+        dev.dispatch(&mut self.kbm, out);
         let toggle_overlay = dev.engine.take_overlay_toggle();
         let screenshot = dev.engine.take_screenshot();
         let recording = dev.engine.take_recording_toggle();
@@ -1324,7 +1345,7 @@ impl Daemon {
         for dev in self.devices.values_mut() {
             let mut out = Vec::new();
             dev.engine.tick(layered(&dev.layered, base), dt, &mut out);
-            dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
+            dev.dispatch(&mut self.kbm, out);
             dev.out_view.end_tick(dt);
         }
         if self.last_draw.elapsed() >= STATUS_REDRAW
@@ -1402,7 +1423,7 @@ impl Daemon {
             self.forget_active(id);
             let mut out = Vec::new();
             dev.engine.release_all(false, &mut out);
-            dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
+            dev.dispatch(&mut self.kbm, out);
             // A menu is run by the controller that opened it, and with no controller
             // left nothing could close an overlay.
             let orphaned = match &self.active {
@@ -1447,7 +1468,7 @@ impl Daemon {
         let Some(base) = self.config.active().filter(|_| self.active.is_none()) else { return };
         let mut out = Vec::new();
         dev.engine.motion(layered(&dev.layered, base), sample, &mut out);
-        dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
+        dev.dispatch(&mut self.kbm, out);
         if self.last_draw.elapsed() >= STATUS_REDRAW {
             dev.draw_status();
             self.last_draw = Instant::now();
@@ -1565,7 +1586,7 @@ impl Daemon {
             if dev.refresh_layers(&self.config) {
                 dev.engine.resync(layered(&dev.layered, base), &mut out);
             }
-            dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
+            dev.dispatch(&mut self.kbm, out);
         }
         self.check_info_changes();
         self.broadcast_overlay();
@@ -1668,7 +1689,7 @@ impl Daemon {
                 dev.engine.resync(layered(&dev.layered, base), &mut out);
             }
         }
-        dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
+        dev.dispatch(&mut self.kbm, out);
         if !dev.engine.needs_tick(layered(&dev.layered, base)) {
             dev.out_view.stop_motion();
         }
@@ -2068,6 +2089,9 @@ impl Daemon {
                 Response::Ok
             }
             Request::WatchOverlay => Response::Error("WatchOverlay must be the only request".into()),
+            Request::DebugAttach { .. } | Request::DebugInput { .. } | Request::DebugOutput { .. } | Request::DebugDetach(_) => {
+                self.debug_request(req)
+            }
             Request::CalibrateGyro(path) => {
                 let dev = self.devices.values_mut().find(|d| d.path.as_os_str() == path.as_str());
                 match dev {
@@ -2181,7 +2205,7 @@ impl Daemon {
         for dev in self.devices.values_mut() {
             let mut out = Vec::new();
             dev.engine.release_all(keep_toggled_layers, &mut out);
-            dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
+            dev.dispatch(&mut self.kbm, out);
         }
     }
 
@@ -2194,7 +2218,7 @@ impl Daemon {
             dev.refresh_layers(&self.config);
             let mut out = Vec::new();
             dev.engine.resync(layered(&dev.layered, base), &mut out);
-            dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
+            dev.dispatch(&mut self.kbm, out);
         }
     }
 
@@ -2208,7 +2232,7 @@ impl Daemon {
             self.forget_active(id);
             let mut out = Vec::new();
             dev.engine.release_all(false, &mut out);
-            dispatch(&mut dev.pad, &mut dev.out_view, &mut self.kbm, out);
+            dev.dispatch(&mut self.kbm, out);
             log!("released {} ({})", dev.name, dev.path.display());
         }
     }
@@ -2231,6 +2255,7 @@ impl Daemon {
             })
             .collect();
         devices.sort_by(|a, b| a.path.cmp(&b.path));
+        devices.extend(self.injected_devices());
         Status {
             enabled: self.config.enabled,
             active_profile: self.config.active().map(|p| p.name.clone()).unwrap_or_default(),
@@ -2397,6 +2422,45 @@ impl Daemon {
         }
     }
 
+    /// A controller with nothing known about it yet; `pad` is the virtual pad it feeds.
+    fn new_managed(&mut self, path: PathBuf, name: String, pad: Option<VirtualPad>, stop: Arc<AtomicBool>) -> Managed {
+        let mut engine = Engine::default();
+        engine.set_macros(&self.scope.macros);
+        Managed {
+            path,
+            name,
+            family: None,
+            model: None,
+            engine,
+            pad,
+            recorded: None,
+            stop,
+            view: InputView::default(),
+            out_view: OutputView::default(),
+            parent: None,
+            uniq: None,
+            motion: None,
+            touchpad: None,
+            paddles: false,
+            motion_frame: MotionFrame::default(),
+            gyro_bias: [0.0; 3],
+            calibrating: None,
+            layered: None,
+            log: crate::inputlog::InputLog::default(),
+            number: logs::free_number(self.devices.values().map(|d| d.number)),
+        }
+    }
+
+    /// Starts running `managed` as controller `id`, with its mappings in step with the profile.
+    fn add_managed(&mut self, id: u64, mut managed: Managed) {
+        if let Some(profile) = self.config.active() {
+            let mut out = Vec::new();
+            managed.engine.resync(profile, &mut out);
+            managed.dispatch(&mut self.kbm, out);
+        }
+        self.devices.insert(id, managed);
+    }
+
     fn manage(&mut self, path: PathBuf, name: String, mut dev: Device) {
         let parent = hid_parent(&path);
         let family = crate::info::PadFamily::detect(dev.input_id().vendor(), &name);
@@ -2421,38 +2485,13 @@ impl Daemon {
         if has_rumble {
             rumble::spawn(pad.shared(), path.clone(), stop.clone());
         }
-        let mut managed = Managed {
-            path,
-            name,
-            family,
-            model,
-            engine: {
-                let mut engine = Engine::default();
-                engine.set_macros(&self.scope.macros);
-                engine
-            },
-            pad,
-            stop,
-            view: InputView::default(),
-            out_view: OutputView::default(),
-            parent,
-            uniq,
-            motion: None,
-            touchpad: None,
-            paddles,
-            motion_frame: MotionFrame::default(),
-            gyro_bias: [0.0; 3],
-            calibrating: None,
-            layered: None,
-            log: crate::inputlog::InputLog::default(),
-            number: logs::free_number(self.devices.values().map(|d| d.number)),
-        };
-        if let Some(profile) = self.config.active() {
-            let mut out = Vec::new();
-            managed.engine.resync(profile, &mut out);
-            dispatch(&mut managed.pad, &mut managed.out_view, &mut self.kbm, out);
-        }
-        self.devices.insert(id, managed);
+        let mut managed = self.new_managed(path, name, Some(pad), stop);
+        managed.family = family;
+        managed.model = model;
+        managed.parent = parent;
+        managed.uniq = uniq;
+        managed.paddles = paddles;
+        self.add_managed(id, managed);
     }
 }
 
