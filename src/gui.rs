@@ -372,6 +372,8 @@ enum Message {
     SetGameNintendoLayout(Option<bool>),
     /// The shown game's own overlay sounds, replacing its set.
     SetGameSounds(SoundSet),
+    /// The App settings' sounds, which every setup without its own set uses.
+    SetSounds(SoundSet),
     /// The shown game goes back to the default sounds.
     ClearGameSounds,
     PreviewSound(SoundSpec),

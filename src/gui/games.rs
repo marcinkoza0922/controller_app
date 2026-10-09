@@ -150,6 +150,7 @@ impl App {
             Message::SetNintendoLayout(on) => self.config.nintendo_layout = on,
             Message::SetGameNintendoLayout(choice) => self.game_mut().nintendo_layout = choice,
             Message::SetGameSounds(sounds) => self.game_mut().sounds = Some(sounds),
+            Message::SetSounds(sounds) => self.config.sounds = sounds,
             Message::ClearGameSounds => self.game_mut().sounds = None,
             Message::PreviewSound(spec) => self.sounds.play(&spec),
             Message::SetKeyboardStyle(style) => self.config.keyboard_style = style,
@@ -394,19 +395,32 @@ impl App {
         )
     }
 
+    /// The App settings page's sounds: the set every setup without its own set uses.
+    fn view_default_sounds(&self) -> Element<'_, Message> {
+        let set = self.config.sounds;
+        let mut rows: Vec<Element<'_, Message>> = SoundOverlay::ALL.iter().map(|&overlay| overlay_sounds(set, overlay, Message::SetSounds)).collect();
+        rows.push(button(text("Turn every sound off").size(13)).style(style::secondary).on_press(Message::SetSounds(set.silenced())).into());
+        section(
+            "Overlay sounds",
+            Some("A faint sound as the cursor moves in an overlay, and another when something is picked. These apply to every setup that doesn't set its own on its Details tab. Any overlay can be turned off.".into()),
+            rows,
+        )
+    }
+
     /// The setup's overlay sounds: each overlay's cues, on or off, and what its steps and picks sound like.
+    /// Starts from the App settings' sounds until one is changed.
     fn view_game_sounds(&self) -> Element<'_, Message> {
         let own = self.game().sounds;
-        let set = own.unwrap_or_default();
-        let mut rows: Vec<Element<'_, Message>> = SoundOverlay::ALL.iter().map(|&overlay| overlay_sounds(set, overlay)).collect();
+        let set = own.unwrap_or(self.config.sounds);
+        let mut rows: Vec<Element<'_, Message>> = SoundOverlay::ALL.iter().map(|&overlay| overlay_sounds(set, overlay, Message::SetGameSounds)).collect();
         let mut buttons = row![button(text("Turn every sound off").size(13)).style(style::secondary).on_press(Message::SetGameSounds(set.silenced()))].spacing(8);
         if own.is_some() {
-            buttons = buttons.push(button(text("Use the default sounds").size(13)).style(style::secondary).on_press(Message::ClearGameSounds));
+            buttons = buttons.push(button(text("Use the global sounds").size(13)).style(style::secondary).on_press(Message::ClearGameSounds));
         }
         rows.push(buttons.into());
         section(
             "Overlay sounds",
-            Some("A faint sound as the cursor moves in an overlay, and another when something is picked. Each kind of overlay has its own, and each setup has its own set. Any can be turned off.".into()),
+            Some("A faint sound as the cursor moves in an overlay, and another when something is picked. Any sound this setup doesn't set uses the global sounds from App settings. Any overlay can be turned off.".into()),
             rows,
         )
     }
@@ -475,6 +489,7 @@ impl App {
             self.view_font_card(),
             self.view_colour_card(),
             self.view_motion_card(),
+            self.view_default_sounds(),
             self.view_keyboard_card(),
             self.view_numpad_card(),
             self.view_media_card(),
@@ -848,12 +863,12 @@ impl App {
 }
 
 /// One overlay's sounds: on or off, and (when on) the step and pick cues.
-fn overlay_sounds<'a>(set: SoundSet, overlay: SoundOverlay) -> Element<'a, Message> {
+fn overlay_sounds<'a>(set: SoundSet, overlay: SoundOverlay, change: fn(SoundSet) -> Message) -> Element<'a, Message> {
     let current = set.get(overlay);
     let put = move |sounds: OverlaySounds| {
         let mut next = set;
         next.set(overlay, sounds);
-        Message::SetGameSounds(next)
+        change(next)
     };
     let toggle = toggler(current.enabled).label(overlay.label()).on_toggle(move |on| put(OverlaySounds { enabled: on, ..current }));
     let mut block = column![toggle].spacing(8);
