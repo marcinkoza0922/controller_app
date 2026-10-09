@@ -64,6 +64,6 @@ Overlays move as they open and close, as the cursor moves and as something is pi
 
 Each setup can set its own on its **Details** tab. Any kind it doesn't set uses the global motion.
 
-## Menu sounds
+## Overlay sounds
 
-Each setup can play a faint tick as the cursor moves and a different sound when an item is picked. Set them on the setup's **Details** tab, where each sound can be previewed with **Play**.
+Each setup can play a faint sound as the cursor moves in an overlay, and another when something is picked. Every overlay has its own pair: the on-screen keyboard, the numpad, menus, media controls and library offers. Set them on the setup's **Details** tab. Each sound has a kind (click, tick, pop, blip, chime, clink, thud, knock, crunch or swish), a volume, a pitch and a length, and can be previewed with **Play**. Any overlay can be turned off, or every sound at once with **Turn every sound off**.

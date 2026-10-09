@@ -7,7 +7,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::motion::MotionSet;
-use crate::sound::MenuSounds;
+use crate::sound::SoundSet;
 use crate::config::{
     ButtonAction, Config, Game, GyroMode, Indicator, InfoOverlay, ItemKind, Layer, LogOverlay, Macro, Menu, MacroStep, Origin,
     OverlayStyle, PackInfo, PackRef, Profile, Rule, Shared, free_name,
@@ -18,8 +18,9 @@ use crate::config::{
 /// the Guide shift, screenshot, recording and force-quit actions and layer indicators
 /// with generated bindings, extra info overlays and a delay; 8, profiles stating what
 /// controller features they need (replacing the pack-wide list); 9, the media controls and
-/// in-game menu looks; 10, menu sounds, radial arcs and corner rounding; 11, how each overlay moves.
-pub const FORMAT: u32 = 11;
+/// in-game menu looks; 10, menu sounds, radial arcs and corner rounding; 11, how each overlay moves;
+/// 12, the sounds of each overlay (replacing the menu sounds).
+pub const FORMAT: u32 = 12;
 pub const EXTENSION: &str = "padpack";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -56,9 +57,9 @@ pub struct Pack {
     /// Whether this game's button glyphs use the Nintendo layout, if the author set that.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nintendo_layout: Option<bool>,
-    /// The menu sounds, if the author set them.
+    /// The overlay sounds, if the author set them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub menu_sounds: Option<MenuSounds>,
+    pub sounds: Option<SoundSet>,
     /// How each overlay moves, if the author set it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub motion: Option<MotionSet>,
@@ -133,7 +134,7 @@ impl Pack {
             menu_style: self.menu_style.clone(),
             overlay_font: self.overlay_font.clone(),
             nintendo_layout: self.nintendo_layout,
-            menu_sounds: self.menu_sounds,
+            sounds: self.sounds,
             motion: self.motion,
         };
         game.ensure_guide_layer();
@@ -410,7 +411,7 @@ pub fn export(game: &Game, shared: &Shared, info: &PackInfo) -> Export {
         menu_style: pack_game.menu_style,
         overlay_font: pack_game.overlay_font,
         nintendo_layout: pack_game.nintendo_layout,
-        menu_sounds: pack_game.menu_sounds,
+        sounds: pack_game.sounds,
         motion: pack_game.motion,
     };
     Export { pack, pulled_in, dangling: dangling.into_iter().collect(), features }
@@ -684,7 +685,7 @@ fn keep_looks(mut game: Game, old: &Game) -> Game {
     game.menu_style = game.menu_style.or_else(|| old.menu_style.clone());
     game.overlay_font = game.overlay_font.or_else(|| old.overlay_font.clone());
     game.nintendo_layout = game.nintendo_layout.or(old.nintendo_layout);
-    game.menu_sounds = game.menu_sounds.or(old.menu_sounds);
+    game.sounds = game.sounds.or(old.sounds);
     game.motion = game.motion.or(old.motion);
     game
 }

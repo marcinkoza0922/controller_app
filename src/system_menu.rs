@@ -84,6 +84,11 @@ pub struct SystemMenu {
 }
 
 impl SystemMenu {
+    /// Where the cursor is, for the sounds of its steps.
+    pub fn cursor(&self) -> usize {
+        self.cursor
+    }
+
     /// A menu over a config that is currently saved as `saved`.
     pub fn new(saved: &Config) -> Self {
         SystemMenu { screen: Screen::Main, cursor: 0, latch_x: false, latch_y: false, saved: Box::new(saved.clone()) }

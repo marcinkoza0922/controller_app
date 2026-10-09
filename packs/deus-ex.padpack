@@ -1,4 +1,4 @@
-format = 11
+format = 12
 macros = []
 overlay_font = "Rajdhani"
 
@@ -757,10 +757,25 @@ opacity = 0.95
 color = "#3d8bff"
 opacity = 1.0
 
-[menu_sounds]
-enabled = true
-step = { kind = "click", volume = 0.12, pitch = 0.8 }
-pick = { kind = "crunch", volume = 0.3, pitch = 1.0 }
+[sounds.keyboard]
+step = { kind = "beep", volume = 0.05, pitch = 1.2, length = 0.8 }
+pick = { kind = "keys", volume = 0.22, pitch = 1.0 }
+
+[sounds.numpad]
+step = { kind = "beep", volume = 0.05, pitch = 1.0 }
+pick = { kind = "keys", volume = 0.22, pitch = 1.2 }
+
+[sounds.menu]
+step = { kind = "beep", volume = 0.06, pitch = 1.1 }
+pick = { kind = "beep", volume = 0.16, pitch = 1.0 }
+
+[sounds.media]
+step = { kind = "beep", volume = 0.05, pitch = 1.4 }
+pick = { kind = "clink", volume = 0.24, pitch = 1.4 }
+
+[sounds.offer]
+step = { kind = "beep", volume = 0.06, pitch = 0.9 }
+pick = { kind = "clink", volume = 0.3, pitch = 0.8, length = 1.4 }
 
 [motion]
 keyboard = "subtle"

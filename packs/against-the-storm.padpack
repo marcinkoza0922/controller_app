@@ -1,4 +1,4 @@
-format = 11
+format = 12
 macros = []
 
 [pack]
@@ -181,10 +181,25 @@ color = "#111a14"
 opacity = 0.85
 
 
-[menu_sounds]
-enabled = true
-step = { kind = "click", volume = 0.12, pitch = 0.7 }
-pick = { kind = "chime", volume = 0.35, pitch = 0.6 }
+[sounds.keyboard]
+step = { kind = "tick", volume = 0.08, pitch = 1.0 }
+pick = { kind = "knock", volume = 0.28, pitch = 0.9 }
+
+[sounds.numpad]
+step = { kind = "tick", volume = 0.08, pitch = 1.0 }
+pick = { kind = "knock", volume = 0.26, pitch = 0.8 }
+
+[sounds.menu]
+step = { kind = "knock", volume = 0.07, pitch = 1.0, length = 0.8 }
+pick = { kind = "knock", volume = 0.3, pitch = 0.8, length = 1.4 }
+
+[sounds.media]
+step = { kind = "tick", volume = 0.06, pitch = 1.2 }
+pick = { kind = "knock", volume = 0.26, pitch = 1.1 }
+
+[sounds.offer]
+step = { kind = "knock", volume = 0.07, pitch = 0.9 }
+pick = { kind = "knock", volume = 0.3, pitch = 0.7, length = 1.6 }
 
 [motion]
 keyboard = "grim"

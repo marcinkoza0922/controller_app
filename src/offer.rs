@@ -78,7 +78,7 @@ struct Offered {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum Stage {
+pub(crate) enum Stage {
     Ask,
     /// Choosing between packs.
     Pack,
@@ -94,6 +94,11 @@ pub struct OfferSession {
 }
 
 impl OfferSession {
+    /// The stage and the highlighted row, for the sounds of its steps and picks.
+    pub(crate) fn position(&self) -> (Stage, usize) {
+        (self.stage, self.selected)
+    }
+
     pub fn new(library: &[Entry], candidates: &[usize], have: Option<&[Feature]>, now: Instant) -> Self {
         let packs = candidates
             .iter()

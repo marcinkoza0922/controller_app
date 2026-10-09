@@ -1,4 +1,4 @@
-format = 11
+format = 12
 macros = []
 overlay_font = "Source Code Pro"
 
@@ -603,10 +603,25 @@ opacity = 0.95
 color = "#b8322a"
 opacity = 1.0
 
-[menu_sounds]
-enabled = true
+[sounds.keyboard]
+step = { kind = "click", volume = 0.1, pitch = 0.7 }
+pick = { kind = "typewriter", volume = 0.22, pitch = 0.9 }
+
+[sounds.numpad]
 step = { kind = "click", volume = 0.1, pitch = 0.6 }
-pick = { kind = "thud", volume = 0.3, pitch = 0.9 }
+pick = { kind = "typewriter", volume = 0.2, pitch = 0.8 }
+
+[sounds.menu]
+step = { kind = "click", volume = 0.1, pitch = 0.6 }
+pick = { kind = "typewriter", volume = 0.3, pitch = 0.9 }
+
+[sounds.media]
+step = { kind = "click", volume = 0.08, pitch = 0.8 }
+pick = { kind = "thud", volume = 0.24, pitch = 0.9 }
+
+[sounds.offer]
+step = { kind = "click", volume = 0.1, pitch = 0.6 }
+pick = { kind = "typewriter", volume = 0.26, pitch = 0.7, length = 1.2 }
 
 [motion]
 keyboard = "brutal"
