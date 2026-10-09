@@ -18,6 +18,7 @@ For developers, in [docs/development/](docs/development/):
 
 - [architecture.md](docs/development/architecture.md): how the processes, input pipeline, config and focus tracking fit together, with a module map and test commands.
 - [specs.md](docs/development/specs.md), [layers.md](docs/development/layers.md), [sticks.md](docs/development/sticks.md), [guide.md](docs/development/guide.md): design notes for individual features.
+- [game-setup-guidelines.md](docs/development/game-setup-guidelines.md): default placement of actions when setting up a game's bindings (sticks, buttons, hotkeys, system buttons).
 
 ## Setups
 
