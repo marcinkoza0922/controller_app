@@ -416,6 +416,7 @@ label = "Drop weapon"
 keys = ["KEY_B"]
 
 [menus.style]
+corners = 0.3
 position = "center"
 scale = 1.0
 
@@ -569,6 +570,7 @@ threshold = 0.3
 mouse = "Left"
 
 [keyboard_style]
+corners = 0.3
 position = "bottom_center"
 scale = 1.0
 
@@ -585,6 +587,7 @@ color = "#7d9a72"
 opacity = 1.0
 
 [numpad_style]
+corners = 0.3
 position = "bottom_center"
 scale = 1.0
 
@@ -601,6 +604,7 @@ color = "#7d9a72"
 opacity = 1.0
 
 [media_style]
+corners = 0.3
 position = "top_center"
 scale = 1.0
 
@@ -617,6 +621,7 @@ color = "#7d9a72"
 opacity = 1.0
 
 [menu_style]
+corners = 0.3
 position = "center"
 scale = 1.0
 
@@ -631,3 +636,8 @@ opacity = 0.95
 [menu_style.selected]
 color = "#7d9a72"
 opacity = 1.0
+
+[menu_sounds]
+enabled = true
+step = { kind = "click", volume = 0.1, pitch = 1.4 }
+pick = { kind = "pop", volume = 0.3, pitch = 1.0 }

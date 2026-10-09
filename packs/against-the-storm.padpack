@@ -1,0 +1,149 @@
+format = 10
+macros = []
+
+[pack]
+id = "af91e206-a8d2-4273-bbc2-e573240af2a0"
+name = "Against the Storm"
+version = "1.0"
+author = "padwight"
+description = "Against the Storm (the Windows build, run through Heroic or Proton) on an Xbox-style pad. Left stick moves the camera with WASD, the right stick moves the cursor, A and RT left-click, LT right-click, B is Escape. Q and E rotate the camera. Start pauses. Hold LB for a radial menu of Pause, rotation and Close. This is a starting point: check the bindings against the game's own keys."
+made_with = "Xbox controller"
+
+[[rules]]
+kind = "executable"
+value = "Against the Storm.exe"
+profile = "Against the Storm"
+
+[[profiles]]
+name = "Against the Storm"
+combos = []
+combo_window_ms = 120
+tap_window_ms = 250
+long_press_ms = 500
+
+[profiles.buttons]
+
+[profiles.buttons.Guide]
+layer = "Guide"
+
+[profiles.buttons.South]
+mouse = "Left"
+
+[profiles.buttons.East]
+keys = ["KEY_ESC"]
+
+[profiles.buttons.Start]
+keys = ["KEY_SPACE"]
+
+[profiles.buttons.LeftBumper]
+open_menu = "Tools"
+
+[profiles.left_stick]
+deadzone = 0.12
+curve = 1.0
+key_threshold = 0.3
+
+[profiles.left_stick.action.keys]
+up = "KEY_W"
+down = "KEY_S"
+left = "KEY_A"
+right = "KEY_D"
+
+[profiles.right_stick]
+deadzone = 0.15
+curve = 1.6
+
+[profiles.right_stick.action.mouse]
+speed = 1400.0
+
+[profiles.left_trigger.action.button]
+threshold = 0.4
+
+[profiles.left_trigger.action.button.action]
+mouse = "Right"
+
+[profiles.right_trigger.action.button]
+threshold = 0.3
+
+[profiles.right_trigger.action.button.action]
+mouse = "Left"
+
+[profiles.gyro]
+mode = "off"
+horizontal = "yaw"
+invert_x = false
+invert_y = false
+activation = "always"
+noise_threshold = 1.0
+
+[[menus]]
+name = "Tools"
+
+[menus.kind.radial]
+stick = "Right"
+
+[[menus.items]]
+label = "Pause"
+weight = 1.5
+
+[menus.items.action]
+keys = ["KEY_SPACE"]
+
+[[menus.items]]
+label = "Rotate left"
+weight = 1.0
+
+[menus.items.action]
+keys = ["KEY_Q"]
+
+[[menus.items]]
+label = "Rotate right"
+weight = 1.0
+
+[menus.items.action]
+keys = ["KEY_E"]
+
+[[menus.items]]
+label = "Close"
+weight = 1.0
+
+[menus.items.action]
+keys = ["KEY_ESC"]
+
+[menus.style]
+position = "center"
+scale = 1.0
+corners = 0.2
+
+[menus.style.background]
+color = "#14101c"
+opacity = 0.92
+
+[menus.style.items]
+color = "#2b2339"
+opacity = 0.95
+
+[menus.style.selected]
+color = "#9a6fd6"
+opacity = 1.0
+
+[[layers]]
+name = "Guide"
+indicator = "bindings"
+indicator_title = "Hold {guide} and press"
+indicator_delay_ms = 250
+swallow_unbound = true
+
+[layers.indicator_style]
+position = "bottom_left"
+scale = 0.8
+
+[layers.indicator_style.background]
+color = "#111a14"
+opacity = 0.85
+
+
+[menu_sounds]
+enabled = true
+step = { kind = "click", volume = 0.12, pitch = 0.7 }
+pick = { kind = "chime", volume = 0.35, pitch = 0.6 }

@@ -389,6 +389,7 @@ label = "Sniper rifles"
 keys = ["KEY_6"]
 
 [menus.style]
+corners = 0.2
 position = "center"
 scale = 1.0
 
@@ -542,6 +543,7 @@ threshold = 0.3
 mouse = "Left"
 
 [keyboard_style]
+corners = 0.2
 position = "bottom_center"
 scale = 1.0
 
@@ -558,6 +560,7 @@ color = "#d69a3c"
 opacity = 1.0
 
 [numpad_style]
+corners = 0.2
 position = "bottom_center"
 scale = 1.0
 
@@ -574,6 +577,7 @@ color = "#d69a3c"
 opacity = 1.0
 
 [media_style]
+corners = 0.2
 position = "top_center"
 scale = 1.0
 
@@ -590,6 +594,7 @@ color = "#d69a3c"
 opacity = 1.0
 
 [menu_style]
+corners = 0.2
 position = "center"
 scale = 1.0
 
@@ -604,3 +609,8 @@ opacity = 0.95
 [menu_style.selected]
 color = "#d69a3c"
 opacity = 1.0
+
+[menu_sounds]
+enabled = true
+step = { kind = "click", volume = 0.1, pitch = 0.6 }
+pick = { kind = "thud", volume = 0.3, pitch = 0.9 }

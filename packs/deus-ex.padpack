@@ -452,6 +452,7 @@ label = "Belt 0"
 keys = ["KEY_0"]
 
 [menus.style]
+corners = 0.1
 position = "center"
 scale = 1.0
 
@@ -534,6 +535,7 @@ label = "Aug F12"
 keys = ["KEY_F12"]
 
 [menus.style]
+corners = 0.1
 position = "center"
 scale = 1.0
 
@@ -687,6 +689,7 @@ threshold = 0.3
 mouse = "Left"
 
 [keyboard_style]
+corners = 0.1
 position = "bottom_center"
 scale = 1.0
 
@@ -703,6 +706,7 @@ color = "#3d8bff"
 opacity = 1.0
 
 [numpad_style]
+corners = 0.1
 position = "bottom_right"
 scale = 1.0
 
@@ -719,6 +723,7 @@ color = "#3d8bff"
 opacity = 1.0
 
 [media_style]
+corners = 0.1
 position = "top_center"
 scale = 1.0
 
@@ -735,6 +740,7 @@ color = "#3d8bff"
 opacity = 1.0
 
 [menu_style]
+corners = 0.1
 position = "center"
 scale = 1.0
 
@@ -749,3 +755,8 @@ opacity = 0.95
 [menu_style.selected]
 color = "#3d8bff"
 opacity = 1.0
+
+[menu_sounds]
+enabled = true
+step = { kind = "click", volume = 0.12, pitch = 0.8 }
+pick = { kind = "crunch", volume = 0.3, pitch = 1.0 }
