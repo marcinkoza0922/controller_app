@@ -11,7 +11,7 @@ use std::{
 use anyhow::{Context, Result};
 use serde_json::Value;
 
-use super::{Notify, Reported, report};
+use super::{FocusEvent, Notify, Reported, report};
 
 pub struct Hyprland {
     events: UnixStream,
@@ -55,8 +55,10 @@ impl Hyprland {
     /// Reports the focused window now and on every change, until the connection ends.
     pub fn follow(self, notify: &Notify) -> Result<()> {
         let report_active = || {
-            if let Some(window) = query(&self.dir, "j/activewindow").ok().and_then(|json| active_window(&json)) {
-                report(notify, window);
+            let Ok(json) = query(&self.dir, "j/activewindow") else { return };
+            match active_window(&json) {
+                Some(window) => report(notify, window),
+                None => notify(FocusEvent::Unfocused),
             }
         };
         report_active();
@@ -69,7 +71,8 @@ impl Hyprland {
     }
 }
 
-/// The reply to `j/activewindow`: `{}` when nothing has focus.
+/// The reply to `j/activewindow`: `{}` when nothing has focus (`None` for that and for a reply
+/// it can't read).
 fn active_window(json: &str) -> Option<Reported> {
     let json: Value = serde_json::from_str(json).ok()?;
     let pid = u32::try_from(json["pid"].as_u64()?).ok()?;

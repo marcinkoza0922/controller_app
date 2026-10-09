@@ -116,6 +116,8 @@ pub enum FocusBackend {
     Sway,
     /// Hyprland's event socket reports focus changes.
     Hyprland,
+    /// The compositor's `wlr-foreign-toplevel-management` reports focus changes (labwc, Wayfire, river, and others).
+    Wlroots,
     /// No focus information: rules match against running processes instead.
     #[default]
     ProcessScan,
@@ -129,6 +131,7 @@ impl FocusBackend {
             Self::GnomeShell => Some("GNOME Shell"),
             Self::Sway => Some("Sway"),
             Self::Hyprland => Some("Hyprland"),
+            Self::Wlroots => Some("wlroots"),
             Self::ProcessScan => None,
         }
     }

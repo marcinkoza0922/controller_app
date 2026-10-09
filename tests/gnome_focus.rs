@@ -77,6 +77,15 @@ fn gnome_extension_is_installed_enabled_and_reported() {
         &("firefox", "1234", "A window"),
     )
     .expect("the daemon's WindowActivated method");
+    // And when nothing has focus, which is the extension's other call.
+    conn.call_method(
+        Some("io.github.marcinkoza0922.Padwight"),
+        "/Focus",
+        Some("io.github.marcinkoza0922.Padwight.Focus"),
+        "FocusCleared",
+        &(),
+    )
+    .expect("the daemon's FocusCleared method");
 
     drop(daemon);
     assert_log_clean(&root);

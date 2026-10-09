@@ -21,6 +21,11 @@ impl FocusService {
         let pid = pid.parse().unwrap_or(0);
         (self.notify)(FocusEvent::Focused(identify(class, title, pid)));
     }
+
+    /// Nothing has focus, such as the desktop.
+    fn focus_cleared(&self) {
+        (self.notify)(FocusEvent::Unfocused);
+    }
 }
 
 pub fn serve(notify: Notify) -> Result<Connection> {

@@ -23,8 +23,12 @@ export default class PadwightFocus extends Extension {
 
     _report() {
         const win = global.display.focus_window;
-        if (!win)
+        if (!win) {
+            // Nothing has focus, such as the desktop.
+            Gio.DBus.session.call(BUS_NAME, OBJECT_PATH, INTERFACE, 'FocusCleared', new GLib.Variant('()', []),
+                null, Gio.DBusCallFlags.NONE, -1, null, null);
             return;
+        }
         // Everything is sent as a string, as the daemon expects (see focus/dbus.rs).
         const args = GLib.Variant.new_tuple([
             GLib.Variant.new_string(win.get_wm_class() ?? ''),

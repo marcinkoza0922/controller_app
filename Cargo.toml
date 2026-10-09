@@ -19,6 +19,10 @@ serde_json = "1.0.151"
 tokio = { version = "1.53.2", features = ["io-util", "net", "rt", "time"] }
 toml = "1.1.6"
 zbus = "5"
+# wlroots focus tracking (focus/wlroots.rs). Both are already in the lock file through
+# iced_layershell, so the vendored Flatpak sources don't change.
+wayland-client = "0.31"
+wayland-protocols-wlr = "0.3"
 # StatusNotifierItem tray icon.
 ksni = { version = "0.3.6", features = ["blocking"] }
 # iced_layershell's devtools (iced_exdevtools 0.19.1) don't build against winit-core
