@@ -10,6 +10,7 @@ use super::{Colors, colors, info_cell, panel_style};
 use crate::{
     info::Segment,
     inputlog::{LogCell, LogView},
+    motion::Anim,
 };
 
 /// How bright a let-go input is next to a held one.
@@ -17,17 +18,18 @@ const RELEASED: f32 = 0.55;
 /// Labels longer than this are cut short, so one long macro name doesn't stretch the line.
 const LABEL_CHARS: usize = 22;
 
-pub fn log_panel<'a, M: 'a>(v: &LogView, font: Font) -> Element<'a, M> {
+pub fn log_panel<'a, M: 'a>(v: &LogView, font: Font, anim: &Anim) -> Element<'a, M> {
     if v.lines.is_empty() {
         return space().into();
     }
-    let c = colors(&v.style, font).faded(v.opacity);
+    let opacity = v.opacity * anim.opacity();
+    let c = colors(&v.style, font).faded(opacity);
     let s = v.style.scale.clamp(0.5, 2.0);
     let mut lines = column![].spacing(8.0 * s);
     for line in &v.lines {
         let mut cells = row![].spacing(12.0 * s).align_y(Alignment::Start);
         for cell in &line.cells {
-            cells = cells.push(log_cell(cell, c.faded(line.opacity), s, v, v.opacity * line.opacity));
+            cells = cells.push(log_cell(cell, c.faded(line.opacity), s, v, opacity * line.opacity));
         }
         lines = lines.push(cells);
     }

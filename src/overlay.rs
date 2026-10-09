@@ -73,15 +73,9 @@ pub struct OverlayFrame {
     /// Whether menus draw their button glyphs in the Nintendo layout.
     #[serde(default)]
     pub nintendo_layout: bool,
-    /// How menus move as they open and as the cursor goes from item to item.
+    /// How each kind of overlay moves as it opens, closes, and as the cursor and picks move.
     #[serde(default)]
-    pub motion: crate::config::MenuMotion,
-}
-
-impl OverlayFrame {
-    pub fn is_empty(&self) -> bool {
-        self.info.is_empty() && self.logs.is_empty() && self.active.is_none()
-    }
+    pub motion: crate::motion::MotionSet,
 }
 
 /// The on-screen keyboard's (or numpad's) state.
@@ -99,6 +93,51 @@ pub struct KeyboardView {
     pub pressed: Option<String>,
     /// 0..1 while East is being held to close.
     pub closing: f32,
+}
+
+/// Where a key sits in its layout, counting every slot in reading order: the number the motion
+/// tracking and the drawing both use for the cursor and the pressed key.
+fn key_index(layout: Layout, code: &str) -> Option<u32> {
+    layout.rows().iter().flat_map(|keys| keys.iter()).position(|key| key.code == code).map(|i| i as u32)
+}
+
+impl crate::motion::Tracked for OverlayView {
+    fn key(&self) -> String {
+        match self {
+            OverlayView::Keyboard(k) => if k.layout == Layout::Numpad { "numpad" } else { "keyboard" }.into(),
+            OverlayView::Menu(m) => format!("{}\u{0}{}", m.crumbs.join(" › "), m.title),
+            OverlayView::Media(_) => "media".into(),
+            OverlayView::Offer(_) => "offer".into(),
+        }
+    }
+
+    fn kind(&self) -> crate::motion::OverlayKind {
+        use crate::motion::OverlayKind;
+        match self {
+            OverlayView::Keyboard(k) if k.layout == Layout::Numpad => OverlayKind::Numpad,
+            OverlayView::Keyboard(_) => OverlayKind::Keyboard,
+            OverlayView::Menu(_) => OverlayKind::Menu,
+            OverlayView::Media(_) => OverlayKind::Media,
+            OverlayView::Offer(_) => OverlayKind::Offer,
+        }
+    }
+
+    fn cursor(&self) -> Option<u32> {
+        match self {
+            OverlayView::Keyboard(k) => key_index(k.layout, keyboard::key_at(k.layout, k.cursor).code),
+            OverlayView::Menu(m) => m.selected.map(|i| i as u32),
+            OverlayView::Offer(o) => (!o.choices.is_empty()).then_some(o.selected as u32),
+            OverlayView::Media(_) => None,
+        }
+    }
+
+    fn pick(&self) -> Option<u32> {
+        match self {
+            OverlayView::Keyboard(k) => k.pressed.as_deref().and_then(|code| key_index(k.layout, code)),
+            OverlayView::Menu(m) => (m.picks > 0).then_some(m.picks),
+            OverlayView::Offer(_) | OverlayView::Media(_) => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -396,7 +435,13 @@ mod ui {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     use super::{OverlayFrame, OverlayView, draw};
-    use crate::ipc::{self, Request};
+    use crate::{
+        config::ScreenPosition,
+        info::InfoView,
+        inputlog::LogView,
+        ipc::{self, Request},
+        motion::{Anim, Presence},
+    };
 
     #[to_layer_message]
     #[derive(Debug, Clone)]
@@ -408,37 +453,38 @@ mod ui {
         Tick,
     }
 
+    /// What is on screen, and what is fading out, each with its own timing.
     struct Overlay {
         frame: OverlayFrame,
-        /// The menu on screen and when it opened and last moved, for its motion.
-        track: Option<MenuTrack>,
+        panels: Presence<OverlayView>,
+        info: Presence<InfoView>,
+        logs: Presence<LogView>,
     }
 
-    struct MenuTrack {
-        key: String,
-        opened: Instant,
-        selected: Option<usize>,
-        from: Option<usize>,
-        moved: Instant,
-    }
+    impl Overlay {
+        fn new() -> Self {
+            Overlay { frame: OverlayFrame::default(), panels: Presence::single(), info: Presence::default(), logs: Presence::default() }
+        }
 
-    /// Carries the menu's timing over from the last frame: a new menu starts over, and the
-    /// cursor moving to another item starts a slide from the one it left.
-    fn track_menu(prev: Option<MenuTrack>, frame: &OverlayFrame, now: Instant) -> Option<MenuTrack> {
-        let Some(OverlayView::Menu(m)) = &frame.active else { return None };
-        let key = format!("{}\u{0}{}", m.crumbs.join(" › "), m.title);
-        match prev {
-            Some(t) if t.key == key && t.selected != m.selected => {
-                Some(MenuTrack { selected: m.selected, from: t.selected, moved: now, ..t })
-            }
-            Some(t) if t.key == key => Some(t),
-            _ => Some(MenuTrack { key, opened: now, selected: m.selected, from: None, moved: now }),
+        /// Whether anything is drawn: something shown, or something still fading out.
+        fn shown(&self) -> bool {
+            !self.panels.is_empty() || !self.info.is_empty() || !self.logs.is_empty()
+        }
+
+        /// Whether something is still moving at `now`, so the screen needs redrawing.
+        fn busy(&self, now: Instant) -> bool {
+            let motion = &self.frame.motion;
+            self.panels.busy(now, motion) || self.info.busy(now, motion) || self.logs.busy(now, motion)
+        }
+
+        /// Drops what has finished closing.
+        fn prune(&mut self, now: Instant) {
+            let motion = &self.frame.motion;
+            self.panels.prune(now, motion);
+            self.info.prune(now, motion);
+            self.logs.prune(now, motion);
         }
     }
-
-    /// How long after a menu opens, or its cursor moves, it is still animating.
-    const ANIMATING_OPEN: Duration = Duration::from_millis(800);
-    const ANIMATING_MOVE: Duration = Duration::from_millis(300);
 
     /// Idle: a 1×1 invisible surface in a corner. Showing: the whole screen, transparent
     /// except for what is drawn, with clicks passing through.
@@ -477,7 +523,7 @@ mod ui {
     }
 
     fn boot() -> (Overlay, Task<Message>) {
-        (Overlay { frame: OverlayFrame::default(), track: None }, Task::none())
+        (Overlay::new(), Task::none())
     }
 
     fn namespace() -> String {
@@ -487,15 +533,19 @@ mod ui {
     fn update(state: &mut Overlay, message: Message) -> Task<Message> {
         match message {
             Message::State(frame) => {
-                let was_shown = !state.frame.is_empty();
-                state.track = track_menu(state.track.take(), &frame, Instant::now());
+                let now = Instant::now();
+                let was_shown = state.shown();
+                state.panels.update(now, frame.active.iter().cloned().collect());
+                state.info.update(now, frame.info.clone());
+                state.logs.update(now, frame.logs.clone());
                 state.frame = frame;
-                let (anchor, size) = match (was_shown, !state.frame.is_empty()) {
-                    (false, true) => full_screen(),
-                    (true, false) => idle(),
-                    _ => return Task::none(),
-                };
-                return Task::done(Message::AnchorSizeChange(anchor, size));
+                state.prune(now);
+                return resize(was_shown, state.shown());
+            }
+            Message::Tick => {
+                let was_shown = state.shown();
+                state.prune(Instant::now());
+                return resize(was_shown, state.shown());
             }
             Message::Disconnected => return iced::exit(),
             _ => {}
@@ -503,19 +553,24 @@ mod ui {
         Task::none()
     }
 
+    /// Goes to the whole screen when something starts to show, and back to the corner once
+    /// nothing is left to draw.
+    fn resize(was_shown: bool, shown: bool) -> Task<Message> {
+        let (anchor, size) = match (was_shown, shown) {
+            (false, true) => full_screen(),
+            (true, false) => idle(),
+            _ => return Task::none(),
+        };
+        Task::done(Message::AnchorSizeChange(anchor, size))
+    }
+
     fn subscription(state: &Overlay) -> Subscription<Message> {
         let watch = Subscription::run(watch);
-        if animating(state, Instant::now()) {
+        if state.busy(Instant::now()) {
             Subscription::batch([watch, iced::time::every(Duration::from_millis(16)).map(|_| Message::Tick)])
         } else {
             watch
         }
-    }
-
-    /// Whether a menu is mid-motion at `now`, so the screen needs redrawing.
-    fn animating(state: &Overlay, now: Instant) -> bool {
-        state.frame.motion != crate::config::MenuMotion::Off
-            && state.track.as_ref().is_some_and(|t| now.duration_since(t.opened) < ANIMATING_OPEN || now.duration_since(t.moved) < ANIMATING_MOVE)
     }
 
     fn watch() -> impl iced::futures::Stream<Item = Message> {
@@ -539,42 +594,42 @@ mod ui {
     }
 
     fn view(state: &Overlay) -> Element<'_, Message> {
-        if state.frame.is_empty() {
+        if !state.shown() {
             return space().into();
         }
+        let now = Instant::now();
+        let motion = &state.frame.motion;
         let font = crate::font::resolve(state.frame.font.as_deref());
         // Info and log overlays sharing a spot stack up there; the keyboard or a menu goes on top.
         let mut layers: Vec<Element<'_, Message>> = Vec::new();
-        for spot in crate::config::ScreenPosition::GRID {
-            let info = state.frame.info.iter().filter(|v| v.style.position == spot);
-            let logs = state.frame.logs.iter().filter(|v| v.style.position == spot);
-            let style = info.clone().map(|v| &v.style).chain(logs.clone().map(|v| &v.style)).next();
+        for spot in ScreenPosition::GRID {
+            let infos: Vec<_> = state.info.shown(now, motion).filter(|(v, _)| v.style.position == spot).collect();
+            let logs: Vec<_> = state.logs.shown(now, motion).filter(|(v, _)| v.style.position == spot).collect();
+            let style = infos.first().map(|(v, _)| &v.style).or_else(|| logs.first().map(|(v, _)| &v.style));
             if let Some(style) = style {
-                let panels = info.map(|v| draw::info_panel(v, font)).chain(logs.map(|v| draw::log_panel(v, font)));
-                layers.push(draw::place(column(panels).spacing(12).into(), style));
+                let panels = infos
+                    .iter()
+                    .map(|(v, anim)| draw::info_panel(v, font, anim))
+                    .chain(logs.iter().map(|(v, anim)| draw::log_panel(v, font, anim)))
+                    .collect::<Vec<Element<'_, Message>>>();
+                layers.push(draw::place(column(panels).spacing(12).into(), style, &Anim::still()));
             }
         }
-        match &state.frame.active {
-            Some(OverlayView::Keyboard(k)) => layers.push(draw::place(draw::keyboard_panel(k, font), &k.style)),
-            Some(OverlayView::Menu(m)) => {
-                let now = Instant::now();
-                let anim = state.track.as_ref().map_or_else(draw::MenuAnim::default, |t| draw::MenuAnim {
-                    motion: state.frame.motion,
-                    since_open: now.duration_since(t.opened).as_secs_f32(),
-                    since_move: now.duration_since(t.moved).as_secs_f32(),
-                    from: t.from,
-                });
-                let look = draw::MenuLook {
-                    colourblind: state.frame.colourblind,
-                    family: state.frame.family,
-                    nintendo_layout: state.frame.nintendo_layout,
-                    anim,
-                };
-                layers.push(draw::place(draw::menu_panel(m, font, look), &m.style));
-            }
-            Some(OverlayView::Media(m)) => layers.push(draw::place(draw::media_panel(m, font), &m.style)),
-            Some(OverlayView::Offer(o)) => layers.push(draw::place(draw::offer_panel(o, font), &o.style)),
-            None => {}
+        for (view, anim) in state.panels.shown(now, motion) {
+            layers.push(match view {
+                OverlayView::Keyboard(k) => draw::place(draw::keyboard_panel(k, font, &anim), &k.style, &anim),
+                OverlayView::Menu(m) => {
+                    let look = draw::MenuLook {
+                        colourblind: state.frame.colourblind,
+                        family: state.frame.family,
+                        nintendo_layout: state.frame.nintendo_layout,
+                        anim,
+                    };
+                    draw::place(draw::menu_panel(m, font, look), &m.style, &anim)
+                }
+                OverlayView::Media(m) => draw::place(draw::media_panel(m, font, &anim), &m.style, &anim),
+                OverlayView::Offer(o) => draw::place(draw::offer_panel(o, font, &anim), &o.style, &anim),
+            });
         }
         stack(layers).into()
     }
@@ -582,51 +637,43 @@ mod ui {
     #[cfg(test)]
     mod motion_tests {
         use super::*;
-        use crate::menu::MenuView;
+        use crate::{config::MenuKind, menu::MenuView, motion::MotionStyle};
 
-        fn menu(title: &str, selected: Option<usize>) -> OverlayFrame {
+        fn menu_frame(motion: MotionStyle) -> OverlayFrame {
             let view = MenuView {
-                title: title.into(),
-                kind: crate::config::MenuKind::List,
+                title: "Belt".into(),
+                kind: MenuKind::List,
                 items: Vec::new(),
-                selected,
+                selected: Some(0),
+                picks: 0,
                 crumbs: Vec::new(),
                 hint: String::new(),
                 style: Default::default(),
             };
-            OverlayFrame { active: Some(OverlayView::Menu(view)), motion: crate::config::MenuMotion::Subtle, ..Default::default() }
+            OverlayFrame {
+                active: Some(OverlayView::Menu(view)),
+                motion: crate::motion::MotionSet { menu: motion, ..Default::default() },
+                ..Default::default()
+            }
         }
 
         #[test]
-        fn a_new_menu_starts_its_timing_over() {
-            let t0 = Instant::now();
-            let first = track_menu(None, &menu("Belt", Some(0)), t0).unwrap();
-            assert_eq!((first.from, first.selected), (None, Some(0)));
-            let other = track_menu(Some(first), &menu("Weapons", Some(0)), t0 + Duration::from_secs(1)).unwrap();
-            assert_eq!(other.key, track_menu(None, &menu("Weapons", Some(0)), t0).unwrap().key);
-            assert_eq!(other.opened, t0 + Duration::from_secs(1));
+        fn a_menu_that_closes_stays_up_for_its_close() {
+            let mut state = Overlay::new();
+            let _ = update(&mut state, Message::State(menu_frame(MotionStyle::Subtle)));
+            assert!(state.shown());
+            let _ = update(&mut state, Message::State(OverlayFrame { motion: menu_frame(MotionStyle::Subtle).motion, ..Default::default() }));
+            assert!(state.shown(), "fading out, so the surface stays up");
+            assert!(state.busy(Instant::now()));
         }
 
         #[test]
-        fn moving_the_cursor_slides_from_the_item_it_left() {
-            let t0 = Instant::now();
-            let at_two = track_menu(None, &menu("Belt", Some(2)), t0).unwrap();
-            let t1 = t0 + Duration::from_millis(500);
-            let moved = track_menu(Some(at_two), &menu("Belt", Some(3)), t1).unwrap();
-            assert_eq!((moved.from, moved.selected, moved.moved), (Some(2), Some(3), t1));
-            assert_eq!(moved.opened, t0, "opening time is kept while the menu is open");
-            let still = track_menu(Some(moved), &menu("Belt", Some(3)), t1 + Duration::from_millis(50)).unwrap();
-            assert_eq!(still.moved, t1, "no move, no new slide");
-        }
-
-        #[test]
-        fn animation_stops_shortly_after_the_menu_settles() {
-            let t0 = Instant::now();
-            let mut state = Overlay { frame: menu("Belt", Some(0)), track: track_menu(None, &menu("Belt", Some(0)), t0) };
-            assert!(animating(&state, t0 + Duration::from_millis(100)));
-            assert!(!animating(&state, t0 + Duration::from_secs(2)));
-            state.frame.motion = crate::config::MenuMotion::Off;
-            assert!(!animating(&state, t0 + Duration::from_millis(100)), "Off never animates");
+        fn with_motion_off_a_closed_menu_goes_at_once() {
+            let mut state = Overlay::new();
+            let _ = update(&mut state, Message::State(menu_frame(MotionStyle::Off)));
+            let closing = OverlayFrame { motion: menu_frame(MotionStyle::Off).motion, ..Default::default() };
+            let _ = update(&mut state, Message::State(closing));
+            assert!(!state.shown());
         }
     }
 }
@@ -644,7 +691,7 @@ pub mod draw {
     use radial::radial;
 
     use iced::{
-        Alignment, Border, Color, Element, Length, Shadow, Vector,
+        Alignment, Border, Color, Element, Length, Padding, Shadow, Vector,
         alignment::{Horizontal, Vertical},
         widget::{column, container, progress_bar, row, space, text},
     };
@@ -657,6 +704,7 @@ pub mod draw {
         keyboard, media,
         media::{MediaView, PlayState},
         menu::MenuView,
+        motion::Anim,
         offer::OfferView,
     };
 
@@ -665,45 +713,14 @@ pub mod draw {
     /// Distance from the screen edge for edge and corner positions.
     const EDGE_MARGIN: f32 = 40.0;
 
-    /// Resolved colors and font for one overlay.
     /// What a menu is drawn with besides its own style: the controller in use (for its button
-    /// glyphs) and the colour-blind tints.
+    /// glyphs), the colour-blind tints, and how the menu is moving.
     #[derive(Debug, Clone, Copy, PartialEq)]
     pub struct MenuLook {
         pub colourblind: bool,
         pub family: crate::info::PadFamily,
         pub nintendo_layout: bool,
-        pub anim: MenuAnim,
-    }
-
-    /// Where a menu is in its motion: how long ago it opened and the cursor last moved, and
-    /// which item the cursor came from.
-    #[derive(Debug, Clone, Copy, Default, PartialEq)]
-    pub struct MenuAnim {
-        pub motion: crate::config::MenuMotion,
-        pub since_open: f32,
-        pub since_move: f32,
-        pub from: Option<usize>,
-    }
-
-    /// How long a menu takes to fade in.
-    pub const OPEN_SECS: f32 = 0.18;
-    /// How long the highlight takes to slide to the next item, and for Playful's overshoot.
-    const GLIDE_SECS: f32 = 0.12;
-    const GLIDE_PLAYFUL_SECS: f32 = 0.25;
-    /// Stagger: each item starts this much after the one before it, and takes this long.
-    const STAGGER_STEP: f32 = 0.04;
-    const STAGGER_SECS: f32 = 0.2;
-
-    /// Starts fast and slows into place.
-    fn ease_out(t: f32) -> f32 {
-        1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3)
-    }
-
-    /// Like `ease_out`, but overshoots its end a little before settling.
-    fn ease_back(t: f32) -> f32 {
-        let x = t.clamp(0.0, 1.0) - 1.0;
-        1.0 + 2.701_58 * x * x * x + 1.701_58 * x * x
+        pub anim: Anim,
     }
 
     fn blend(a: Color, b: Color, t: f32) -> Color {
@@ -714,7 +731,7 @@ pub mod draw {
 
     #[derive(Clone, Copy)]
     pub struct Colors {
-        anim: MenuAnim,
+        anim: Anim,
         font: Font,
         /// The controller in use, for button glyphs.
         family: crate::info::PadFamily,
@@ -748,40 +765,19 @@ pub mod draw {
     }
 
     impl Colors {
-        /// How lit item `i` is, 0 to 1: the cursor's item, and the one it came from as it
-        /// slides away.
+        /// How lit item `i` is, 0 to 1: the cursor's item, and the one it came from as it slides away.
         pub fn lit(&self, m: &MenuView, i: usize) -> f32 {
-            use crate::config::MenuMotion;
-            if self.anim.motion == MenuMotion::Off {
-                return if m.selected == Some(i) { 1.0 } else { 0.0 };
-            }
-            let t = match self.anim.motion {
-                MenuMotion::Playful => ease_back(self.anim.since_move / GLIDE_PLAYFUL_SECS),
-                _ => ease_out(self.anim.since_move / GLIDE_SECS),
-            };
-            if m.selected == Some(i) {
-                t
-            } else if self.anim.from == Some(i) {
-                1.0 - t.clamp(0.0, 1.0)
-            } else {
-                0.0
-            }
+            self.anim.lit(m.selected == Some(i), self.anim.timing.from == Some(i as u32))
         }
 
-        /// The share of item `i` that has faded in so far (Stagger only; the rest are always in).
-        fn fade_of(&self, i: usize) -> f32 {
-            match self.anim.motion {
-                crate::config::MenuMotion::Stagger => ease_out((self.anim.since_open - i as f32 * STAGGER_STEP) / STAGGER_SECS),
-                _ => 1.0,
-            }
-        }
-
-        /// These colours for item `i`: its highlight blended in, and its stagger fade.
+        /// These colours for item `i`: its highlight blended in, its pick flashed, and its stagger fade.
         pub fn lit_item(&self, m: &MenuView, i: usize) -> Colors {
-            let (lit, fade) = (self.lit(m, i), self.fade_of(i));
+            let lit = self.lit(m, i);
+            let flash = if m.selected == Some(i) { self.anim.flash() } else { 0.0 };
+            let fade = self.anim.item_fade(i);
             let faded = |c: Color| Color { a: c.a * fade, ..c };
             Colors {
-                item: faded(blend(self.item, self.selected, lit)),
+                item: faded(blend(blend(self.item, self.selected, lit), Color::WHITE, flash * 0.5)),
                 item_text: faded(blend(self.item_text, self.selected_text, lit)),
                 ..*self
             }
@@ -814,7 +810,7 @@ pub mod draw {
         let selected = paint(&style.selected, [0x2f, 0x5d, 0xb0]);
         let background_text = text_on(background);
         Colors {
-            anim: MenuAnim::default(),
+            anim: Anim::still(),
             font,
             family: crate::info::PadFamily::default(),
         nintendo_layout: false,
@@ -830,19 +826,33 @@ pub mod draw {
         }
     }
 
-    /// Positions an overlay panel on the full-screen surface.
-    pub fn place<'a, M: 'a>(panel: Element<'a, M>, style: &OverlayStyle) -> Element<'a, M> {
+    /// Positions an overlay panel on the full-screen surface, moved by its animation.
+    pub fn place<'a, M: 'a>(panel: Element<'a, M>, style: &OverlayStyle, anim: &Anim) -> Element<'a, M> {
         let (col, row) = style.position.cell();
         let horizontal = [Horizontal::Left, Horizontal::Center, Horizontal::Right][col];
         let vertical = [Vertical::Top, Vertical::Center, Vertical::Bottom][row];
         let margin = if style.position == ScreenPosition::Center { 0.0 } else { EDGE_MARGIN };
+        let (x, y) = anim.offset();
+        let (left, right) = sides(margin, x, col);
+        let (top, bottom) = sides(margin, y, row);
         container(panel)
             .width(Length::Fill)
             .height(Length::Fill)
             .align_x(horizontal)
             .align_y(vertical)
-            .padding(margin)
+            .padding(Padding { top, right, bottom, left })
             .into()
+    }
+
+    /// The padding on the two sides of a panel, for a panel `shift` pixels off where it sits in
+    /// `slot` (0 start, 1 centre, 2 end) of a `margin` from the edge.
+    fn sides(margin: f32, shift: f32, slot: usize) -> (f32, f32) {
+        match slot {
+            0 => ((margin + shift).max(0.0), margin),
+            2 => (margin, (margin - shift).max(0.0)),
+            // A centred panel sits halfway between its two paddings.
+            _ => (margin + (2.0 * shift).max(0.0), margin + (-2.0 * shift).max(0.0)),
+        }
     }
 
     fn panel_style(c: Colors) -> impl Fn(&iced::Theme) -> container::Style {
@@ -898,8 +908,9 @@ pub mod draw {
     }
 
     /// An info overlay: its cells in a grid, columns as wide as their widest cell.
-    pub fn info_panel<'a, M: 'a>(v: &InfoView, font: Font) -> Element<'a, M> {
-        let c = colors(&v.style, font).faded(v.opacity);
+    pub fn info_panel<'a, M: 'a>(v: &InfoView, font: Font, anim: &Anim) -> Element<'a, M> {
+        let opacity = v.opacity * anim.opacity();
+        let c = colors(&v.style, font).faded(opacity);
         let s = v.style.scale.clamp(0.5, 2.0);
         let line = 30.0 * s;
         let columns = v.rows.iter().map(Vec::len).max().unwrap_or(0);
@@ -908,7 +919,7 @@ pub mod draw {
             let mut col = column![].spacing(4.0 * s);
             for r in &v.rows {
                 let cell: Element<'a, M> = match r.get(j) {
-                    Some(segments) => info_cell(segments, c, s, v.opacity),
+                    Some(segments) => info_cell(segments, c, s, opacity),
                     None => space().into(),
                 };
                 col = col.push(container(cell).height(line).align_y(Vertical::Center));
@@ -917,7 +928,7 @@ pub mod draw {
         }
         let body: Element<'a, M> = match &v.title {
             Some(title) => column![
-                container(info_cell(title, c, s, v.opacity)).padding([0.0, 0.0]).height(line).align_y(Vertical::Center),
+                container(info_cell(title, c, s, opacity)).padding([0.0, 0.0]).height(line).align_y(Vertical::Center),
                 grid,
             ]
             .spacing(8.0 * s)
@@ -1012,8 +1023,8 @@ pub mod draw {
     }
 
     #[expect(clippy::too_many_lines, reason = "predates the size lints")]
-    pub fn keyboard_panel<'a, M: 'a>(v: &KeyboardView, font: Font) -> Element<'a, M> {
-        let c = colors(&v.style, font);
+    pub fn keyboard_panel<'a, M: 'a>(v: &KeyboardView, font: Font, anim: &Anim) -> Element<'a, M> {
+        let c = colors(&v.style, font).faded(anim.opacity());
         let s = v.style.scale.clamp(0.5, 2.0);
         let numpad = v.layout == crate::keyboard::Layout::Numpad;
         // Numpad keys are fewer, so bigger.
@@ -1022,23 +1033,34 @@ pub mod draw {
         let cursor_code = keyboard::key_at(v.layout, v.cursor).code;
         let label_size = if numpad { 22.0 } else { 14.0 };
         let mut rows = column![].spacing(gap);
+        // Keys are numbered in reading order, as the motion tracking numbers them.
+        let mut slot = 0u32;
         for keys in v.layout.rows().iter() {
             let mut line = row![].spacing(gap);
             for key in keys.iter() {
+                let here = slot;
+                slot += 1;
                 let width = key.width * (unit + gap) - gap;
                 if key.code.is_empty() {
                     line = line.push(space().width(width).height(unit));
                     continue;
                 }
-                let selected = key.code == cursor_code || v.pressed.as_deref() == Some(key.code);
+                let cursor = key.code == cursor_code;
+                let pressed = v.pressed.as_deref() == Some(key.code);
+                let selected = cursor || pressed;
                 let latched = v.latched.iter().any(|l| l == key.code);
-                let (bg, fg, border) = if selected {
-                    (c.selected, c.selected_text, c.selected_text)
-                } else if latched {
+                // The cursor's key lights up and the one it left goes dark, sliding between them.
+                let lit = if pressed { 1.0 } else { anim.lit(cursor, anim.timing.from == Some(here)) };
+                let (bg, fg, border) = if latched && !selected {
                     let green = Color::from_rgb8(0x2e, 0x7d, 0x46);
                     (green, Color::WHITE, Color::from_rgb8(0x3f, 0xb9, 0x50))
                 } else {
-                    (c.item, c.item_text, Color { a: 0.12, ..c.item_text })
+                    let flash = if pressed { anim.flash() * 0.5 } else { 0.0 };
+                    (
+                        blend(blend(c.item, c.selected, lit), Color::WHITE, flash),
+                        blend(c.item_text, c.selected_text, lit),
+                        blend(Color { a: 0.12, ..c.item_text }, c.selected_text, lit),
+                    )
                 };
                 let round = c.corners * unit / 2.0;
                 let cap = container(text(key.label).font(c.font).size(if selected { label_size + 2.0 } else { label_size } * s).color(fg))
@@ -1212,8 +1234,8 @@ pub mod draw {
     }
 
     /// The media controls: what is playing, how far along, and the volume.
-    pub fn media_panel<'a, M: 'a>(m: &MediaView, font: Font) -> Element<'a, M> {
-        let c = colors(&m.style, font);
+    pub fn media_panel<'a, M: 'a>(m: &MediaView, font: Font, anim: &Anim) -> Element<'a, M> {
+        let c = colors(&m.style, font).faded(anim.opacity());
         let s = m.style.scale.clamp(0.5, 2.0);
         let width = 560.0 * s;
         let body: Element<'a, M> = match &m.player {
@@ -1260,20 +1282,24 @@ pub mod draw {
     }
 
     /// The offer to add a library game: the question and its answers, or the packs to pick from.
-    pub fn offer_panel<'a, M: 'a>(o: &OfferView, font: Font) -> Element<'a, M> {
-        let c = colors(&o.style, font);
+    pub fn offer_panel<'a, M: 'a>(o: &OfferView, font: Font, anim: &Anim) -> Element<'a, M> {
+        let c = colors(&o.style, font).faded(anim.opacity());
         let s = o.style.scale.clamp(0.5, 2.0);
-        let cell = |label: String, selected: bool| {
-            let fg = if selected { c.selected_text } else { c.item_text };
-            container(text(label).font(c.font).size(16.0 * s).color(fg))
+        let cell = |label: String, lit: Colors, selected: bool| {
+            container(text(label).font(c.font).size(16.0 * s).color(lit.item_text))
                 .padding([8.0 * s, 16.0 * s])
-                .style(cell_style(c, selected, 36.0 * s))
+                .style(lit_cell_style(lit, selected, 36.0 * s))
         };
         let body: Element<'a, M> = if o.choices.is_empty() {
-            let answers = o.answers.iter().map(|(button, what)| cell(format!("{button}  {what}"), false).into());
+            let answers = o.answers.iter().map(|(button, what)| cell(format!("{button}  {what}"), c, false).into());
             row(answers).spacing(10.0 * s).into()
         } else {
-            let items = o.choices.iter().enumerate().map(|(i, name)| cell(name.clone(), i == o.selected).width(Length::Fill).into());
+            let items = o.choices.iter().enumerate().map(|(i, name)| {
+                let selected = i == o.selected;
+                let lit = anim.lit(selected, anim.timing.from == Some(i as u32));
+                let tinted = Colors { item: blend(c.item, c.selected, lit), item_text: blend(c.item_text, c.selected_text, lit), ..c };
+                cell(name.clone(), tinted, selected).width(Length::Fill).into()
+            });
             column(items).spacing(6.0 * s).width(360.0 * s).into()
         };
         container(
@@ -1299,11 +1325,7 @@ pub mod draw {
             colourblind: look.colourblind,
             ..colors(&m.style, font)
         };
-        // A menu that fades in as a whole; Stagger fades its items instead.
-        let c = match look.anim.motion {
-            crate::config::MenuMotion::Subtle | crate::config::MenuMotion::Playful => c.faded(ease_out(look.anim.since_open / OPEN_SECS)),
-            _ => c,
-        };
+        let c = c.faded(look.anim.opacity());
         let s = m.style.scale.clamp(0.5, 2.0);
         let body: Element<'a, M> = match m.kind {
             MenuKind::Radial { .. } => radial(m, c, s),
@@ -1430,13 +1452,14 @@ pub mod draw {
         for offset in -(shown / 2)..=(shown - 1 - shown / 2) {
             let i = (selected as i32 + offset).rem_euclid(n as i32) as usize;
             let big = offset == 0;
-            let fg = if big { c.selected_text } else { c.item_text };
             let item = &m.items[i];
+            let lit = c.lit_item(m, i);
+            let height = if big { 80.0 } else { 60.0 } * s;
             line = line.push(
-                container(item_text(c, item, &item.label, if big { 19.0 } else { 14.0 } * s, fg))
+                container(item_text(lit, item, &item.label, if big { 19.0 } else { 14.0 } * s, lit.item_text))
                     .center_x(if big { 170.0 } else { 120.0 } * s)
-                    .center_y(if big { 80.0 } else { 60.0 } * s)
-                    .style(cell_style(c, big, if big { 80.0 } else { 60.0 } * s)),
+                    .center_y(height)
+                    .style(lit_cell_style(lit, big, height)),
             );
         }
         line.push(arrow("▶")).into()
@@ -1450,7 +1473,8 @@ mod tests {
     #[test]
     fn frames_from_an_older_daemon_still_load() {
         let frame: OverlayFrame = serde_json::from_str(r#"{"info":[],"active":null}"#).unwrap();
-        assert!(frame.logs.is_empty() && frame.is_empty());
+        assert!(frame.logs.is_empty() && frame.info.is_empty() && frame.active.is_none());
+        assert!(frame.motion.is_default(), "older frames have no motion, so the default");
     }
 
     fn at(c: &OverlayController) -> &'static str {

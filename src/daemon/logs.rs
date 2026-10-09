@@ -96,7 +96,7 @@ impl Daemon {
         let dev = self.devices.get(&self.last_active?)?;
         let glyphs = Glyphs { family: dev.family.unwrap_or(self.config.info_glyphs), nintendo_layout: self.config.active_nintendo_layout() };
         let view = inputlog::log_view(dev.log.entries(), &feed_settings(), &OverlayStyle::default(), glyphs, now);
-        Some(LogView { opacity: 1.0, ..view })
+        Some(LogView { name: "feed".into(), opacity: 1.0, ..view })
     }
 
     /// Adds a watcher of the feed, sending it the current one first.
@@ -158,7 +158,7 @@ impl Daemon {
                     redraw = redraw.into_iter().chain(due).min();
                 }
                 let glyphs = Glyphs { family, nintendo_layout: swapped };
-                LogView { opacity: *opacity, ..inputlog::log_view(&entries, s, &o.style, glyphs, now) }
+                LogView { name: o.name.clone(), opacity: *opacity, ..inputlog::log_view(&entries, s, &o.style, glyphs, now) }
             })
             .filter(|v| !v.lines.is_empty())
             .collect();

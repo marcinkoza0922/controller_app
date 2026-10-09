@@ -1,4 +1,4 @@
-format = 10
+format = 11
 macros = []
 overlay_font = "Rajdhani"
 
@@ -632,7 +632,7 @@ opacity = 1.0
 name = "Guide"
 indicator = "bindings"
 indicator_title = "Hold {guide} and press"
-indicator_delay_ms = 250
+indicator_delay_ms = 100
 swallow_unbound = true
 
 [layers.buttons]
@@ -761,3 +761,12 @@ opacity = 1.0
 enabled = true
 step = { kind = "click", volume = 0.12, pitch = 0.8 }
 pick = { kind = "crunch", volume = 0.3, pitch = 1.0 }
+
+[motion]
+keyboard = "subtle"
+numpad = "subtle"
+menu = "subtle"
+media = "subtle"
+offer = "subtle"
+info = "subtle"
+log = "subtle"

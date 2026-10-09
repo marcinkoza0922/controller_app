@@ -5,7 +5,11 @@ use std::fmt;
 use iced::widget::{checkbox, column};
 
 use super::*;
-use crate::{keyboard::Layout, overlay::KeyboardView};
+use crate::{
+    keyboard::Layout,
+    motion::{MotionSet, MotionStyle, OverlayKind},
+    overlay::KeyboardView,
+};
 
 /// An entry in a font dropdown: nothing chosen (whatever applies instead), or a family.
 #[derive(Debug, Clone, PartialEq)]
@@ -91,17 +95,12 @@ impl App {
         )
     }
 
-    /// How menus move: none, or one of the motions in `Motion`.
+    /// How each kind of overlay moves, for every setup that doesn't set its own.
     pub(super) fn view_motion_card(&self) -> Element<'_, Message> {
         section(
-            "Menu motion",
-            Some("A little movement when a menu opens and as the highlight moves. Off by default. Subtle fades menus in and slides the highlight; Playful adds an overshoot; Stagger fades items in one after another.".into()),
-            vec![
-                labeled(
-                    "Motion",
-                    dropdown(MenuMotion::ALL, Some(self.config.motion), Message::SetMotion).width(160).into(),
-                ),
-            ],
+            "Overlay motion",
+            Some(format!("How overlays move as they open and close, as the cursor moves and as something is picked. Each kind of overlay has its own style, and a setup can set its own on its Details tab. {}", motion_guide())),
+            motion_rows(self.config.motion, Message::SetMotion),
         )
     }
 
@@ -152,7 +151,7 @@ impl App {
                 game.media_style.as_ref(),
                 &self.config.media_style,
                 Message::SetGameMediaStyle,
-                move |style| preview(crate::overlay::draw::media_panel(&crate::media::MediaView::sample(preview_style(style)), font)),
+                move |style| preview(crate::overlay::draw::media_panel(&crate::media::MediaView::sample(preview_style(style)), font, &crate::motion::Anim::still())),
             ),
             game_overlay_card(
                 "In-game menu",
@@ -210,7 +209,27 @@ fn keyboard_preview(layout: Layout, style: &OverlayStyle, font: iced::Font) -> E
         pressed: None,
         closing: 0.0,
     };
-    preview(crate::overlay::draw::keyboard_panel(&sample, font))
+    preview(crate::overlay::draw::keyboard_panel(&sample, font, &crate::motion::Anim::still()))
+}
+
+/// What each motion style is like, for the settings to explain them.
+pub(super) fn motion_guide() -> String {
+    MotionStyle::ALL.iter().map(|style| format!("{style}: {}", style.describe())).collect::<Vec<_>>().join(" ")
+}
+
+/// One row per kind of overlay, each with a dropdown for its style. `change` makes the message
+/// for a new style, so the same rows serve the global set and a setup's own.
+pub(super) fn motion_rows<'a>(set: MotionSet, change: fn(OverlayKind, MotionStyle) -> Message) -> Vec<Element<'a, Message>> {
+    OverlayKind::ALL
+        .into_iter()
+        .map(|kind| {
+            let style = set.get(kind);
+            labeled(
+                kind.label(),
+                dropdown(MotionStyle::ALL, Some(style), move |style| change(kind, style)).width(160).into(),
+            )
+        })
+        .collect()
 }
 
 #[cfg(test)]

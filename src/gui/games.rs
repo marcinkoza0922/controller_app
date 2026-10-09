@@ -3,6 +3,7 @@
 use iced::widget::{column, row};
 
 use super::*;
+use super::overlays::{motion_guide, motion_rows};
 
 /// "from <pack> 1.2 by <author>" for a game made from a pack.
 pub(super) fn origin_note(game: &Game) -> Option<String> {
@@ -153,7 +154,13 @@ impl App {
             Message::SetKeyboardStyle(style) => self.config.keyboard_style = style,
             Message::SetOverlayFont(font) => self.config.overlay_font = font,
             Message::SetColourblindTones(on) => self.config.colourblind_tones = on,
-            Message::SetMotion(motion) => self.config.motion = motion,
+            Message::SetMotion(kind, style) => self.config.motion.set(kind, style),
+            Message::SetGameMotion(kind, style) => {
+                let mut set = self.game().motion.unwrap_or(self.config.motion);
+                set.set(kind, style);
+                self.game_mut().motion = Some(set);
+            }
+            Message::ClearGameMotion => self.game_mut().motion = None,
             Message::SetGameOverlayFont(font) => self.game_mut().overlay_font = font,
             Message::SetGameOverlayStyle(layout, style) => self.set_game_overlay_style(layout, style),
             Message::SetGameMediaStyle(style) => self.game_mut().media_style = style,
@@ -418,6 +425,21 @@ impl App {
         section(
             "Menu sounds",
             Some("A faint tick as the cursor moves, and a sound when an item is chosen. Each setup has its own.".into()),
+            rows,
+        )
+    }
+
+    /// The setup's own overlay motion: each kind of overlay, starting from the global set until
+    /// one is changed.
+    fn view_game_motion(&self) -> Element<'_, Message> {
+        let own = self.game().motion;
+        let mut rows = motion_rows(own.unwrap_or(self.config.motion), Message::SetGameMotion);
+        if own.is_some() {
+            rows.push(button(text("Use the global motion").size(13)).style(style::secondary).on_press(Message::ClearGameMotion).into());
+        }
+        section(
+            "Overlay motion",
+            Some(format!("How this setup's overlays move, while it is active. Each kind of overlay has its own style; any this setup doesn't set use the global motion from Settings. {}", motion_guide())),
             rows,
         )
     }
@@ -719,6 +741,7 @@ impl App {
             self.view_game_overlays(),
             self.view_game_nintendo_layout(),
             self.view_menu_sounds(),
+            self.view_game_motion(),
             section("Pack", None, pack_rows),
         ]
         .spacing(16)
@@ -750,7 +773,7 @@ impl App {
                 pressed: None,
                 closing: 0.0,
             };
-            rows.push(preview(crate::overlay::draw::keyboard_panel(&sample, self.preview_font())));
+            rows.push(preview(crate::overlay::draw::keyboard_panel(&sample, self.preview_font(), &crate::motion::Anim::still())));
         }
         section(
             "On-screen keyboard",
@@ -770,7 +793,7 @@ impl App {
             let style = &self.config.media_style;
             rows.push(style_editor(style, Rc::new(Message::SetMediaStyle)));
             let sample = crate::media::MediaView::sample(preview_style(style));
-            rows.push(preview(crate::overlay::draw::media_panel(&sample, self.preview_font())));
+            rows.push(preview(crate::overlay::draw::media_panel(&sample, self.preview_font(), &crate::motion::Anim::still())));
         }
         section(
             "Media controls",
@@ -826,7 +849,7 @@ impl App {
                 pressed: None,
                 closing: 0.0,
             };
-            rows.push(preview(crate::overlay::draw::keyboard_panel(&sample, self.preview_font())));
+            rows.push(preview(crate::overlay::draw::keyboard_panel(&sample, self.preview_font(), &crate::motion::Anim::still())));
         }
         section(
             "On-screen numpad",

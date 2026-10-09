@@ -12,7 +12,7 @@ For users:
 
 - **Manual**: a plain-language guide, shown on the Manual page of the settings window. Its source is [docs/manual/](docs/manual/), plain Markdown that is also built into the app, so the two can't drift apart.
 - [docs/tutorial-deus-ex-pack.md](docs/tutorial-deus-ex-pack.md): a step-by-step walkthrough of making a pack, using Deus Ex on an Xbox-style pad, with the reasons for the less obvious mappings.
-- [docs/pack-format.md](docs/pack-format.md): reference for the `.padpack` format (format 10).
+- [docs/pack-format.md](docs/pack-format.md): reference for the `.padpack` format (format 11).
 
 For developers, in [docs/development/](docs/development/):
 

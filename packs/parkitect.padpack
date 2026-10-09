@@ -1,4 +1,4 @@
-format = 10
+format = 11
 macros = []
 
 [pack]
@@ -136,7 +136,7 @@ opacity = 1.0
 name = "Guide"
 indicator = "bindings"
 indicator_title = "Hold {guide} and press"
-indicator_delay_ms = 250
+indicator_delay_ms = 100
 swallow_unbound = true
 
 [layers.buttons]
@@ -190,3 +190,12 @@ opacity = 0.85
 enabled = true
 step = { kind = "click", volume = 0.12, pitch = 0.9 }
 pick = { kind = "chime", volume = 0.3, pitch = 0.9 }
+
+[motion]
+keyboard = "playful"
+numpad = "playful"
+menu = "playful"
+media = "playful"
+offer = "playful"
+info = "playful"
+log = "playful"
