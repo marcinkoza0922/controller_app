@@ -206,7 +206,7 @@ GNOME is not supported: Mutter has no layer-shell, so the on-screen keyboard, me
 
 ## GUI
 
-- **Overview**: a live controller drawing labelled with the active profile's mappings, and the controller list (Manage, Test rumble, Calibrate gyro).
+- **Overview**: a live controller drawing labelled with the active profile's mappings, *What's happening* (the latest presses with what each did, and each profile switch with the rule or action behind it), and the controller list (Manage, Test rumble, Calibrate gyro).
 - **Settings**: automatic switching and its default profile, the on-screen keyboard and numpad, fallback glyphs, and colour-blind mode for menu colours.
 - **A setup's Profiles tab**: the profile being edited, with its own labelled drawing and sub-tabs for Buttons, Sticks & triggers, Combos and Gyro. Mappings collapse to one-line summaries ("A ▸ Left click"); click a name to edit it. **Find by pressing** jumps to whatever you press or push on the controller.
 - **A setup's Layers tab**: the setup's layers, edited like a profile (see Layers).

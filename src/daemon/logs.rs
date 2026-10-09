@@ -3,16 +3,23 @@
 
 use std::{
     collections::HashSet,
+    sync::mpsc::Sender,
     time::{Duration, Instant},
 };
 
 use super::{Daemon, FADE_FRAME, Managed, layered};
 use crate::{
-    config::{InfoOverlay, LogOverlay, LogSource, Profile, Stick, Trigger},
+    config::{InfoOverlay, InputLogSettings, LogOverlay, LogSource, OverlayStyle, Profile, Stick, Trigger},
     input::InputEvent,
     inputlog::{self, Entry, FiredFrom, Inputs, LogView, Thresholds},
     overlay::OverlayAction,
 };
+
+/// The GUI's feed shows the log's default line count, one line per burst of presses, with no
+/// fading, so every press stays until it scrolls out.
+fn feed_settings() -> InputLogSettings {
+    InputLogSettings { merge_repeats: false, fade_after: 0.0, ..InputLogSettings::default() }
+}
 
 impl Managed {
     /// How the log reads this controller's sticks and triggers: as its mappings do.
@@ -74,11 +81,36 @@ impl Daemon {
         }
     }
 
-    /// Redraws the overlay if the log changed while something shows it.
+    /// Redraws the overlay if the log changed while something shows it, and sends the GUI's
+    /// feed its update.
     pub(super) fn log_changed(&mut self) {
         if self.shows_input {
             self.broadcast_overlay();
         }
+        self.broadcast_feed();
+    }
+
+    /// The latest presses of the controller in use, drawn as the log overlays draw them.
+    pub(super) fn feed_view(&self, now: Instant) -> Option<LogView> {
+        let dev = self.devices.get(&self.last_active?)?;
+        let view = inputlog::log_view(dev.log.entries(), &feed_settings(), &OverlayStyle::default(), dev.family.unwrap_or(self.config.info_glyphs), now);
+        Some(LogView { opacity: 1.0, ..view })
+    }
+
+    /// Adds a watcher of the feed, sending it the current one first.
+    pub(super) fn watch_feed(&mut self, watcher: Sender<Option<LogView>>) {
+        if watcher.send(self.feed_view(Instant::now())).is_ok() {
+            self.feed_watchers.push(watcher);
+        }
+    }
+
+    /// Streams the feed to its watchers, if there are any.
+    fn broadcast_feed(&mut self) {
+        if self.feed_watchers.is_empty() {
+            return;
+        }
+        let feed = self.feed_view(Instant::now());
+        self.feed_watchers.retain(|w| w.send(feed.clone()).is_ok());
     }
 
     /// One controller's entries by its number, or every controller's merged.

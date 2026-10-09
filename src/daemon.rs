@@ -30,8 +30,9 @@ use crate::{
     engine::{Engine, Opener},
     focus::{self, FocusEvent},
     input::{self, InputEvent, MotionFrame, MotionNormalizer, MotionSample, Normalizer},
-    keyboard::Layout,
     ipc::{self, DeviceInfo, FocusBackend, InputSnapshot, Request, Response, Status, WindowInfo},
+    inputlog::LogView,
+    keyboard::Layout,
     monitor::{self, InputView, OutputView, log},
     output::{FfCaps, OutEvent, VIRTUAL_PREFIX, VirtualKbm, VirtualPad},
     media::{MediaOutcome, MediaSession, MediaState},
@@ -43,7 +44,11 @@ use crate::{
     tray::{self, TrayIcon},
 };
 
+mod activity;
 mod logs;
+
+/// Why a profile changed when someone picked it.
+const BY_HAND: &str = "Chosen by hand (GUI or command line)";
 #[cfg(test)]
 mod kernel_tests;
 mod touchpad;
@@ -76,6 +81,7 @@ enum Msg {
     Gone { id: u64 },
     Ipc { req: Request, reply: Sender<Response> },
     Watch(Sender<Option<InputSnapshot>>),
+    WatchFeed(Sender<Option<LogView>>),
     Focus(FocusEvent),
     Motion { id: u64, sample: MotionSample },
     MotionGone { id: u64 },
@@ -252,6 +258,10 @@ struct Daemon {
     motion_denied: HashMap<NodeKey, String>,
     /// Clients streaming live input (the GUI's controller view).
     watchers: Vec<Sender<Option<InputSnapshot>>>,
+    /// Clients streaming the latest presses and what they did (the GUI's "what's happening").
+    feed_watchers: Vec<Sender<Option<LogView>>>,
+    /// Profile switches and why they were made, for the GUI.
+    activity: activity::Activity,
     /// Device whose input watchers are shown.
     last_active: Option<u64>,
     last_draw: Instant,
@@ -359,6 +369,8 @@ pub fn run() -> Result<()> {
         touch_nodes: HashMap::new(),
         motion_denied: HashMap::new(),
         watchers: Vec::new(),
+        feed_watchers: Vec::new(),
+        activity: activity::Activity::default(),
         last_active: None,
         last_draw: Instant::now(),
         focus_backend: FocusBackend::ProcessScan,
@@ -621,7 +633,7 @@ impl Daemon {
             dev.draw_status();
         }
         if switch && let Some(next) = self.config.next_profile(self.pad_features().as_deref()) {
-            self.switch_profile(next);
+            self.switch_profile(next, "Next profile, from the controller");
         }
         if let Some(layout) = toggle_overlay {
             self.toggle_overlay(layout);
@@ -997,7 +1009,7 @@ impl Daemon {
             self.close_overlay();
         }
         if switch && let Some(next) = self.config.next_profile(self.pad_features().as_deref()) {
-            self.switch_profile(next);
+            self.switch_profile(next, "Next profile, from the controller");
         }
         if let Some(layout) = toggle_overlay {
             self.toggle_overlay(layout);
@@ -1328,6 +1340,7 @@ impl Daemon {
                     self.watchers.push(watcher);
                 }
             }
+            Msg::WatchFeed(watcher) => self.watch_feed(watcher),
         }
     }
 
@@ -1438,12 +1451,14 @@ impl Daemon {
         if !self.config.auto_switch.enabled {
             return;
         }
-        match focus::profile_for(&self.config, window) {
-            Some(target) => {
-                let target = self.config.usable_profile(target, self.pad_features().as_deref());
-                self.auto_switch_to(target, &describe(window), true);
+        match focus::matching_rule(&self.config, window) {
+            Some((game, rule)) => {
+                let picked = ProfileRef::new(Some(game), &rule.profile);
+                let target = self.config.usable_profile(picked.clone(), self.pad_features().as_deref());
+                let why = format!("{} matches {}", describe(window), focus::rule_text(rule));
+                self.auto_switch_to(target.clone(), &with_fallback(why, &picked, &target), true);
             }
-            None => self.leave_game(&describe(window)),
+            None => self.leave_game(&format!("{} matches no rule", describe(window))),
         }
         if let Some((game, pid)) = focus::game_launch(&self.config, window) {
             self.launched(&game, pid);
@@ -1493,10 +1508,12 @@ impl Daemon {
         let target = focus::profile_for_processes(&self.config, &processes);
         if target != self.scan_target {
             self.scan_target = target.clone();
-            match target {
-                Some(target) => {
-                    let target = self.config.usable_profile(target, self.pad_features().as_deref());
-                    self.auto_switch_to(target, "running processes", true);
+            match focus::matching_process(&self.config, &processes) {
+                Some((game, rule, process)) => {
+                    let picked = ProfileRef::new(Some(game), &rule.profile);
+                    let target = self.config.usable_profile(picked.clone(), self.pad_features().as_deref());
+                    let why = format!("{} is running, which matches {}", describe(process), focus::rule_text(rule));
+                    self.auto_switch_to(target.clone(), &with_fallback(why, &picked, &target), true);
                 }
                 None => self.leave_game("no game running"),
             }
@@ -1506,7 +1523,8 @@ impl Daemon {
         }
     }
 
-    /// Switches to a profile a rule (or the default) picked, with a toast if `toast`.
+    /// Switches to a profile a rule (or the default) picked, with a toast if `toast`. `reason`
+    /// says why, for the log and the GUI.
     fn auto_switch_to(&mut self, target: ProfileRef, reason: &str, toast: bool) {
         if target == self.config.active_ref() {
             return;
@@ -1517,9 +1535,9 @@ impl Daemon {
         }
         log!("{reason} → profile {target}");
         if toast {
-            self.switch_profile(target);
+            self.switch_profile(target, reason);
         } else {
-            self.set_profile(target);
+            self.set_profile(target, reason);
         }
     }
 
@@ -1528,7 +1546,8 @@ impl Daemon {
     fn leave_game(&mut self, reason: &str) {
         let in_game = self.config.active_ref().game.is_some_and(|g| focus::has_rules(&self.config, &g));
         if in_game && let Some(default) = self.config.auto_switch.default_profile.clone() {
-            self.auto_switch_to(default, reason, false);
+            let why = format!("{reason}, so the default profile takes over");
+            self.auto_switch_to(default, &why, false);
         }
     }
 
@@ -1594,7 +1613,7 @@ impl Daemon {
         let media = dev.engine.take_media_toggle();
         let menu_request = dev.engine.take_menu_request();
         if switch && let Some(next) = self.config.next_profile(self.pad_features().as_deref()) {
-            self.switch_profile(next);
+            self.switch_profile(next, "Next profile, from the controller");
         }
         if let Some(layout) = toggle_overlay {
             self.toggle_overlay(layout);
@@ -1722,7 +1741,7 @@ impl Daemon {
                 self.close_overlay();
                 return true;
             }
-            Some(SystemOutcome::Switch(target)) => self.switch_profile(target),
+            Some(SystemOutcome::Switch(target)) => self.switch_profile(target, "Chosen in the in-game menu"),
             None => {}
         }
         false
@@ -1738,7 +1757,7 @@ impl Daemon {
         let at = self.config.add_game_for_window(&window, edited);
         log!("made a pack for {} from General", describe(&window));
         self.say(vec![format!("Made a pack: {}", at.game.as_deref().unwrap_or_default())]);
-        self.set_profile(at);
+        self.set_profile(at, &format!("Made a pack for {}", describe(&window)));
         true
     }
 
@@ -1894,24 +1913,24 @@ impl Daemon {
                 let Some(target) = self.config.find_profile(&name) else {
                     return Response::Error(format!("no profile named {name:?}"));
                 };
-                self.switch_profile(target);
+                self.switch_profile(target, BY_HAND);
                 Response::Ok
             }
             Request::Activate(target) => {
                 if self.config.profile(&target).is_none() {
                     return Response::Error(format!("no profile {target}"));
                 }
-                self.switch_profile(target);
+                self.switch_profile(target, BY_HAND);
                 Response::Ok
             }
             Request::NextProfile => {
                 if let Some(next) = self.config.next_profile(self.pad_features().as_deref()) {
-                    self.switch_profile(next);
+                    self.switch_profile(next, BY_HAND);
                 }
                 Response::Ok
             }
             // Handled by the connection thread, which registers through `Msg::Watch`.
-            Request::WatchInput => Response::Error("WatchInput must be the only request".into()),
+            Request::WatchInput | Request::WatchFeed => Response::Error("watch requests must be the only request".into()),
             Request::ToggleOverlay => {
                 self.toggle_overlay(Layout::Keyboard);
                 Response::Ok
@@ -1999,15 +2018,15 @@ impl Daemon {
         }
     }
 
-    /// Switches profile, showing the new one in a toast.
-    fn switch_profile(&mut self, target: ProfileRef) {
-        if self.set_profile(target) {
+    /// Switches profile, showing the new one in a toast. `why` says what made the switch.
+    fn switch_profile(&mut self, target: ProfileRef, why: &str) {
+        if self.set_profile(target, why) {
             self.toast_profile();
         }
     }
 
-    /// Switches profile; false if it was already active.
-    fn set_profile(&mut self, target: ProfileRef) -> bool {
+    /// Switches profile, recording `why`; false if it was already active.
+    fn set_profile(&mut self, target: ProfileRef, why: &str) -> bool {
         if target == self.config.active_ref() {
             return false;
         }
@@ -2023,6 +2042,7 @@ impl Daemon {
         }
         // Layers belong to a game: toggled ones stay on within it.
         self.release_all(!game_changes);
+        self.activity.switched(Instant::now(), &target, why);
         self.config.active = target;
         if game_changes {
             self.refresh_scope();
@@ -2101,6 +2121,7 @@ impl Daemon {
             motion_access_denied: self.motion_denied.values().cloned().collect(),
             overlay_visible: matches!(&self.active, Some(Active::Keyboard(k)) if k.layout() == Layout::Keyboard),
             numpad_visible: matches!(&self.active, Some(Active::Keyboard(k)) if k.layout() == Layout::Numpad),
+            switches: self.activity.switches(Instant::now()),
         }
     }
 
@@ -2237,7 +2258,8 @@ impl Daemon {
                 let names: Vec<&str> = missing.iter().map(|f| f.label()).collect();
                 log!("{from} needs {}, which the controllers lack → {to}", names.join(" and "));
                 let lines = vec![format!("{} needs {}", from.profile, names.join(" and ")), format!("Using {} instead", to.profile)];
-                if self.set_profile(to.clone()) {
+                let why = format!("{from} needs {}, which the controllers lack", names.join(" and "));
+                if self.set_profile(to.clone(), &why) {
                     self.pads.fell_back = Some((from, to));
                     self.say(lines);
                 }
@@ -2245,7 +2267,7 @@ impl Daemon {
             Refit::Return(wanted) => {
                 self.pads.fell_back = None;
                 log!("controllers can play {wanted} again");
-                if self.set_profile(wanted.clone()) {
+                if self.set_profile(wanted.clone(), "The controllers can play it again") {
                     self.say(vec![format!("Back to {}", wanted.profile)]);
                 }
             }
@@ -2466,6 +2488,7 @@ fn serve_client(mut conn: &UnixStream, tx: &Sender<Msg>) -> Result<()> {
     let response = match serde_json::from_str::<Request>(&line) {
         Ok(Request::WatchInput) => return watch_input(conn, tx),
         Ok(Request::WatchOverlay) => return watch_overlay(conn, tx),
+        Ok(Request::WatchFeed) => return watch_feed(conn, tx),
         Ok(req) => {
             let (reply_tx, reply_rx) = mpsc::channel();
             tx.send(Msg::Ipc { req, reply: reply_tx })?;
@@ -2499,12 +2522,24 @@ fn watch_overlay(mut conn: &UnixStream, tx: &Sender<Msg>) -> Result<()> {
 
 /// Streams snapshots to a client until it disconnects. Bursts are coalesced to the latest
 /// snapshot, so a fast-polling pad never floods the GUI.
-fn watch_input(mut conn: &UnixStream, tx: &Sender<Msg>) -> Result<()> {
+fn watch_input(conn: &UnixStream, tx: &Sender<Msg>) -> Result<()> {
     let (snap_tx, snap_rx) = mpsc::channel();
     tx.send(Msg::Watch(snap_tx))?;
+    stream_latest(conn, &snap_rx)
+}
+
+/// Streams the latest presses and what they did, like [`watch_input`].
+fn watch_feed(conn: &UnixStream, tx: &Sender<Msg>) -> Result<()> {
+    let (feed_tx, feed_rx) = mpsc::channel();
+    tx.send(Msg::WatchFeed(feed_tx))?;
+    stream_latest(conn, &feed_rx)
+}
+
+/// Writes each value as a JSON line until the client goes away or the daemon drops the sender.
+fn stream_latest<T: serde::Serialize>(mut conn: &UnixStream, rx: &mpsc::Receiver<T>) -> Result<()> {
     // Blocks until the next update; ends when the daemon drops this watcher.
-    while let Ok(mut snapshot) = snap_rx.recv() {
-        while let Ok(newer) = snap_rx.try_recv() {
+    while let Ok(mut snapshot) = rx.recv() {
+        while let Ok(newer) = rx.try_recv() {
             snapshot = newer;
         }
         let mut line = serde_json::to_string(&snapshot)?;
@@ -2516,6 +2551,15 @@ fn watch_input(mut conn: &UnixStream, tx: &Sender<Msg>) -> Result<()> {
         thread::sleep(WATCH_INTERVAL);
     }
     Ok(())
+}
+
+/// The reason for switching to `target`: `why`, plus what changed when the controller can't play
+/// the rule's `picked` profile and another one is used instead.
+fn with_fallback(why: String, picked: &ProfileRef, target: &ProfileRef) -> String {
+    if picked == target {
+        return why;
+    }
+    format!("{why}, but the controller can't play {} so {} is used", picked.profile, target.profile)
 }
 
 /// Short description of a window for log lines.

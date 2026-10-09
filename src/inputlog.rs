@@ -12,6 +12,8 @@ mod tests;
 use std::time::Instant;
 
 pub use view::{Inputs, LogCell, LogView, line_life, log_view, merged, next_change};
+#[cfg(test)]
+pub use view::LogLine;
 
 use crate::{
     config::{Button, ButtonAction, Stick, StickConfig, Trigger, TriggerAction},

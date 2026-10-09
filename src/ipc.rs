@@ -45,6 +45,10 @@ pub enum Request {
     /// Keep the connection open; the daemon streams one `Option<OverlayView>` JSON line per
     /// change. `null` means nothing is shown (the resident overlay idles).
     WatchOverlay,
+    /// Keep the connection open; the daemon streams one `Option<LogView>` JSON line per change:
+    /// the latest presses of the most recently used controller, with what each did. `null` when
+    /// no controller is active.
+    WatchFeed,
 }
 
 // One reply per connection, so the size difference doesn't matter.
@@ -84,6 +88,21 @@ pub struct Status {
     pub overlay_visible: bool,
     #[serde(default)]
     pub numpad_visible: bool,
+    /// Profile switches, newest first, each with the reason the daemon made it.
+    #[serde(default)]
+    pub switches: Vec<SwitchEvent>,
+}
+
+/// A profile switch and why it happened.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SwitchEvent {
+    /// Milliseconds since the switch.
+    pub age_ms: u64,
+    /// The profile's setup; `None` is General.
+    pub game: Option<String>,
+    pub profile: String,
+    /// What caused it, in words, e.g. `Doom (doom.exe) matches Executable “doom.exe”`.
+    pub why: String,
 }
 
 /// How the daemon learns which game is active.
