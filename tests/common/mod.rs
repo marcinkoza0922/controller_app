@@ -136,3 +136,12 @@ pub fn spawn_daemon(root: &Path, runtime: Option<&Path>) -> Daemon {
 pub fn daemon_log(root: &Path) -> String {
     fs::read_to_string(root.join("daemon.log")).unwrap_or_default()
 }
+
+/// Fails if the daemon's log has a panic or a failed output write. Call it once the daemon has
+/// stopped, so the log is complete (I-8). Other messages are not checked: a container has no
+/// compositor or session bus, and the daemon logs that as an error.
+pub fn assert_log_clean(root: &Path) {
+    let log = daemon_log(root);
+    assert!(!log.contains("panicked"), "the daemon panicked:\n{log}");
+    assert!(!log.contains("output error"), "the daemon failed to send input:\n{log}");
+}

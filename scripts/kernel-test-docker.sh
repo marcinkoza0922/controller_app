@@ -1,6 +1,6 @@
 #!/bin/sh
-# Runs the kernel-level uinput and daemon-exit tests in a container, so the test user doesn't need to be in the
-# host's `input` group. The container runs as root and reads the virtual keyboard and mouse
+# Runs the kernel-level uinput, daemon and GUI tests in a container, under a virtual X server (Xvfb),
+# so the test user doesn't need to be in the host's `input` group. The container runs as root and reads the virtual keyboard and mouse
 # nodes through a bind mount of /dev/input. Your host account is unchanged.
 #
 # Caveat: the container can read every host input device, including your real keyboard. The
@@ -35,5 +35,5 @@ exec docker run --rm \
     -w /src \
     -u 0 \
     rust:1 \
-    sh -c "apt-get update -qq && apt-get install -y -qq pkg-config libxkbcommon-dev libwayland-dev libudev-dev libfontconfig1-dev libdbus-1-dev >/dev/null \
-        && cargo test -- --ignored $filter"
+    sh -c "apt-get update -qq && apt-get install -y -qq pkg-config libxkbcommon-dev libwayland-dev libudev-dev libfontconfig1-dev libdbus-1-dev xvfb xauth libxcursor1 libxrandr2 libxi6 libxinerama1 libxkbcommon-x11-0 x11-utils >/dev/null \
+        && xvfb-run -a cargo test -- --ignored $filter"
