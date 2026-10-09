@@ -352,6 +352,10 @@ pub enum FormFactor {
 /// What the overlay window draws for one info overlay.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InfoView {
+    /// The overlay's name (or what it is, for the toast and recording badge), so it keeps its
+    /// place while the overlay window animates it.
+    #[serde(default)]
+    pub name: String,
     pub style: OverlayStyle,
     /// A heading above the grid.
     #[serde(default)]
@@ -360,6 +364,16 @@ pub struct InfoView {
     /// 1 normally, falling to 0 as it fades out (see [`fade`]).
     #[serde(default = "opaque")]
     pub opacity: f32,
+}
+
+impl crate::motion::Tracked for InfoView {
+    fn key(&self) -> String {
+        self.name.clone()
+    }
+
+    fn kind(&self) -> crate::motion::OverlayKind {
+        crate::motion::OverlayKind::Info
+    }
 }
 
 fn opaque() -> f32 {
@@ -470,7 +484,7 @@ impl Toast {
     pub fn view(&self, now: Instant) -> Option<InfoView> {
         let opacity = fade(now, self.end)?;
         let rows = self.lines.iter().map(|l| vec![vec![Segment::Text(l.clone())]]).collect();
-        Some(InfoView { style: OverlayStyle::toast(), title: None, rows, opacity })
+        Some(InfoView { name: "toast".into(), style: OverlayStyle::toast(), title: None, rows, opacity })
     }
 
     pub fn next_redraw(&self, now: Instant, frame: Duration) -> Instant {
@@ -548,6 +562,7 @@ pub fn glyph(label: &str, fill: Option<[u8; 3]>, round: bool) -> Segment {
 pub fn recording_view() -> InfoView {
     const RED: [u8; 3] = [0xc8, 0x3c, 0x3c];
     InfoView {
+        name: "recording".into(),
         style: OverlayStyle { position: ScreenPosition::TopLeft, ..OverlayStyle::indicator() },
         title: None,
         rows: vec![vec![vec![glyph("● REC", Some(RED), false)]]],
@@ -710,7 +725,7 @@ fn stat(s: Stat, live: &Live) -> String {
 pub fn resolve(overlay: &InfoOverlay, live: &Live) -> InfoView {
     let rows = overlay.rows.iter().map(|row| row.iter().map(|cell| cell_segments(overlay, cell, live)).collect()).collect();
     let title = overlay.title.as_ref().filter(|t| !t.trim().is_empty()).map(|t| cell_segments(overlay, t, live));
-    InfoView { style: overlay.style.clone(), title, rows, opacity: 1.0 }
+    InfoView { name: overlay.name.clone(), style: overlay.style.clone(), title, rows, opacity: 1.0 }
 }
 
 /// One cell's text and glyphs.

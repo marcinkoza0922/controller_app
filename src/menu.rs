@@ -31,6 +31,9 @@ pub struct MenuView {
     pub kind: MenuKind,
     pub items: Vec<ItemView>,
     pub selected: Option<usize>,
+    /// How many items have been chosen in this menu's session; changes on each pick.
+    #[serde(default)]
+    pub picks: u32,
     /// The menus this one was opened from, outermost first. Shown above the title.
     #[serde(default)]
     pub crumbs: Vec<String>,
@@ -120,6 +123,8 @@ pub struct MenuSession {
     stick_step: Option<Step>,
     /// Which carousel trigger is currently pulled past the step point.
     trigger_step: Option<Trigger>,
+    /// How many items have been chosen so far, shown to the overlay so it can animate the pick.
+    picks: u32,
 }
 
 fn find(menus: &[Menu], name: &str) -> Option<usize> {
@@ -180,6 +185,7 @@ impl MenuSession {
             stepping: None,
             stick_step: None,
             trigger_step: None,
+            picks: 0,
         };
         // Until `prime` says otherwise, the opener is taken to be held (it just fired).
         for b in session.opener.buttons.clone() {
@@ -315,6 +321,7 @@ impl MenuSession {
             kind: menu.kind,
             items,
             selected: frame.cursor,
+            picks: self.picks,
             crumbs: self.stack[..self.stack.len() - 1].iter().filter_map(|f| menus.get(f.menu)).map(|m| m.name.clone()).collect(),
             hint,
             style: menu.style.clone(),
@@ -328,6 +335,14 @@ impl MenuSession {
 
     /// Handles controller input; returns what to do, if anything.
     pub fn handle(&mut self, menus: &[Menu], ev: InputEvent, now: Instant) -> Option<MenuOutcome> {
+        let outcome = self.act(menus, ev, now);
+        if matches!(outcome, Some(MenuOutcome::Choose { .. })) {
+            self.picks += 1;
+        }
+        outcome
+    }
+
+    fn act(&mut self, menus: &[Menu], ev: InputEvent, now: Instant) -> Option<MenuOutcome> {
         let menu = self.top(menus)?.clone();
         let mut fresh_press = false;
         match ev {

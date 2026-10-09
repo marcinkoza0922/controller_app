@@ -492,6 +492,7 @@ impl LayoutEditor {
             kind: MenuKind::List,
             items,
             selected: Some(self.cursor),
+            picks: 0,
             crumbs,
             hint: hint.into(),
             style,

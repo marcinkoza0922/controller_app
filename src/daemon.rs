@@ -1113,7 +1113,7 @@ impl Daemon {
             colourblind: self.config.colourblind_tones,
             family: values.family,
             nintendo_layout: values.nintendo_layout,
-            motion: self.config.motion,
+            motion: self.config.active_motion(),
         }
     }
 

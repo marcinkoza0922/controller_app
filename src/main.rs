@@ -18,6 +18,7 @@ mod media;
 mod offer;
 mod menu;
 mod monitor;
+mod motion;
 mod output;
 mod overlay;
 mod pack;

@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use crate::sound::MenuSounds;
+use crate::{motion::MotionSet, sound::MenuSounds};
 
 mod log;
 mod store;
@@ -458,39 +458,6 @@ impl fmt::Display for MenuKindTag {
             MenuKindTag::Buttons => "Button menu (list + quick buttons)",
             MenuKindTag::Carousel => "Carousel",
             MenuKindTag::Grid => "Grid (up to 6 × 6)",
-        })
-    }
-}
-
-/// How menus move. Off keeps them still.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MenuMotion {
-    #[default]
-    Off,
-    /// A quick fade-in when a menu opens, and the highlight sliding from item to item.
-    Subtle,
-    /// Subtle, with a little overshoot: the menu settles in and the highlight pops past its place.
-    Playful,
-    /// Subtle, with the items fading in one after another.
-    Stagger,
-}
-
-impl MenuMotion {
-    pub const ALL: [MenuMotion; 4] = [MenuMotion::Off, MenuMotion::Subtle, MenuMotion::Playful, MenuMotion::Stagger];
-
-    pub fn is_off(&self) -> bool {
-        *self == MenuMotion::Off
-    }
-}
-
-impl fmt::Display for MenuMotion {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            MenuMotion::Off => "Off",
-            MenuMotion::Subtle => "Subtle",
-            MenuMotion::Playful => "Playful",
-            MenuMotion::Stagger => "Stagger",
         })
     }
 }
@@ -1414,7 +1381,7 @@ impl Layer {
         layer.indicator = Indicator::Bindings;
         layer.indicator_style = OverlayStyle::sheet();
         layer.indicator_title = Some("Hold {guide} and press".into());
-        layer.indicator_delay_ms = 250;
+        layer.indicator_delay_ms = 100;
         layer.swallow_unbound = true;
         layer.buttons = BTreeMap::from([
             (Button::East, ForceQuit),
@@ -2388,6 +2355,10 @@ pub struct Game {
     /// defaults when unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub menu_sounds: Option<MenuSounds>,
+    /// How each overlay moves while this game is active; the global set (`Config::motion`)
+    /// applies when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub motion: Option<MotionSet>,
 }
 
 impl Game {
@@ -2412,6 +2383,7 @@ impl Game {
             overlay_font: None,
             nintendo_layout: None,
             menu_sounds: None,
+            motion: None,
         };
         if game.profiles.iter().any(Profile::holds_guide_layer) {
             game.ensure_guide_layer();
@@ -2687,9 +2659,9 @@ pub struct Config {
     /// Light, dark or the desktop's choice, for the settings window.
     #[serde(default, skip_serializing_if = "Appearance::is_auto")]
     pub appearance: Appearance,
-    /// Small motion in menus: a fade-in when one opens, and the highlight gliding between items.
-    #[serde(default, skip_serializing_if = "MenuMotion::is_off")]
-    pub motion: MenuMotion,
+    /// How each kind of overlay moves, unless the active game sets its own.
+    #[serde(default, skip_serializing_if = "MotionSet::is_default", deserialize_with = "crate::motion::deserialize_set")]
+    pub motion: MotionSet,
     /// Font of every overlay, menu and keyboard (a bundled or installed family); the system's
     /// own when unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2720,7 +2692,7 @@ impl Default for Config {
             auto_switch: AutoSwitch::default(),
             colourblind_tones: false,
             appearance: Appearance::Auto,
-            motion: MenuMotion::Off,
+            motion: MotionSet::default(),
             gyro_calibration: BTreeMap::new(),
             keyboard_style: OverlayStyle::keyboard(),
             numpad_style: OverlayStyle::numpad(),
@@ -2825,6 +2797,11 @@ impl Config {
     /// Like [`Config::active_keyboard_style`], for the media controls.
     pub fn active_media_style(&self) -> &OverlayStyle {
         self.active_game().media_style.as_ref().unwrap_or(&self.media_style)
+    }
+
+    /// How each overlay moves: the active game's own set, or the global one.
+    pub fn active_motion(&self) -> MotionSet {
+        self.active_game().motion.unwrap_or(self.motion)
     }
 
     /// Like [`Config::active_keyboard_style`], for the in-game menu and Edit Controls.

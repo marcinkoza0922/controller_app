@@ -11,9 +11,22 @@ use crate::{
     info::{Glyphs, PadFamily, Segment, button_glyph, glyph, trigger_glyph},
 };
 
+impl crate::motion::Tracked for LogView {
+    fn key(&self) -> String {
+        self.name.clone()
+    }
+
+    fn kind(&self) -> crate::motion::OverlayKind {
+        crate::motion::OverlayKind::Log
+    }
+}
+
 /// What the overlay window draws for one log overlay.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LogView {
+    /// The overlay's name, so it keeps its place in the motion of the overlay window.
+    #[serde(default)]
+    pub name: String,
     pub style: OverlayStyle,
     /// 1 normally, falling to 0 as the overlay fades out.
     pub opacity: f32,
@@ -180,7 +193,7 @@ pub fn log_view(entries: &[Entry], s: &InputLogSettings, style: &OverlayStyle, g
     if s.newest == LogEnd::Top {
         lines.reverse();
     }
-    LogView { style: style.clone(), opacity: 1.0, lines, show_labels: s.show_labels, show_holds: s.show_holds }
+    LogView { name: String::new(), style: style.clone(), opacity: 1.0, lines, show_labels: s.show_labels, show_holds: s.show_holds }
 }
 
 fn fade_after(s: &InputLogSettings) -> Option<Duration> {

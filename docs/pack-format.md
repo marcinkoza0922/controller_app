@@ -1,6 +1,6 @@
 # `.padpack` format reference
 
-A pack is one game in one file: TOML, in the same shapes the app writes to `config.toml`. This page describes **format 10**, the format the current app writes. For a walkthrough of building one, see [tutorial-deus-ex-pack.md](tutorial-deus-ex-pack.md). The shipped examples are in `packs/`.
+A pack is one game in one file: TOML, in the same shapes the app writes to `config.toml`. This page describes **format 11**, the format the current app writes. For a walkthrough of building one, see [tutorial-deus-ex-pack.md](tutorial-deus-ex-pack.md). The shipped examples are in `packs/`.
 
 The easiest way to write a pack is in the app, then **Details → Export…**. Read this page when you want to edit the file by hand, check a value, or understand what the export produced.
 
@@ -29,6 +29,7 @@ made_with = "Xbox controller"
 [numpad_style]                   # optional, on-screen numpad look
 [media_style]                    # optional, media controls look
 [menu_style]                     # optional, in-game menu and Edit Controls look
+[motion]                         # optional, how each kind of overlay moves
 ```
 
 Unknown top-level keys are an error, so a typo fails the import rather than being ignored. `log_overlays` is also accepted.
@@ -285,7 +286,7 @@ A layer changes some of the profile's mappings while it is held or toggled on. E
 name = "Guide"
 indicator = "bindings"           # "name" | "bindings" | "off" | { info = "Name" }
 indicator_title = "Hold {guide} and press"
-indicator_delay_ms = 250         # appears only if held this long
+indicator_delay_ms = 100         # appears only if held this long
 swallow_unbound = true           # buttons the layer doesn't set do nothing
 
 [layers.buttons]
@@ -332,9 +333,35 @@ pick = { kind = "pop", volume = 0.3, pitch = 1.0 }
 
 `kind` is `click`, `pop`, `chime`, `thud` or `crunch`. `volume` is 0–1 and `pitch` is 0.5–2 (an octave either way), both relative to the kind's own sound.
 
+## Overlay motion
+
+`[motion]` sets how each kind of overlay moves: as it opens and closes, as the cursor moves and as something is picked. Each key is one of `off`, `subtle`, `playful`, `stagger`, `grim` or `brutal`, and every key is optional (a missing one is `subtle`).
+
+```toml
+[motion]
+keyboard = "grim"
+numpad = "grim"
+menu = "grim"
+media = "grim"
+offer = "grim"
+info = "grim"
+log = "grim"
+```
+
+| Style | Feel |
+|---|---|
+| `off` | Nothing moves. |
+| `subtle` | A quick fade, and the highlight glides from item to item. |
+| `playful` | Panels drop in with a bounce, and the highlight overshoots its item. |
+| `stagger` | Items fade in one after another. |
+| `grim` | Slow fades that rise into place, and a dim, heavy pulse on a pick. |
+| `brutal` | Snaps in and out, the highlight jumps, and a pick jolts and flashes. |
+
+The kinds are `keyboard`, `numpad`, `menu` (every menu layout), `media` (the media controls), `offer` (library offers), `info` (info overlays) and `log` (input logs).
+
 ## Versioning
 
-- `format` is an integer. The app writes `10` and reads up to `10`. A pack with a newer `format` is refused with "update the app to import it". Older formats are upgraded when read.
+- `format` is an integer. The app writes `11` and reads up to `11`. A pack with a newer `format` is refused with "update the app to import it". Older formats are upgraded when read.
 - Format history:
   - 2 added layers.
   - 3 added toggles that start on.
@@ -344,6 +371,8 @@ pick = { kind = "pop", volume = 0.3, pitch = 1.0 }
   - 7 added the Guide actions (`screenshot`, `toggle_recording`, `force_quit`), layer indicators with generated bindings, extra info overlays and a delay.
   - 8 moved controller needs from the pack to each profile (`requires`).
   - 9 added the media controls and in-game menu looks (`media_style`, `menu_style`).
+  - 10 added menu sounds, radial arcs and corner rounding (`menu_sounds`).
+  - 11 added how each overlay moves (`motion`).
 - Bump `format` only for a breaking change to the shape. Adding an optional key with a default doesn't need it.
 
 ## Checks

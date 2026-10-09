@@ -24,10 +24,11 @@ use crate::{
     config::{
         Analog, Appearance, Button, ButtonAction, CarouselControls, Cluster, Combo, Config, Feature, Game, GestureKind, GRID_MAX, GyroActivation,
         CurrentInput, GyroConfig, GyroHorizontal, GyroInput, GyroMode, InfoOverlay, ItemKind, LogOverlay, Macro, MacroStep, Menu, MenuItem,
-        MenuKind, MenuKindTag, MenuMotion, MouseButton, OverlayStyle, Paint, Profile, ProfileRef, Rule, RuleKind, ScopeRef,
+        MenuKind, MenuKindTag, MouseButton, OverlayStyle, Paint, Profile, ProfileRef, Rule, RuleKind, ScopeRef,
         ScreenPosition, Stick, StickAction, StickConfig, Toggled, Trigger, TriggerAction, WheelDirection, Zone, free_name,
     },
     engine::Opener,
+    motion::{MotionStyle, OverlayKind},
     info::PadFamily,
     inputlog::LogView,
     ipc::{self, InputSnapshot, Request, Response, Status, WindowInfo},
@@ -402,7 +403,12 @@ enum Message {
     /// The font of all overlays (`None`: the system's), or the shown game's own.
     SetOverlayFont(Option<String>),
     SetColourblindTones(bool),
-    SetMotion(MenuMotion),
+    /// A kind of overlay's motion, in the global set.
+    SetMotion(OverlayKind, MotionStyle),
+    /// A kind of overlay's motion in the shown game's own set, which starts as the global one.
+    SetGameMotion(OverlayKind, MotionStyle),
+    /// The shown game goes back to the global motion.
+    ClearGameMotion,
     SetGameOverlayFont(Option<String>),
     /// A game's own style for the keyboard or numpad, or back to the global one.
     SetGameOverlayStyle(crate::keyboard::Layout, Option<OverlayStyle>),

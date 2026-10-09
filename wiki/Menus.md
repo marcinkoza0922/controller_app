@@ -51,9 +51,18 @@ Text switches between light and dark to stay readable against the background.
 
 The overlay process stays running, invisibly, between uses, so menus appear immediately.
 
-## Menu motion
+## Overlay motion
 
-Under **Settings → Menu motion** (off by default), menus can move a little. **Subtle** fades a menu in and slides the highlight from item to item. **Playful** adds an overshoot, so the menu settles in and the highlight pops past its place. **Stagger** fades the items in one after another. Motion is global, not per setup.
+Overlays move as they open and close, as the cursor moves and as something is picked. Under **Settings → Overlay motion** each kind of overlay has its own style: the on-screen keyboard, the numpad, menus, media controls, library offers, info overlays and input logs. Subtle is the default.
+
+- **Subtle**: a quick fade, and the highlight glides from item to item.
+- **Playful**: panels drop in with a bounce, and the highlight overshoots its item. Suits cheerful games.
+- **Stagger**: items fade in one after another.
+- **Grim**: slow fades that rise into place, and a dim, heavy pulse on a pick. Suits dark fantasy.
+- **Brutal**: snaps in and out, the highlight jumps, and a pick jolts and flashes. Suits shooters and fights.
+- **Off**: nothing moves.
+
+Each setup can set its own on its **Details** tab. Any kind it doesn't set uses the global motion.
 
 ## Menu sounds
 

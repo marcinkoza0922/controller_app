@@ -1032,7 +1032,7 @@ impl App {
         }
         let sample = InfoOverlay { style: preview_style(&o.style), ..o.clone() };
         let view = crate::info::resolve(&sample, &crate::info::Live::sample(self.config.info_glyphs).with_layout(self.nintendo_layout()));
-        rows.push(preview(crate::overlay::draw::info_panel(&view, self.preview_font())));
+        rows.push(preview(crate::overlay::draw::info_panel(&view, self.preview_font(), &crate::motion::Anim::still())));
 
         // The grid: rows of cells, which line up in columns on screen.
         let small = |label: &'static str, msg: Option<Message>| button(text(label).size(13)).style(style::secondary).on_press_maybe(msg);

@@ -1,4 +1,4 @@
-format = 10
+format = 11
 macros = []
 overlay_font = "Source Code Pro"
 
@@ -28,7 +28,8 @@ tap_window_ms = 250
 long_press_ms = 500
 
 [profiles.buttons]
-DpadDown = "disabled"
+[profiles.buttons.DpadDown]
+keys = ["KEY_TAB"]
 
 [profiles.buttons.South]
 keys = ["KEY_SPACE"]
@@ -37,7 +38,7 @@ keys = ["KEY_SPACE"]
 keys = ["KEY_E"]
 
 [profiles.buttons.North]
-keys = ["KEY_TAB"]
+keys = ["KEY_E"]
 
 [profiles.buttons.West]
 keys = ["KEY_R"]
@@ -133,7 +134,8 @@ tap_window_ms = 250
 long_press_ms = 500
 
 [profiles.buttons]
-DpadDown = "disabled"
+[profiles.buttons.DpadDown]
+keys = ["KEY_TAB"]
 
 [profiles.buttons.South]
 keys = ["KEY_SPACE"]
@@ -142,7 +144,7 @@ keys = ["KEY_SPACE"]
 keys = ["KEY_E"]
 
 [profiles.buttons.North]
-keys = ["KEY_TAB"]
+keys = ["KEY_E"]
 
 [profiles.buttons.West]
 keys = ["KEY_R"]
@@ -242,7 +244,8 @@ long_press_ms = 500
 requires = ["gyro"]
 
 [profiles.buttons]
-DpadDown = "disabled"
+[profiles.buttons.DpadDown]
+keys = ["KEY_TAB"]
 
 [profiles.buttons.South]
 keys = ["KEY_SPACE"]
@@ -251,7 +254,7 @@ keys = ["KEY_SPACE"]
 keys = ["KEY_E"]
 
 [profiles.buttons.North]
-keys = ["KEY_TAB"]
+keys = ["KEY_E"]
 
 [profiles.buttons.West]
 keys = ["KEY_R"]
@@ -436,13 +439,13 @@ rows = [
 ],
     [
     "{east}",
-    "Use · hold: sniper zoom",
+    "Use",
     "{west}",
     "Reload",
 ],
     [
     "{north}",
-    "Painkillers",
+    "Hold: sniper zoom",
     "{lb}",
     "Hold: weapon groups",
 ],
@@ -463,6 +466,10 @@ rows = [
     "Pause",
     "hold {start}",
     "Quick load",
+],
+    [
+    "{down}",
+    "Painkillers",
 ],
 ]
 
@@ -486,7 +493,7 @@ opacity = 1.0
 name = "Guide"
 indicator = "bindings"
 indicator_title = "Hold {guide} and press"
-indicator_delay_ms = 250
+indicator_delay_ms = 100
 swallow_unbound = true
 
 [layers.buttons]
@@ -615,3 +622,12 @@ opacity = 1.0
 enabled = true
 step = { kind = "click", volume = 0.1, pitch = 0.6 }
 pick = { kind = "thud", volume = 0.3, pitch = 0.9 }
+
+[motion]
+keyboard = "brutal"
+numpad = "brutal"
+menu = "brutal"
+media = "brutal"
+offer = "brutal"
+info = "brutal"
+log = "brutal"

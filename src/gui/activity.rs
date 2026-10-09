@@ -22,7 +22,7 @@ fn ago(ms: u64) -> String {
 impl App {
     pub(super) fn view_activity(&self) -> Element<'_, Message> {
         let presses: Element<'_, Message> = match &self.feed {
-            Some(feed) if !feed.lines.is_empty() => crate::overlay::draw::log_panel(feed, self.preview_font()),
+            Some(feed) if !feed.lines.is_empty() => crate::overlay::draw::log_panel(feed, self.preview_font(), &crate::motion::Anim::still()),
             _ => {
                 let hint = if self.status.is_some() { "Press a button on a managed controller." } else { "Needs the daemon." };
                 text(hint).size(13).color(MUTED_COLOR).into()
@@ -99,6 +99,7 @@ mod tests {
         });
         let cell = LogCell { glyph: Vec::new(), label: Some("Fire".into()), hold_ms: Some(80), count: 1, held: false };
         let feed = LogView {
+            name: "feed".into(),
             style: OverlayStyle::default(),
             opacity: 1.0,
             lines: vec![LogLine { opacity: 1.0, cells: vec![cell] }],

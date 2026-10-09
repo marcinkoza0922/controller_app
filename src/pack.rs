@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
+use crate::motion::MotionSet;
 use crate::sound::MenuSounds;
 use crate::config::{
     ButtonAction, Config, Game, GyroMode, Indicator, InfoOverlay, ItemKind, Layer, LogOverlay, Macro, Menu, MacroStep, Origin,
@@ -17,8 +18,8 @@ use crate::config::{
 /// the Guide shift, screenshot, recording and force-quit actions and layer indicators
 /// with generated bindings, extra info overlays and a delay; 8, profiles stating what
 /// controller features they need (replacing the pack-wide list); 9, the media controls and
-/// in-game menu looks; 10, menu sounds, radial arcs and corner rounding.
-pub const FORMAT: u32 = 10;
+/// in-game menu looks; 10, menu sounds, radial arcs and corner rounding; 11, how each overlay moves.
+pub const FORMAT: u32 = 11;
 pub const EXTENSION: &str = "padpack";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -58,6 +59,9 @@ pub struct Pack {
     /// The menu sounds, if the author set them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub menu_sounds: Option<MenuSounds>,
+    /// How each overlay moves, if the author set it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub motion: Option<MotionSet>,
 }
 
 /// What a pack says about itself.
@@ -130,6 +134,7 @@ impl Pack {
             overlay_font: self.overlay_font.clone(),
             nintendo_layout: self.nintendo_layout,
             menu_sounds: self.menu_sounds,
+            motion: self.motion,
         };
         game.ensure_guide_layer();
         game
@@ -406,6 +411,7 @@ pub fn export(game: &Game, shared: &Shared, info: &PackInfo) -> Export {
         overlay_font: pack_game.overlay_font,
         nintendo_layout: pack_game.nintendo_layout,
         menu_sounds: pack_game.menu_sounds,
+        motion: pack_game.motion,
     };
     Export { pack, pulled_in, dangling: dangling.into_iter().collect(), features }
 }
@@ -662,20 +668,25 @@ pub fn apply(config: &mut Config, plan: &Plan, choices: &Choices) -> String {
     let name = game.name.clone();
     match replace.and_then(|n| config.games.iter().position(|g| g.name == n)) {
         Some(i) => {
-            // A pack that sets no look leaves the player's own in place.
-            let old = &config.games[i];
-            game.keyboard_style = game.keyboard_style.or_else(|| old.keyboard_style.clone());
-            game.numpad_style = game.numpad_style.or_else(|| old.numpad_style.clone());
-            game.media_style = game.media_style.or_else(|| old.media_style.clone());
-            game.menu_style = game.menu_style.or_else(|| old.menu_style.clone());
-            game.overlay_font = game.overlay_font.or_else(|| old.overlay_font.clone());
-            game.nintendo_layout = game.nintendo_layout.or(old.nintendo_layout);
-            game.menu_sounds = game.menu_sounds.or(old.menu_sounds);
-            config.games[i] = game;
+            let kept = keep_looks(game, &config.games[i]);
+            config.games[i] = kept;
         }
         None => config.games.push(game),
     }
     name
+}
+
+/// A pack that sets no look leaves the player's own in place.
+fn keep_looks(mut game: Game, old: &Game) -> Game {
+    game.keyboard_style = game.keyboard_style.or_else(|| old.keyboard_style.clone());
+    game.numpad_style = game.numpad_style.or_else(|| old.numpad_style.clone());
+    game.media_style = game.media_style.or_else(|| old.media_style.clone());
+    game.menu_style = game.menu_style.or_else(|| old.menu_style.clone());
+    game.overlay_font = game.overlay_font.or_else(|| old.overlay_font.clone());
+    game.nintendo_layout = game.nintendo_layout.or(old.nintendo_layout);
+    game.menu_sounds = game.menu_sounds.or(old.menu_sounds);
+    game.motion = game.motion.or(old.motion);
+    game
 }
 
 #[cfg(test)]
