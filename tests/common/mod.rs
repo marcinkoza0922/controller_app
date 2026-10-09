@@ -162,6 +162,7 @@ pub fn spawn_daemon(root: &Path, runtime: Option<&Path>) -> Daemon {
         .arg("daemon")
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_STATE_HOME", root.join("state"))
+        .env("XDG_DATA_HOME", root.join("data"))
         .env("TMPDIR", &tmp)
         .stdin(Stdio::null())
         .stdout(log.try_clone().unwrap())

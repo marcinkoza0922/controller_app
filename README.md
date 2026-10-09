@@ -96,7 +96,7 @@ To run the daemon at login, copy `dist/padwight-flatpak.service` to `~/.config/s
 - Settings live in `~/.var/app/io.github.marcinkoza0922.Padwight/config/padwight/`. To keep your existing setups, copy `~/.config/padwight/` there.
 - The motion-sensor rule is a host file, so install it with the `sudo` commands above. The app can't run `sudo` itself.
 - Game detection reads Steam and Lutris libraries read-only. Other library folders need `flatpak override --user --filesystem=/path:ro io.github.marcinkoza0922.Padwight`.
-- The sandbox has its own process list, so a window is identified by its class and title only, not by its executable. Focus tracking works through KWin. Hyprland's socket is shared in but untested, and Sway's isn't reachable.
+- The sandbox has its own process list, so a window is identified by its class and title only, not by its executable. Focus tracking works through KWin and GNOME. Hyprland's socket is shared in but untested, and Sway's isn't reachable. On GNOME, the sandbox can reach the whole Shell D-Bus interface (`--talk-name=org.gnome.Shell`), and it writes the extension into `~/.local/share/gnome-shell/extensions`, which is what lets it install and enable the extension.
 - Screenshot and recording actions run host programs (grim, gpu-screen-recorder, …), which the sandbox doesn't include, so they may not work.
 - `--device=all` is needed so the sandbox can reach `/dev/uinput`. That lets the app read and send input on the machine, just like the native daemon.
 

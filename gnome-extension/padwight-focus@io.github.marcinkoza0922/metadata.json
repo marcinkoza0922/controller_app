@@ -2,5 +2,5 @@
   "uuid": "padwight-focus@io.github.marcinkoza0922",
   "name": "Padwight focus",
   "description": "Tells padwight which window has focus, so each game's profile switches on its own.",
-  "shell-version": ["45", "46", "47", "48", "49", "50"]
+  "shell-version": ["45", "46", "47", "48", "49", "50", "51"]
 }

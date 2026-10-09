@@ -10,7 +10,7 @@ use super::dbus::call;
 
 const UUID: &str = "padwight-focus@io.github.marcinkoza0922";
 const SHELL: &str = "org.gnome.Shell";
-const EXTENSIONS: (&str, &str, &str) = (SHELL, "/org/gnome/Shell/Extensions", "org.gnome.Shell.Extensions");
+const EXTENSIONS: (&str, &str, &str) = (SHELL, "/org/gnome/Shell", "org.gnome.Shell.Extensions");
 /// `state` of an extension that is loaded and running.
 const ENABLED: f64 = 1.0;
 

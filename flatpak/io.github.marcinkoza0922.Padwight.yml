@@ -17,6 +17,10 @@ finish-args:
   - --device=all
   # Focus tracking: KWin's scripting API, and the event and command sockets of Hyprland.
   - --talk-name=org.kde.KWin
+  # GNOME: the Shell extension that reports focus is installed and enabled over this name.
+  # The name exposes the whole Shell D-Bus interface to the sandbox, not only the extension.
+  - --talk-name=org.gnome.Shell
+  - --filesystem=xdg-data/gnome-shell/extensions:create
   # Menu sounds, played through PipeWire or PulseAudio.
   - --socket=pulseaudio
   # Tray icon, when the daemon runs outside systemd (see the tray notes in the README).
