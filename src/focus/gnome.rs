@@ -62,5 +62,12 @@ fn install() -> Result<()> {
 }
 
 fn extension_dir() -> Result<PathBuf> {
-    Ok(dirs::data_dir().context("no data directory")?.join("gnome-shell/extensions").join(UUID))
+    // Inside a Flatpak, XDG_DATA_HOME is the app's own directory. GNOME reads the host's, which
+    // the manifest grants at the same path.
+    let data = if std::env::var_os("FLATPAK_ID").is_some() {
+        dirs::home_dir().map(|home| home.join(".local/share"))
+    } else {
+        dirs::data_dir()
+    };
+    Ok(data.context("no data directory")?.join("gnome-shell/extensions").join(UUID))
 }
