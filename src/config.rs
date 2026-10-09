@@ -2662,6 +2662,9 @@ pub struct Config {
     /// How each kind of overlay moves, unless the active game sets its own.
     #[serde(default, skip_serializing_if = "MotionSet::is_default", deserialize_with = "crate::motion::deserialize_set")]
     pub motion: MotionSet,
+    /// The sounds of each overlay, unless the active game sets its own.
+    #[serde(default, skip_serializing_if = "SoundSet::is_default")]
+    pub sounds: SoundSet,
     /// Font of every overlay, menu and keyboard (a bundled or installed family); the system's
     /// own when unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2693,6 +2696,7 @@ impl Default for Config {
             colourblind_tones: false,
             appearance: Appearance::Auto,
             motion: MotionSet::default(),
+            sounds: SoundSet::default(),
             gyro_calibration: BTreeMap::new(),
             keyboard_style: OverlayStyle::keyboard(),
             numpad_style: OverlayStyle::numpad(),
@@ -2918,7 +2922,7 @@ impl Config {
             info: s.info.into_iter().cloned().collect(),
             logs: s.logs.into_iter().cloned().collect(),
             layers: s.layers.into_iter().cloned().collect(),
-            sounds: self.active_game().sounds.unwrap_or_default(),
+            sounds: self.active_game().sounds.unwrap_or(self.sounds),
         }
     }
 

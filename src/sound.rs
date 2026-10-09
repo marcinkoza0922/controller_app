@@ -261,6 +261,10 @@ impl SoundSet {
         })
     }
 
+    pub fn is_default(&self) -> bool {
+        *self == SoundSet::default()
+    }
+
     /// The same set with every overlay silenced (their cues kept, for turning them back on).
     pub fn silenced(mut self) -> Self {
         for overlay in SoundOverlay::ALL {
