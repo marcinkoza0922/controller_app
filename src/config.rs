@@ -2558,6 +2558,22 @@ impl ScopeRef<'_> {
     }
 }
 
+/// Whether the settings window is light or dark. `Auto` follows the desktop.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Appearance {
+    #[default]
+    Auto,
+    Light,
+    Dark,
+}
+
+impl Appearance {
+    fn is_auto(&self) -> bool {
+        *self == Appearance::Auto
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Config {
     pub enabled: bool,
@@ -2587,6 +2603,9 @@ pub struct Config {
     /// they can be told apart without red and green.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub colourblind_tones: bool,
+    /// Light, dark or the desktop's choice, for the settings window.
+    #[serde(default, skip_serializing_if = "Appearance::is_auto")]
+    pub appearance: Appearance,
     /// Font of every overlay, menu and keyboard (a bundled or installed family); the system's
     /// own when unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2614,6 +2633,7 @@ impl Default for Config {
             ignored_devices: Vec::new(),
             auto_switch: AutoSwitch::default(),
             colourblind_tones: false,
+            appearance: Appearance::Auto,
             gyro_calibration: BTreeMap::new(),
             keyboard_style: OverlayStyle::keyboard(),
             numpad_style: OverlayStyle::numpad(),
@@ -2756,6 +2776,7 @@ impl Config {
             active: ProfileRef::default(),
             ignored_devices: old.ignored_devices,
             colourblind_tones: false,
+            appearance: Appearance::Auto,
             auto_switch: AutoSwitch { enabled: old.auto_switch.enabled, default_profile: None },
             gyro_calibration: old.gyro_calibration,
             keyboard_style: old.keyboard_style,

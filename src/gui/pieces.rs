@@ -10,19 +10,14 @@ use super::*;
 use crate::{
     config::{Button, Keyword, Piece},
     info::{PadFamily, Segment, button_glyph, glyph},
+    keyword_icon,
 };
 
-/// The colour a keyword is drawn in: one per kind of item, readable on light and dark.
-fn keyword_color(k: Keyword) -> Color {
-    match k {
-        Keyword::Toggle => Color::from_rgb8(0x2a, 0x9d, 0x8f),
-        Keyword::Turbo => Color::from_rgb8(0xe7, 0x6f, 0x20),
-        Keyword::Macro => Color::from_rgb8(0x8e, 0x5b, 0xd6),
-        Keyword::Menu => Color::from_rgb8(0xd6, 0x45, 0x7a),
-        Keyword::Layer => Color::from_rgb8(0xb0, 0x85, 0x10),
-        Keyword::Info => Color::from_rgb8(0x3f, 0x7f, 0xd8),
-        Keyword::Log => Color::from_rgb8(0x4f, 0x95, 0xa0),
-    }
+/// A keyword in its colour: its icon, then its word.
+fn keyword<'a>(k: Keyword) -> Element<'a, Message> {
+    let [r, g, b] = keyword_icon::colour(k);
+    let icon = svg(svg::Handle::from_memory(keyword_icon::svg(k).into_bytes())).width(14).height(14);
+    row![icon, text(k.word()).color(Color::from_rgb8(r, g, b))].spacing(4).align_y(Alignment::Center).into()
 }
 
 /// A summary on one line. `muted` greys the words, for rows that aren't changed.
@@ -31,7 +26,7 @@ pub(super) fn piece_line<'a>(pieces: Vec<Piece>, family: PadFamily, muted: bool)
         .into_iter()
         .map(|piece| match piece {
             Piece::Text(s) => text(s).color_maybe(muted.then_some(MUTED_COLOR)).into(),
-            Piece::Keyword(k) => text(k.word()).color(keyword_color(k)).into(),
+            Piece::Keyword(k) => keyword(k),
             Piece::Pad(b) => chip(pad_glyph(b, family)),
         })
         .collect();

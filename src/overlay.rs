@@ -883,6 +883,10 @@ pub mod draw {
                     }),
             );
         }
+        if let Some(k) = item.keyword {
+            let icon = iced::widget::svg::Handle::from_memory(crate::keyword_icon::svg(k).into_bytes());
+            line = line.push(iced::widget::svg(icon).width(size).height(size));
+        }
         line = line.push(text(label.to_string()).font(font).size(size).color(fg));
         if item.submenu {
             line = line.push(text("▸").font(font).size(size).color(Color { a: 0.7, ..fg }));

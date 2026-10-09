@@ -52,7 +52,7 @@ pub(super) fn top_item(row: Top, config: &Config) -> ItemView {
     match row {
         Top::Button(b) => {
             let action = profile.map_or(ButtonAction::Disabled, |p| p.button(b).clone());
-            button_item(b, action.summary())
+            ItemView { keyword: action.keyword(), ..button_item(b, action.summary()) }
         }
         Top::Stick(s) => badged(if s == Stick::Left { "LS" } else { "RS" }, format!("{} stick", values::side(s == Stick::Left))),
         Top::Trigger(t) => badged(if t == Trigger::Left { "LT" } else { "RT" }, format!("{} trigger", values::side(t == Trigger::Left))),
@@ -65,11 +65,11 @@ pub(super) fn top_item(row: Top, config: &Config) -> ItemView {
 
 /// A row with a button's chip in front of its label.
 pub(super) fn badged(badge: &str, label: String) -> ItemView {
-    ItemView { label, button: Some(badge.into()), submenu: false, buttons: Vec::new(), tone: Tone::Normal }
+    ItemView { label, button: Some(badge.into()), submenu: false, buttons: Vec::new(), tone: Tone::Normal, keyword: None }
 }
 
 pub(super) fn item(label: String) -> ItemView {
-    ItemView { label, button: None, submenu: false, buttons: Vec::new(), tone: Tone::Normal }
+    ItemView { label, button: None, submenu: false, buttons: Vec::new(), tone: Tone::Normal, keyword: None }
 }
 
 /// A row for a button: its glyph in front of the label.
@@ -83,7 +83,7 @@ pub(super) fn combo_item(buttons: &[Button], action: &ButtonAction) -> ItemView 
     if buttons.is_empty() {
         return item(format!("(no buttons yet): {label}"));
     }
-    ItemView { buttons: buttons.to_vec(), ..item(label) }
+    ItemView { buttons: buttons.to_vec(), keyword: action.keyword(), ..item(label) }
 }
 
 /// A row that adds something.

@@ -145,6 +145,7 @@ impl App {
                 }
             }
             Message::SetInfoGlyphs(family) => self.config.info_glyphs = family,
+            Message::SetAppearance(appearance) => self.config.appearance = appearance,
             Message::SetKeyboardStyle(style) => self.config.keyboard_style = style,
             Message::SetOverlayFont(font) => self.config.overlay_font = font,
             Message::SetColourblindTones(on) => self.config.colourblind_tones = on,
@@ -345,6 +346,27 @@ impl App {
         col.into()
     }
 
+    /// Light, dark or the desktop's choice. Only the settings window follows it; the overlays keep
+    /// their own colours.
+    fn view_appearance(&self) -> Element<'_, Message> {
+        let choice = |label: &'static str, appearance: Appearance| {
+            button(text(label).size(14))
+                .style(style::segment(self.config.appearance == appearance))
+                .padding([5, 14])
+                .on_press(Message::SetAppearance(appearance))
+        };
+        section(
+            "Appearance",
+            Some("Auto follows the desktop's light or dark setting.".into()),
+            vec![
+                container(row![choice("Auto", Appearance::Auto), choice("Light", Appearance::Light), choice("Dark", Appearance::Dark)].spacing(2))
+                    .padding(3)
+                    .style(style::segments)
+                    .into(),
+            ],
+        )
+    }
+
     pub(super) fn view_settings(&self) -> Element<'_, Message> {
         let glyphs = section(
             "Info overlays",
@@ -366,6 +388,7 @@ impl App {
             )],
         );
         column![
+            self.view_appearance(),
             self.view_auto_switch(),
             self.view_font_card(),
             self.view_colour_card(),

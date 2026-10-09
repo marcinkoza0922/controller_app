@@ -11,6 +11,7 @@ mod inputlog;
 mod input;
 mod ipc;
 mod keyboard;
+mod keyword_icon;
 mod launchers;
 mod library;
 mod media;

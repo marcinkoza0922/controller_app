@@ -1,5 +1,7 @@
 //! Short descriptions of buttons and actions, for the settings window and the input log.
 
+use serde::{Deserialize, Serialize};
+
 use super::{Button, ButtonAction};
 
 impl Button {
@@ -34,7 +36,7 @@ impl Button {
 }
 
 /// A word that says what an action does with its item, shown in its own colour.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Keyword {
     Toggle,
     Turbo,
@@ -85,6 +87,14 @@ impl ButtonAction {
     /// One-line description, for collapsed rows, the controller drawing and the input log.
     pub fn summary(&self) -> String {
         plain_text(&self.pieces())
+    }
+
+    /// The first keyword in the description, which is the one to draw an icon for.
+    pub fn keyword(&self) -> Option<Keyword> {
+        self.pieces().into_iter().find_map(|piece| match piece {
+            Piece::Keyword(k) => Some(k),
+            _ => None,
+        })
     }
 
     /// The description in pieces (see [`Piece`]).

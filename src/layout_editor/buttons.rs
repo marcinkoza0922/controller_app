@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::config::{Analog, Button, ButtonAction, GestureKind, MouseButton, Profile, Toggled, WheelDirection};
+use crate::config::{Analog, Button, ButtonAction, GestureKind, Keyword, MouseButton, Profile, Toggled, WheelDirection};
 
 /// Where an action goes: a button's own action, one of its gestures, or a combo's action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,6 +154,17 @@ impl Picker {
         }
     }
 
+    /// The keyword the picked action starts with, drawn as the row's icon.
+    pub fn keyword(self) -> Keyword {
+        match self {
+            Picker::Layer => Keyword::Layer,
+            Picker::Macro => Keyword::Macro,
+            Picker::Menu => Keyword::Menu,
+            Picker::Info => Keyword::Info,
+            Picker::Log => Keyword::Log,
+        }
+    }
+
     /// The action that uses the item called `name`.
     pub fn action(self, name: &str) -> ButtonAction {
         match self {
@@ -190,6 +201,17 @@ pub fn action_rows(slot: Slot) -> Vec<ActionRow> {
         rows.push(ActionRow::NotSet);
     }
     rows
+}
+
+/// The keyword drawn in front of a row's label, for the rows that pick a keyword's action or wrap
+/// the action in one.
+pub fn action_row_keyword(row: ActionRow) -> Option<Keyword> {
+    match row {
+        ActionRow::Pick(p) => Some(p.keyword()),
+        ActionRow::Wrap(Wrap::Toggle) => Some(Keyword::Toggle),
+        ActionRow::Wrap(Wrap::Turbo) => Some(Keyword::Turbo),
+        _ => None,
+    }
 }
 
 /// A row's label. The wrapper rows say what they will do to `current`, the slot's action now.
