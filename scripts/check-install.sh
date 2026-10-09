@@ -14,8 +14,15 @@ need desktop-file-validate
 need appstreamcli
 need python3
 
+# `systemd-analyze verify` also checks that the ExecStart program exists, and that depends on the
+# machine (the daemon is in ~/.cargo/bin here, and not on a CI runner). So each unit is checked as a
+# copy whose ExecStart is /bin/true; the directives around it are what's being checked.
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
 for unit in dist/padwight.service dist/padwight-flatpak.service; do
-    systemd-analyze verify --man=no "$unit"
+    copy="$tmp/$(basename "$unit")"
+    sed -E 's|^ExecStart=[^ ]+|ExecStart=/bin/true|' "$unit" > "$copy"
+    systemd-analyze verify --man=no "$copy"
     echo "ok: $unit"
 done
 
