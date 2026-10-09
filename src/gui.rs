@@ -34,7 +34,9 @@ use crate::{
     keyboard::{self, Layout},
     launchers, library,
     menu::MenuSession,
-    pack, pad_svg, style,
+    pack, pad_svg,
+    sound::{MenuSounds, SoundKind, SoundSpec},
+    style,
 };
 
 mod actions;
@@ -94,6 +96,8 @@ const MUTED_COLOR: Color = Color::from_rgb(0.55, 0.55, 0.6);
 struct App {
     /// Working copy being edited.
     config: Config,
+    /// Plays the previews of menu sounds.
+    sounds: crate::sound::Sounds,
     /// Last copy known to be applied; `config != saved` means unsaved edits.
     saved: Config,
     /// `None` while the daemon is unreachable.
@@ -365,6 +369,8 @@ enum Message {
     SetAppearance(Appearance),
     SetNintendoLayout(bool),
     SetGameNintendoLayout(Option<bool>),
+    SetGameMenuSounds(MenuSounds),
+    PreviewSound(SoundSpec),
     NewLog,
     ToggleLog(usize),
     ToggleLogAppearance(usize),
@@ -491,6 +497,7 @@ impl App {
         let app = App {
             saved: config.clone(),
             config,
+            sounds: crate::sound::Sounds::start(),
             status: None,
             page: Page::Overview,
             editing: 0,

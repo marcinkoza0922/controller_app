@@ -321,6 +321,11 @@ impl MenuSession {
         })
     }
 
+    /// The item the cursor is on in the menu on top, if it has one.
+    pub fn cursor(&self) -> Option<usize> {
+        self.stack.last().and_then(|f| f.cursor)
+    }
+
     /// Handles controller input; returns what to do, if anything.
     pub fn handle(&mut self, menus: &[Menu], ev: InputEvent, now: Instant) -> Option<MenuOutcome> {
         let menu = self.top(menus)?.clone();

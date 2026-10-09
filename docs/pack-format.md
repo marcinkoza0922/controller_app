@@ -1,13 +1,13 @@
 # `.padpack` format reference
 
-A pack is one game in one file: TOML, in the same shapes the app writes to `config.toml`. This page describes **format 9**, the format the current app writes. For a walkthrough of building one, see [tutorial-deus-ex-pack.md](tutorial-deus-ex-pack.md). The shipped examples are in `packs/`.
+A pack is one game in one file: TOML, in the same shapes the app writes to `config.toml`. This page describes **format 10**, the format the current app writes. For a walkthrough of building one, see [tutorial-deus-ex-pack.md](tutorial-deus-ex-pack.md). The shipped examples are in `packs/`.
 
 The easiest way to write a pack is in the app, then **Details → Export…**. Read this page when you want to edit the file by hand, check a value, or understand what the export produced.
 
 ## Top level
 
 ```toml
-format = 9                       # pack format version (required)
+format = 10                      # pack format version (required)
 macros = []                      # optional, see Macros
 overlay_font = "Rajdhani"        # optional, font for overlays, menus and keyboards
 
@@ -319,9 +319,22 @@ opacity = 0.94
 
 `keyboard_style`, `numpad_style`, `media_style` and `menu_style` use the same shape as an overlay's `style`. `overlay_font` names a bundled font (`assets/fonts`) or an installed family.
 
+## Menu sounds
+
+`[menu_sounds]` sets the sounds played as a menu's cursor moves and when an item is chosen. Every key is optional.
+
+```toml
+[menu_sounds]
+enabled = true                # false silences both
+step = { kind = "click", volume = 0.12, pitch = 1.2 }
+pick = { kind = "pop", volume = 0.3, pitch = 1.0 }
+```
+
+`kind` is `click`, `pop`, `chime`, `thud` or `crunch`. `volume` is 0–1 and `pitch` is 0.5–2 (an octave either way), both relative to the kind's own sound.
+
 ## Versioning
 
-- `format` is an integer. The app writes `9` and reads up to `9`. A pack with a newer `format` is refused with "update the app to import it". Older formats are upgraded when read.
+- `format` is an integer. The app writes `10` and reads up to `10`. A pack with a newer `format` is refused with "update the app to import it". Older formats are upgraded when read.
 - Format history:
   - 2 added layers.
   - 3 added toggles that start on.

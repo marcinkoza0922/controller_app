@@ -28,6 +28,7 @@ mod record;
 mod rumble;
 mod style;
 mod layout_editor;
+mod sound;
 mod system_menu;
 mod tray;
 
