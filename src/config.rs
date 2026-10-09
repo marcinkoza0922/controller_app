@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     fmt,
     path::{Path, PathBuf},
 };
@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 mod log;
+mod store;
 mod summary;
 pub use summary::{Keyword, Piece};
 mod touchpad;
@@ -2270,6 +2271,7 @@ pub struct Game {
     pub origin: Option<Origin>,
     #[serde(default)]
     pub rules: Vec<Rule>,
+    #[serde(default)]
     pub profiles: Vec<Profile>,
     /// Mapped with `ButtonAction::Macro`.
     #[serde(default)]
@@ -2345,21 +2347,6 @@ impl Game {
     pub fn ensure_guide_layer(&mut self) {
         if !self.layers.iter().any(|l| l.name == GUIDE_LAYER) {
             self.layers.push(Layer::guide());
-        }
-    }
-
-    /// Makes Guide hold the Guide layer wherever it still has the old default (switching
-    /// profiles), and adds the layer. Guide bindings someone edited are left alone.
-    pub fn adopt_guide_layer(&mut self) {
-        let mut changed = false;
-        for p in &mut self.profiles {
-            if p.button(Button::Guide) == &ButtonAction::NextProfile && !p.gestures.contains_key(&Button::Guide) {
-                p.take_guide();
-                changed = true;
-            }
-        }
-        if changed {
-            self.ensure_guide_layer();
         }
     }
 
@@ -2619,19 +2606,21 @@ pub struct Config {
     /// own when unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub overlay_font: Option<String>,
-    /// Profiles that aren't for a particular game (desktop, plain gamepad).
+    /// Profiles that aren't for a particular game (desktop, plain gamepad). Read from its folder.
+    #[serde(default = "default_general")]
     pub general: Game,
     #[serde(default)]
     pub shared: Shared,
     #[serde(default, rename = "setups", alias = "games")]
     pub games: Vec<Game>,
-    /// Set once Guide has been moved from switching profiles to the Guide layer (see
-    /// `Game::adopt_guide_layer`), so a later edit back to the old binding stays.
-    #[serde(default)]
-    pub guide_layer_adopted: bool,
     /// IDs of library packs the user asked never to be offered again (see `offer`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub declined_packs: Vec<String>,
+}
+
+/// The General setup a config starts with, for a `config.toml` that doesn't say.
+fn default_general() -> Game {
+    Config::default().general
 }
 
 impl Default for Config {
@@ -2654,24 +2643,12 @@ impl Default for Config {
             general: Game::new("General", vec![Profile::passthrough("Gamepad"), Profile::desktop("Desktop")]),
             shared: Shared::default(),
             games: Vec::new(),
-            guide_layer_adopted: true,
             declined_packs: Vec::new(),
         }
     }
 }
 
 impl Config {
-    /// Moves a config from before the Guide layer onto it, once.
-    fn adopt_guide_layer(&mut self) -> bool {
-        if self.guide_layer_adopted {
-            return false;
-        }
-        self.guide_layer_adopted = true;
-        self.general.adopt_guide_layer();
-        self.games.iter_mut().for_each(Game::adopt_guide_layer);
-        true
-    }
-
     pub fn path() -> PathBuf {
         dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
@@ -2679,183 +2656,22 @@ impl Config {
             .join("config.toml")
     }
 
-    /// Loads the config, writing the default one if none exists yet. A config from before
-    /// games existed is converted (see [`Config::from_legacy`]), keeping the original as
-    /// `config.toml.old` (or `.old.2`, … if that's taken).
+    /// Loads the config, writing the default one if none exists yet. See [`Config::load_from`].
     pub fn load() -> Result<Self> {
         Self::load_from(&Self::path())
     }
 
-    /// [`Config::load`] for the config at `path`.
+    /// [`Config::load`] for the app settings at `path`. The setups are read from the folders beside
+    /// it (see the `store` module).
     pub fn load_from(path: &Path) -> Result<Self> {
         if !path.exists() {
             let config = Config::default();
             config.save_to(path)?;
             return Ok(config);
         }
-        let text = std::fs::read_to_string(path)
-            .with_context(|| format!("reading {}", path.display()))?;
-        let text = migrate_text(&text);
-        match toml::from_str::<Config>(&text) {
-            Ok(mut config) => {
-                if config.adopt_guide_layer() {
-                    let backup = path.with_extension("toml.before-guide");
-                    if !backup.exists() {
-                        std::fs::copy(path, &backup).with_context(|| format!("keeping a copy at {}", backup.display()))?;
-                    }
-                    config.save_to(path)?;
-                }
-                Ok(config)
-            }
-            Err(e) => {
-                let old_format = toml::from_str::<toml::Table>(&text)
-                    .is_ok_and(|t| t.contains_key("profiles") && !t.contains_key("general"));
-                if !old_format {
-                    return Err(e).with_context(|| format!("parsing {}", path.display()));
-                }
-                let mut config = Config::from_legacy(&text).with_context(|| format!("converting {}", path.display()))?;
-                let backup = (1..)
-                    .map(|i| if i == 1 { path.with_extension("toml.old") } else { path.with_extension(format!("toml.old.{i}")) })
-                    .find(|p| !p.exists())
-                    .unwrap();
-                std::fs::copy(path, &backup).with_context(|| format!("keeping a copy at {}", backup.display()))?;
-                config.adopt_guide_layer();
-                config.save_to(path)?;
-                Ok(config)
-            }
-        }
-    }
-
-    /// Converts a config from before games existed. Each profile an auto-switch rule points
-    /// to becomes a game of its own (named after it, with its rules); the other profiles go to
-    /// General. Macros, menus and info overlays shared by all profiles become shared items;
-    /// one limited to some profiles goes with them if they all ended up in the same game (or
-    /// General), and is shared otherwise.
-    #[expect(clippy::too_many_lines, reason = "predates the size lints")]
-    pub fn from_legacy(text: &str) -> Result<Config> {
-        #[derive(Deserialize)]
-        struct Legacy {
-            #[serde(default = "yes")]
-            enabled: bool,
-            #[serde(default)]
-            active_profile: String,
-            #[serde(default)]
-            ignored_devices: Vec<String>,
-            #[serde(default)]
-            auto_switch: LegacyAutoSwitch,
-            #[serde(default)]
-            gyro_calibration: BTreeMap<String, [f32; 3]>,
-            #[serde(default = "default_keyboard_style")]
-            keyboard_style: OverlayStyle,
-            #[serde(default = "default_numpad_style")]
-            numpad_style: OverlayStyle,
-            #[serde(default)]
-            info_glyphs: crate::info::PadFamily,
-            #[serde(default)]
-            macros: Vec<toml::Table>,
-            #[serde(default)]
-            menus: Vec<toml::Table>,
-            #[serde(default)]
-            info_overlays: Vec<toml::Table>,
-            profiles: Vec<Profile>,
-        }
-        #[derive(Deserialize)]
-        struct LegacyAutoSwitch {
-            #[serde(default = "yes")]
-            enabled: bool,
-            #[serde(default)]
-            default_profile: Option<String>,
-            #[serde(default)]
-            rules: Vec<Rule>,
-        }
-        impl Default for LegacyAutoSwitch {
-            fn default() -> Self {
-                LegacyAutoSwitch { enabled: true, default_profile: None, rules: Vec::new() }
-            }
-        }
-
-        let old: Legacy = toml::from_str(text)?;
-        let ruled = |name: &str| old.auto_switch.rules.iter().any(|r| r.profile == name);
-        // Where each old profile goes: its own game, or General (`None`).
-        let home = |name: &str| -> Option<Option<String>> {
-            old.profiles.iter().any(|p| p.name == name).then(|| ruled(name).then(|| name.to_string()))
-        };
-
-        let mut config = Config {
-            enabled: old.enabled,
-            active: ProfileRef::default(),
-            ignored_devices: old.ignored_devices,
-            colourblind_tones: false,
-            appearance: Appearance::Auto,
-            auto_switch: AutoSwitch { enabled: old.auto_switch.enabled, default_profile: None },
-            gyro_calibration: old.gyro_calibration,
-            keyboard_style: old.keyboard_style,
-            numpad_style: old.numpad_style,
-            media_style: OverlayStyle::media(),
-            menu_style: OverlayStyle::default(),
-            info_glyphs: old.info_glyphs,
-            nintendo_layout: false,
-            overlay_font: None,
-            general: Game::new("General", Vec::new()),
-            shared: Shared::default(),
-            games: Vec::new(),
-            guide_layer_adopted: false,
-            declined_packs: Vec::new(),
-        };
-        for p in &old.profiles {
-            if ruled(&p.name) {
-                let mut game = Game::new(&p.name, vec![p.clone()]);
-                game.rules = old.auto_switch.rules.iter().filter(|r| r.profile == p.name).cloned().collect();
-                config.games.push(game);
-            } else {
-                config.general.profiles.push(p.clone());
-            }
-        }
-        if config.general.profiles.is_empty() {
-            let name = free_name("Gamepad", |n| old.profiles.iter().any(|p| p.name == n));
-            config.general.profiles.push(Profile::passthrough(&name));
-        }
-
-        // Each item goes where all of its profiles went, or is shared.
-        let place = |mut table: toml::Table| -> (Option<Option<String>>, toml::Table) {
-            let homes: BTreeSet<Option<String>> = match table.remove("profiles") {
-                None => BTreeSet::new(),
-                Some(list) => list
-                    .as_array()
-                    .map(|l| l.iter().filter_map(|v| v.as_str()).filter_map(&home).collect())
-                    .unwrap_or_default(),
-            };
-            let target = (homes.len() == 1).then(|| homes.into_iter().next().unwrap());
-            (target, table)
-        };
-        for table in old.macros {
-            let (target, table) = place(table);
-            let item: Macro = table.try_into()?;
-            match target {
-                Some(game) => config.game_mut(game.as_deref()).unwrap().macros.push(item),
-                None => config.shared.macros.push(item),
-            }
-        }
-        for table in old.menus {
-            let (target, table) = place(table);
-            let item: Menu = table.try_into()?;
-            match target {
-                Some(game) => config.game_mut(game.as_deref()).unwrap().menus.push(item),
-                None => config.shared.menus.push(item),
-            }
-        }
-        for table in old.info_overlays {
-            let (target, table) = place(table);
-            let item: InfoOverlay = table.try_into()?;
-            match target {
-                Some(game) => config.game_mut(game.as_deref()).unwrap().info.push(item),
-                None => config.shared.info.push(item),
-            }
-        }
-
-        let at = |name: &str| home(name).map(|game| ProfileRef { game, profile: name.to_string() });
-        config.active = at(&old.active_profile).unwrap_or_else(|| config.fallback_profile());
-        config.auto_switch.default_profile = old.auto_switch.default_profile.as_deref().and_then(at);
+        let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+        let mut config: Config = toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+        store::load(store::root_of(path), &mut config)?;
         Ok(config)
     }
 
@@ -2863,21 +2679,14 @@ impl Config {
         self.save_to(&Self::path())
     }
 
-    /// [`Config::save`] to `path`.
+    /// [`Config::save`] to `path`, with the setups written beside it.
     pub fn save_to(&self, path: &Path) -> Result<()> {
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        // Write-then-rename so the daemon never reads a half-written file. The file is private from
-        // the moment it is created, and set again in case an earlier run left one with a looser mode.
+        let root = store::root_of(path);
+        std::fs::create_dir_all(root)?;
+        store::save(root, self)?;
+        // Write-then-rename so the daemon never reads a half-written file.
         let tmp = path.with_extension("toml.tmp");
-        {
-            use std::io::Write;
-            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-            let mut file = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp)?;
-            file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-            file.write_all(toml::to_string_pretty(self)?.as_bytes())?;
-        }
+        store::write_private(&tmp, &store::app_settings(self)?)?;
         std::fs::rename(&tmp, path)?;
         Ok(())
     }
@@ -3278,36 +3087,6 @@ key_threshold = 0.2
     }
 
     #[test]
-    fn old_guide_bindings_move_to_the_guide_layer_once() {
-        let old_guide = |p: &mut Profile| {
-            p.set_button(Button::Guide, ButtonAction::NextProfile);
-            p.gestures.remove(&Button::Guide);
-        };
-        let mut config = Config { guide_layer_adopted: false, ..Config::default() };
-        config.general.layers.clear();
-        config.general.profiles.iter_mut().for_each(old_guide);
-        let mut doom = Game::new("Doom", vec![Profile::pc_action("Play"), Profile::desktop("Menus")]);
-        doom.profiles.iter_mut().for_each(old_guide);
-        // One of them was changed on purpose; a game with its own "Guide" layer keeps it.
-        doom.profiles[1].set_button(Button::Guide, ButtonAction::Keys(vec!["KEY_F12".into()]));
-        let mut mine = Game::new("Mine", vec![Profile::passthrough("P")]);
-        mine.profiles[0].set_button(Button::Guide, ButtonAction::NextProfile);
-        mine.layers = vec![Layer::new(GUIDE_LAYER)];
-        doom.layers.clear();
-        config.games = vec![doom, mine];
-
-        assert!(config.adopt_guide_layer());
-        assert!(config.general.profiles.iter().all(|p| p.button(Button::Guide) == &ButtonAction::guide_hold()));
-        assert_eq!(config.general.layers, [Layer::guide()]);
-        let doom = &config.games[0];
-        assert_eq!(doom.profiles[0].button(Button::Guide), &ButtonAction::guide_hold());
-        assert_eq!(doom.profiles[1].button(Button::Guide), &ButtonAction::Keys(vec!["KEY_F12".into()]));
-        assert_eq!(doom.layers, [Layer::guide()]);
-        assert_eq!(config.games[1].layers, [Layer::new(GUIDE_LAYER)], "an existing layer is left alone");
-        assert!(!config.adopt_guide_layer(), "only once");
-    }
-
-    #[test]
     fn the_guide_layer_can_always_switch_profiles() {
         assert_eq!(Layer::guide().buttons.get(&Button::DpadUp), Some(&ButtonAction::NextProfile));
     }
@@ -3563,79 +3342,6 @@ key_threshold = 0.2
     }
 
     #[test]
-    fn configs_from_before_games_are_converted() {
-        let old = r#"
-enabled = true
-active_profile = "Souls"
-ignored_devices = ["Wheel"]
-
-[auto_switch]
-enabled = true
-default_profile = "Desktop"
-
-[[auto_switch.rules]]
-kind = "steam_app_id"
-value = "1245620"
-profile = "Souls"
-
-[[macros]]
-name = "Roll"
-profiles = ["Souls"]
-steps = [{ wait = 10 }]
-
-[[macros]]
-name = "Screenshot"
-steps = [{ wait = 20 }]
-
-[[macros]]
-name = "Both"
-profiles = ["Souls", "Desktop"]
-steps = []
-
-[[info_overlays]]
-name = "Help"
-profiles = ["Desktop"]
-always = true
-"#;
-        let mut value: toml::Table = toml::from_str(old).unwrap();
-        let profiles = [Profile::desktop("Desktop"), Profile::pc_action("Souls")];
-        value.insert("profiles".into(), toml::Value::try_from(profiles).unwrap());
-        let config = Config::from_legacy(&toml::to_string(&value).unwrap()).unwrap();
-
-        assert_eq!(config.general.profiles.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["Desktop"]);
-        assert_eq!(config.games.len(), 1);
-        let souls = &config.games[0];
-        assert_eq!((souls.name.as_str(), souls.profiles[0].name.as_str()), ("Souls", "Souls"));
-        assert_eq!(souls.rules, [Rule::new(RuleKind::SteamAppId, "1245620", "Souls")]);
-        assert_eq!(souls.names(ItemKind::Macro), ["Roll"]);
-        assert_eq!(config.shared.names(ItemKind::Macro), ["Screenshot", "Both"], "unscoped, or spread over setups");
-        assert_eq!(config.general.names(ItemKind::Info), ["Help"]);
-        assert!(config.general.info[0].always);
-        assert_eq!(config.active, ProfileRef::new(Some("Souls"), "Souls"));
-        assert_eq!(config.auto_switch.default_profile, Some(ProfileRef::new(None, "Desktop")));
-        assert_eq!(config.ignored_devices, ["Wheel"]);
-        // And it saves in the new format.
-        let back: Config = toml::from_str(&toml::to_string_pretty(&config).unwrap()).unwrap();
-        assert_eq!(back, config);
-    }
-
-    #[test]
-    fn a_converted_config_always_has_a_general_profile() {
-        let mut value = toml::Table::new();
-        value.insert("active_profile".into(), "Gamepad".into());
-        value.insert("profiles".into(), toml::Value::try_from([Profile::passthrough("Gamepad")]).unwrap());
-        let rule = toml::Value::try_from(Rule::new(RuleKind::Executable, "game.exe", "Gamepad")).unwrap();
-        let mut auto = toml::Table::new();
-        auto.insert("rules".into(), toml::Value::Array(vec![rule]));
-        value.insert("auto_switch".into(), auto.into());
-        let config = Config::from_legacy(&toml::to_string(&value).unwrap()).unwrap();
-        assert_eq!(config.games[0].name, "Gamepad");
-        assert_eq!(config.general.profiles[0].name, "Gamepad (2)", "named apart from the setup's profile");
-        assert!(config.auto_switch.enabled);
-        assert_eq!(config.active, ProfileRef::new(Some("Gamepad"), "Gamepad"));
-    }
-
-    #[test]
     fn replacing_the_config_keeps_follows_or_replaces_the_active_profile() {
         let mut config = Config::default();
         config.games.push(Game::new("Doom", vec![Profile::pc_action("Play")]));
@@ -3754,57 +3460,6 @@ always = true
         assert_eq!(game.menus[0].items[0].action, ButtonAction::Macro { name: "New".into(), repeat: false });
     }
 
-    /// A config from before games existed, with one auto-switch rule and one macro.
-    const LEGACY: &str = r#"
-enabled = true
-active_profile = "Souls"
-
-[auto_switch]
-enabled = true
-default_profile = "Desktop"
-
-[[auto_switch.rules]]
-kind = "steam_app_id"
-value = "1245620"
-profile = "Souls"
-
-[[macros]]
-name = "Roll"
-profiles = ["Souls"]
-steps = [{ wait = 10 }]
-"#;
-
-    fn legacy_config() -> String {
-        let mut value: toml::Table = toml::from_str(LEGACY).unwrap();
-        let profiles = [Profile::desktop("Desktop"), Profile::pc_action("Souls")];
-        value.insert("profiles".into(), toml::Value::try_from(profiles).unwrap());
-        toml::to_string(&value).unwrap()
-    }
-
-    #[test]
-    fn a_converted_config_saves_and_loads_unchanged() {
-        // What `load` does on a legacy file: convert, then save. Loading the saved file again
-        // must give the same config and need no further migration.
-        let config = Config::from_legacy(&legacy_config()).unwrap();
-        let saved = toml::to_string_pretty(&config).unwrap();
-        let back: Config = toml::from_str(&saved).unwrap();
-        assert!(back == config, "the saved file loads back as the same config");
-        let migrated: Config = toml::from_str(&migrate_text(&saved)).unwrap();
-        assert!(migrated == config, "migrating a saved file changes nothing");
-    }
-
-    #[test]
-    fn damaged_configs_are_refused_or_handled_without_panicking() {
-        let current = toml::to_string_pretty(&Config::default()).unwrap();
-        let legacy = legacy_config();
-        for text in crate::library::mutants(&current, 97).iter().chain(&crate::library::mutants(&legacy, 37)) {
-            let migrated = migrate_text(text);
-            let _ = toml::from_str::<Config>(&migrated);
-            let _ = Config::from_legacy(text);
-            let _ = Config::from_legacy(&migrated);
-        }
-    }
-
     fn scratch_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("padwight-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -3828,40 +3483,6 @@ steps = [{ wait = 10 }]
         std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o644)).unwrap();
         Config::default().save_to(&path).unwrap();
         assert_eq!(mode(&path), 0o600, "a save over a loose temporary file is private too");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn a_legacy_config_is_converted_once_and_its_original_is_kept() {
-        let dir = scratch_dir("legacy-backup");
-        let path = dir.join("config.toml");
-        let original = legacy_config();
-        std::fs::write(&path, &original).unwrap();
-
-        let config = Config::load_from(&path).unwrap();
-        let backup = dir.join("config.toml.old");
-        assert_eq!(std::fs::read_to_string(&backup).unwrap(), original, "the backup is the file as it was");
-        let converted = std::fs::read_to_string(&path).unwrap();
-        assert!(converted != original, "the file is rewritten in the new format");
-
-        // Loading again changes nothing: same config, same file, no second backup.
-        assert!(Config::load_from(&path).unwrap() == config);
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), converted);
-        assert!(!dir.join("config.toml.old.2").exists());
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn a_later_conversion_keeps_the_earlier_backup() {
-        let dir = scratch_dir("legacy-backup-twice");
-        let path = dir.join("config.toml");
-        std::fs::write(dir.join("config.toml.old"), "from an earlier conversion").unwrap();
-        let original = legacy_config();
-        std::fs::write(&path, &original).unwrap();
-
-        Config::load_from(&path).unwrap();
-        assert_eq!(std::fs::read_to_string(dir.join("config.toml.old")).unwrap(), "from an earlier conversion");
-        assert_eq!(std::fs::read_to_string(dir.join("config.toml.old.2")).unwrap(), original);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

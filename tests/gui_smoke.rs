@@ -19,7 +19,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use common::{Daemon, TIMEOUT, assert_log_clean, daemon_log, default_config, serial, spawn_daemon, temp_root, wait_for};
+use common::{install_config, Daemon, TIMEOUT, assert_log_clean, daemon_log, default_config, serial, spawn_daemon, temp_root, wait_for};
 
 /// How long the window is left open. It draws its first page at once and then polls the daemon once
 /// a second, so this covers several polls.
@@ -38,7 +38,7 @@ fn gui_opens_and_keeps_running() {
     // One daemon for the whole test. The window finds its socket and doesn't start another.
     let config = root.join("config/padwight");
     fs::create_dir_all(&config).unwrap();
-    fs::write(config.join("config.toml"), default_config()).unwrap();
+    install_config(&config, &default_config());
     let mut daemon: Daemon = spawn_daemon(&root, Some(&run));
     let socket = run.join("padwight.sock");
     let deadline = Instant::now() + TIMEOUT;

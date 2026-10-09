@@ -4,7 +4,7 @@ Background service that remaps gamepad inputs, or turns them into mouse and keyb
 
 - **daemon**: grabs physical gamepads (evdev) so nothing else sees them, runs the active profile, and emits through virtual uinput devices (an Xbox 360-style pad plus a keyboard and a mouse).
 - **gui**: edits profiles and talks to the daemon over `$XDG_RUNTIME_DIR/padwight.sock`.
-- **config**: `~/.config/padwight/config.toml`. The daemon is the only writer while it runs; after editing by hand, run `padwight reload`. A config from before setups existed is converted on first load, and the original is kept as `config.toml.old`. Each profile that an auto-switch rule pointed to becomes a setup of its own with those rules; the rest go to General. Macros, menus and info overlays limited to one setup's profiles move into that setup, and the others become shared.
+- **config**: `~/.config/padwight/`. `config.toml` holds the app settings. Each setup is a folder under `setups/` (General is `general/`, shared items are `shared/`), with a `setup.toml` and one file per profile, layer, macro, menu, overlay and log. Copy a setup's folder to another machine to move it. The daemon is the only writer while it runs; after editing by hand, run `padwight reload`.
 
 ## Documentation
 
@@ -77,7 +77,7 @@ flatpak run io.github.marcinkoza0922.Padwight          # open the GUI
 
 To run the daemon at login, copy `dist/padwight-flatpak.service` to `~/.config/systemd/user/` and enable it. Things that differ from the native install:
 
-- Settings live in `~/.var/app/io.github.marcinkoza0922.Padwight/config/padwight/`. To keep your existing setups, copy `~/.config/padwight/config.toml` there.
+- Settings live in `~/.var/app/io.github.marcinkoza0922.Padwight/config/padwight/`. To keep your existing setups, copy `~/.config/padwight/` there.
 - The motion-sensor rule is a host file, so install it with the `sudo` commands above; the app can't run `sudo`.
 - Game detection reads Steam and Lutris libraries read-only. Other library folders need `flatpak override --user --filesystem=/path:ro io.github.marcinkoza0922.Padwight`.
 - The sandbox has its own process list, so a window is identified by its class and title only, not by its executable. Focus tracking works through KWin. Hyprland's socket is shared in but untested; Sway's isn't reachable.

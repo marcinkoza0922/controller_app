@@ -37,7 +37,7 @@ Everything the daemon knows about the desktop comes from focus trackers (see bel
 
  gui.rs ◄──── IPC: $XDG_RUNTIME_DIR/padwight.sock (ipc.rs, one JSON line per request)
    │
-   └──── ~/.config/padwight/config.toml  (daemon is the only writer while it runs)
+   └──── ~/.config/padwight/  (config.toml, setups/, general/, shared/; daemon is the only writer while it runs)
 ```
 
 1. **Input.** `input.rs` reads each physical pad's evdev node and turns raw events into normalized buttons (following the Linux gamepad spec), sticks in −1..1, and triggers in 0..1. Touchpads have their own node (`input/touchpad.rs`) and reach the engine like buttons.
@@ -129,10 +129,10 @@ Line counts are approximate and change; `scripts/long-files.sh` lists the files 
 
 ## Configuration and state
 
-- **File.** `~/.config/padwight/config.toml` (`Config::path()`). The shape is the in-memory `Config`: app-wide settings, the built-in **General** game, **Shared** items, and the list of **games**.
+- **Files.** `~/.config/padwight/config.toml` (`Config::path()`) holds the app-wide settings. `src/config/store.rs` reads and writes the rest: `general/` (the built-in **General** setup), `setups/NNN-name/` (one per game), and `shared/`. Each setup folder has `setup.toml` (name, rules, looks) and a subfolder per kind of item (`profiles/`, `layers/`, `macros/`, `menus/`, `info/`, `logs/`), with one numbered file per item. Each save rewrites the tree through a staging folder.
 - **Single writer.** While the daemon runs, it is the only process that writes the file. The GUI sends `SetConfig` over IPC, and the daemon saves. After a hand edit, `padwight reload` tells the daemon to re-read it.
 - **Unsaved edits.** The GUI keeps edits in memory until **Save & apply**. Revert drops them.
-- **Migration.** Old configs are converted on first load; the original is kept as `config.toml.old` (or `.old.2`, …). `Config::ensure_guide_layer` adds the Guide layer to games that lack one.
+- **No migration.** Older single-file configs aren't read; the format can change freely. `Config::ensure_guide_layer` still adds the Guide layer to games that lack one.
 - **Names.** Items are unique by kind within a game. Game items can't reuse a Shared item's name. See [specs.md](specs.md).
 
 ## Packs

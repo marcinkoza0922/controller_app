@@ -24,13 +24,60 @@ pub fn serial() -> MutexGuard<'static, ()> {
     SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// The daemon's default config, as it writes it on first start. Its Gamepad profile (the active one)
-/// passes every button through; the test changes South and East, to hold a key and a mouse button.
-/// Regenerate it if the config format changes: start the daemon with an empty XDG_CONFIG_HOME.
+/// The daemon's default config as one file, the way the tests write it. Its Gamepad profile (the
+/// active one) passes every button through; the test changes South and East, to hold a key and a
+/// mouse button. [`install_config`] lays it out in the folders the daemon reads.
 const DEFAULT_CONFIG: &str = include_str!("../fixtures/default-config.toml");
 
 /// The default config with every real gamepad on this machine ignored, so a daemon started by a
 /// test never grabs the user's controller. The test's own controllers are not on the list.
+/// Writes `text` (a config in one file, with `general`, `setups` and `shared` inside it) into
+/// `config_dir` in the layout the daemon reads: `config.toml` for the app settings, and a folder
+/// per setup with its profiles, layers and other items as files.
+pub fn install_config(config_dir: &Path, text: &str) {
+    let mut table: toml::Table = toml::from_str(text).unwrap();
+    table.remove("guide_layer_adopted");
+    table.remove("games");
+    let setups = table.remove("setups");
+    let mut general = table.remove("general").and_then(|v| v.try_into::<toml::Table>().ok()).unwrap_or_default();
+    general.entry("name").or_insert(toml::Value::String("General".into()));
+    write_setup(&config_dir.join("general"), general);
+    if let Some(toml::Value::Array(list)) = setups {
+        for (i, setup) in list.into_iter().enumerate() {
+            let setup: toml::Table = setup.try_into().unwrap();
+            let name = setup["name"].as_str().unwrap().to_string();
+            write_setup(&config_dir.join("setups").join(format!("{:03}-{name}", i + 1)), setup);
+        }
+    }
+    if let Some(toml::Value::Table(shared)) = table.remove("shared") {
+        for (key, dir) in [("macros", "macros"), ("menus", "menus"), ("info_overlays", "info"), ("log_overlays", "logs")] {
+            write_items(&config_dir.join("shared").join(dir), shared.get(key));
+        }
+    }
+    fs::create_dir_all(config_dir).unwrap();
+    fs::write(config_dir.join("config.toml"), toml::to_string_pretty(&table).unwrap()).unwrap();
+}
+
+/// A setup's folder: `setup.toml`, and one file per item in a subfolder for its kind.
+fn write_setup(dir: &Path, mut setup: toml::Table) {
+    fs::create_dir_all(dir).unwrap();
+    for (key, sub) in [("profiles", "profiles"), ("layers", "layers"), ("macros", "macros"), ("menus", "menus"), ("info_overlays", "info"), ("log_overlays", "logs")] {
+        let items = setup.remove(key);
+        write_items(&dir.join(sub), items.as_ref());
+    }
+    fs::write(dir.join("setup.toml"), toml::to_string_pretty(&setup).unwrap()).unwrap();
+}
+
+/// One numbered file per item of a list, as the daemon saves them.
+fn write_items(dir: &Path, items: Option<&toml::Value>) {
+    fs::create_dir_all(dir).unwrap();
+    let Some(toml::Value::Array(items)) = items else { return };
+    for (i, item) in items.iter().enumerate() {
+        let name = item["name"].as_str().unwrap_or("item");
+        fs::write(dir.join(format!("{:03}-{name}.toml", i + 1)), toml::to_string_pretty(item).unwrap()).unwrap();
+    }
+}
+
 pub fn default_config() -> String {
     let ignored: Vec<String> = real_gamepads().iter().map(|name| format!("{name:?}")).collect();
     DEFAULT_CONFIG.replace("ignored_devices = []", &format!("ignored_devices = [{}]", ignored.join(", ")))
@@ -103,10 +150,9 @@ pub fn wait_for<T>(what: &str, mut f: impl FnMut() -> Option<T>) -> T {
 /// set it gets that as `XDG_RUNTIME_DIR`; without, it has none and uses its temp-dir fallback.
 /// Its output goes to `root/daemon.log`.
 pub fn spawn_daemon(root: &Path, runtime: Option<&Path>) -> Daemon {
-    let config = root.join("config/padwight/config.toml");
-    if !config.exists() {
-        fs::create_dir_all(config.parent().unwrap()).unwrap();
-        fs::write(&config, default_config()).unwrap();
+    let config = root.join("config/padwight");
+    if !config.join("config.toml").exists() {
+        install_config(&config, &default_config());
     }
     let tmp = root.join("tmp");
     fs::create_dir_all(&tmp).unwrap();
