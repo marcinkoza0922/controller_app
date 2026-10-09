@@ -229,7 +229,6 @@ pub enum ButtonAction {
     Mouse(MouseButton),
     /// One wheel notch on press; keeps scrolling while held (after a short delay).
     Wheel(WheelDirection),
-    NextProfile,
     /// Several actions at once, pressed in order and released in reverse.
     Multi(Vec<ButtonAction>),
     /// First press holds the inner action down, the next press releases it.
@@ -1403,7 +1402,6 @@ impl Layer {
             (Button::LeftBumper, ToggleMedia),
             (Button::West, ToggleOverlay),
             (Button::North, ToggleNumpad),
-            (Button::DpadUp, NextProfile),
             (Button::DpadRight, key("KEY_ENTER")),
             (Button::DpadDown, key("KEY_TAB")),
             (Button::DpadLeft, key("KEY_ESC")),
@@ -3071,14 +3069,14 @@ mod tests {
         );
         config.general.profiles[0].combos.push(Combo {
             buttons: vec![Button::Select, Button::Start],
-            action: ButtonAction::NextProfile,
+            action: ButtonAction::Screenshot,
         });
         config.general.profiles[0].gestures.insert(
             Button::North,
             Gestures {
                 double_tap: Some(ButtonAction::Keys(vec!["KEY_F5".into()])),
                 triple_tap: None,
-                long_press: Some(ButtonAction::NextProfile),
+                long_press: Some(ButtonAction::Screenshot),
             },
         );
         let back: Config = toml::from_str(&toml::to_string_pretty(&config).unwrap()).unwrap();
@@ -3205,8 +3203,7 @@ key_threshold = 0.2
             for k in keys {
                 assert!(evdev::KeyCode::from_str(k).is_ok(), "{}: bad key {k}", p.name);
             }
-            // Guide always opens the Guide layer, which can switch profiles, so no template can
-            // trap you in it.
+            // Guide always opens the Guide layer, which holds the system shortcuts.
             assert_eq!(p.button(Button::Guide), &ButtonAction::guide_hold(), "{}", p.name);
             assert_eq!(
                 p.gestures.get(&Button::Guide).and_then(|g| g.double_tap.as_ref()),
@@ -3226,8 +3223,8 @@ key_threshold = 0.2
     }
 
     #[test]
-    fn the_guide_layer_can_always_switch_profiles() {
-        assert_eq!(Layer::guide().buttons.get(&Button::DpadUp), Some(&ButtonAction::NextProfile));
+    fn the_guide_layer_leaves_profiles_alone() {
+        assert_eq!(Layer::guide().buttons.get(&Button::DpadUp), None);
     }
 
     #[test]
@@ -3549,7 +3546,7 @@ key_threshold = 0.2
     #[test]
     fn layers_override_on_top_of_a_profile_newest_last() {
         let mut base = Profile::desktop("Desktop");
-        base.gestures.insert(Button::North, Gestures { double_tap: Some(ButtonAction::NextProfile), ..Gestures::default() });
+        base.gestures.insert(Button::North, Gestures { double_tap: Some(ButtonAction::Screenshot), ..Gestures::default() });
         let f = |k: &str| ButtonAction::Keys(vec![k.into()]);
         let mut a = Layer::new("A");
         a.buttons.insert(Button::South, f("KEY_F1"));

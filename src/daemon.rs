@@ -653,7 +653,6 @@ impl Daemon {
         let now = Instant::now();
         self.tick_overlays(now);
         let Some(base) = self.config.active() else { return };
-        let mut switch = false;
         let mut toggle_overlay = None;
         let mut screenshot = false;
         let mut recording = false;
@@ -666,7 +665,7 @@ impl Daemon {
             }
             fired.push(*id);
             let mut out = Vec::new();
-            switch |= dev.engine.timers(layered(&dev.layered, base), now, &mut out);
+            dev.engine.timers(layered(&dev.layered, base), now, &mut out);
             if dev.refresh_layers(&self.config) {
                 dev.engine.resync(layered(&dev.layered, base), &mut out);
             }
@@ -679,9 +678,6 @@ impl Daemon {
                 menu_request = Some((*id, request));
             }
             dev.draw_status();
-        }
-        if switch && let Some(next) = self.config.next_profile(self.pad_features().as_deref()) {
-            self.switch_profile(next, "Next profile, from the controller");
         }
         if let Some(layout) = toggle_overlay {
             self.toggle_overlay(layout);
@@ -1046,7 +1042,7 @@ impl Daemon {
     fn run_menu_item(&mut self, device: u64, menu: &str, item: usize, action: &crate::config::ButtonAction) {
         let Some(dev) = self.devices.get_mut(&device) else { return };
         let mut out = Vec::new();
-        let switch = dev.engine.tap_menu_item(menu, item, action, &mut out);
+        dev.engine.tap_menu_item(menu, item, action, &mut out);
         if dev.refresh_layers(&self.config)
             && let Some(base) = self.config.active()
         {
@@ -1058,13 +1054,10 @@ impl Daemon {
         let recording = dev.engine.take_recording_toggle();
         let media = dev.engine.take_media_toggle();
         let menu_request = dev.engine.take_menu_request();
-        // Switching profiles or opening the keyboard closes a menu that is still up.
+        // Opening the keyboard closes a menu that is still up.
         let menu_up = matches!(self.active, Some(Active::Menu { .. }));
-        if menu_up && (switch || toggle_overlay.is_some()) {
+        if menu_up && toggle_overlay.is_some() {
             self.close_overlay();
-        }
-        if switch && let Some(next) = self.config.next_profile(self.pad_features().as_deref()) {
-            self.switch_profile(next, "Next profile, from the controller");
         }
         if let Some(layout) = toggle_overlay {
             self.toggle_overlay(layout);
@@ -1643,11 +1636,10 @@ impl Daemon {
         let Some(base) = self.config.active() else { return };
         let Some(dev) = self.devices.get_mut(&id) else { return };
         let mut out = Vec::new();
-        let mut switch = false;
         let now = Instant::now();
         for ev in events {
             dev.view.apply(&ev);
-            switch |= dev.engine.handle(layered(&dev.layered, base), ev, now, &mut out);
+            dev.engine.handle(layered(&dev.layered, base), ev, now, &mut out);
             // A layer started or ended: the next events use it, and sticks, triggers and
             // gyro switch modes right away.
             if dev.refresh_layers(&self.config) {
@@ -1670,9 +1662,6 @@ impl Daemon {
         let recording = dev.engine.take_recording_toggle();
         let media = dev.engine.take_media_toggle();
         let menu_request = dev.engine.take_menu_request();
-        if switch && let Some(next) = self.config.next_profile(self.pad_features().as_deref()) {
-            self.switch_profile(next, "Next profile, from the controller");
-        }
         if let Some(layout) = toggle_overlay {
             self.toggle_overlay(layout);
         }

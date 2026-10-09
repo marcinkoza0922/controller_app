@@ -88,7 +88,6 @@ A button's value is an **action**. Each form is one TOML key:
 | `mouse` | `mouse = "Right"` | A mouse button: `Left`, `Right`, `Middle`, `Back`, `Forward`. |
 | `wheel` | `wheel = "Up"` | One wheel notch per press, and keeps scrolling while held. `Up`, `Down`, `Left`, `Right`. |
 | `gamepad` | `gamepad = "Guide"` | Sends a gamepad button to the virtual pad, with any button name above. |
-| `"next_profile"` | | Switches to the next profile of the game. |
 | `"toggle_overlay"`, `"toggle_numpad"` | | Opens or closes the on-screen keyboard or numpad. |
 | `"screenshot"`, `"toggle_recording"`, `"toggle_media"`, `"force_quit"` | | The Guide-layer actions: screenshot, start or stop recording, media controls, force-quit the focused game. |
 | `multi` | `multi = [{ layer = "Guide" }, { show_info = "Controls" }]` | Several actions at once, pressed in order and released in reverse. |
@@ -291,7 +290,6 @@ swallow_unbound = true           # buttons the layer doesn't set do nothing
 
 [layers.buttons]
 West = "toggle_overlay"
-DpadUp = "next_profile"
 
 [layers.buttons.DpadDown]
 keys = ["KEY_TAB"]
@@ -302,7 +300,7 @@ speed = 1600.0
 
 A layer can override `buttons`, `gestures`, `combos`, `disabled_combos`, `left_stick`, `right_stick`, `left_trigger`, `right_trigger` and `gyro`. Each override replaces the profile's setting for that input only.
 
-**Guide** is special. In a pack, every profile's `Guide` button must hold the layer named `Guide`, and the pack must contain that layer: the library check fails otherwise. Every game gets the system shortcuts while Guide is down, whether or not its pack carries them: the app fills in whatever a game's Guide layer leaves unset when it loads, imports or saves a setup. A pack's Guide layer must still carry all of them, so the pack file shows what Guide does, and the library check fails otherwise. The shortcuts: `+ X` keyboard, `+ Y` numpad, `+ LB` media controls, `+ RB` screenshot, `+ Left stick` recording, `+ B` force-quit, `+ RT` / `+ LT` clicks, `+ Right stick` mouse, `+ D-pad` Enter, Tab and Escape, `+ D-pad Up` next profile, and so on. Its bindings are listed in [the Guide design notes](development/guide.md).
+**Guide** is special. In a pack, every profile's `Guide` button must hold the layer named `Guide`, and the pack must contain that layer: the library check fails otherwise. Every game gets the system shortcuts while Guide is down, whether or not its pack carries them: the app fills in whatever a game's Guide layer leaves unset when it loads, imports or saves a setup. A pack's Guide layer must still carry all of them, so the pack file shows what Guide does, and the library check fails otherwise. The shortcuts: `+ X` keyboard, `+ Y` numpad, `+ LB` media controls, `+ RB` screenshot, `+ Left stick` recording, `+ B` force-quit, `+ RT` / `+ LT` clicks, `+ Right stick` mouse, `+ D-pad` Enter, Tab and Escape, and so on. Its bindings are listed in [the Guide design notes](development/guide.md).
 
 ## Keyboard, numpad and font
 

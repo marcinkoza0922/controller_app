@@ -105,7 +105,6 @@ pub(super) enum ActionKind {
     Keys,
     Mouse,
     Wheel,
-    NextProfile,
     Overlay,
     Numpad,
     Screenshot,
@@ -130,7 +129,6 @@ impl fmt::Display for ActionKind {
             ActionKind::Keys => "Keyboard",
             ActionKind::Mouse => "Mouse button",
             ActionKind::Wheel => "Scroll wheel",
-            ActionKind::NextProfile => "Next profile",
             ActionKind::Overlay => "On-screen keyboard",
             ActionKind::Numpad => "On-screen numpad",
             ActionKind::Screenshot => "Take screenshot",
@@ -150,13 +148,12 @@ impl fmt::Display for ActionKind {
 }
 
 /// Every kind, for a top-level action.
-pub(super) const ACTION_KINDS: [ActionKind; 20] = [
+pub(super) const ACTION_KINDS: [ActionKind; 19] = [
     ActionKind::Disabled,
     ActionKind::Gamepad,
     ActionKind::Keys,
     ActionKind::Mouse,
     ActionKind::Wheel,
-    ActionKind::NextProfile,
     ActionKind::Overlay,
     ActionKind::Numpad,
     ActionKind::Screenshot,
@@ -180,7 +177,6 @@ pub(super) const RADIAL_ITEM_KINDS: &[ActionKind] = &[
     ActionKind::Keys,
     ActionKind::Mouse,
     ActionKind::Wheel,
-    ActionKind::NextProfile,
     ActionKind::Overlay,
     ActionKind::Numpad,
     ActionKind::Toggle,
@@ -195,7 +191,6 @@ pub(super) const MENU_ITEM_KINDS: &[ActionKind] = &[
     ActionKind::Keys,
     ActionKind::Mouse,
     ActionKind::Wheel,
-    ActionKind::NextProfile,
     ActionKind::Overlay,
     ActionKind::Numpad,
     ActionKind::Screenshot,
@@ -216,7 +211,6 @@ pub(super) const MULTI_ENTRY_KINDS: &[ActionKind] = &[
     ActionKind::Keys,
     ActionKind::Mouse,
     ActionKind::Wheel,
-    ActionKind::NextProfile,
 ];
 
 /// What a Toggle can hold down: basic outputs, a turbo (toggleable auto-fire) or several.
@@ -287,7 +281,6 @@ pub(super) fn action_kind(action: &ButtonAction) -> ActionKind {
         ButtonAction::Keys(_) => ActionKind::Keys,
         ButtonAction::Mouse(_) => ActionKind::Mouse,
         ButtonAction::Wheel(_) => ActionKind::Wheel,
-        ButtonAction::NextProfile => ActionKind::NextProfile,
         ButtonAction::ToggleOverlay => ActionKind::Overlay,
         ButtonAction::ToggleNumpad => ActionKind::Numpad,
         ButtonAction::Screenshot => ActionKind::Screenshot,
@@ -320,7 +313,6 @@ pub(super) fn new_action(k: ActionKind, default_button: Button, current: &Button
         ActionKind::Keys => ButtonAction::Keys(Vec::new()),
         ActionKind::Mouse => ButtonAction::Mouse(MouseButton::Left),
         ActionKind::Wheel => ButtonAction::Wheel(WheelDirection::Up),
-        ActionKind::NextProfile => ButtonAction::NextProfile,
         ActionKind::Overlay => ButtonAction::ToggleOverlay,
         ActionKind::Numpad => ButtonAction::ToggleNumpad,
         ActionKind::Screenshot => ButtonAction::Screenshot,
@@ -501,7 +493,7 @@ pub(super) fn action_value<'a>(
             }
             line.into()
         }
-        ButtonAction::Disabled | ButtonAction::NextProfile | ButtonAction::Screenshot | ButtonAction::ToggleRecording => space().into(),
+        ButtonAction::Disabled | ButtonAction::Screenshot | ButtonAction::ToggleRecording => space().into(),
         ButtonAction::ToggleMedia => text("D-pad left and right seek, up and down change the volume, bumpers change track, A plays or pauses, B closes.").size(12).color(MUTED_COLOR).into(),
         ButtonAction::ForceQuit => {
             text("Hold for 2 seconds to close the program in the focused window. The desktop is never closed.")

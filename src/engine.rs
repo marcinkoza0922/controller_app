@@ -280,12 +280,11 @@ impl Engine {
     }
 
     /// Runs a chosen menu item's action as a quick press and release. Toggles and the like
-    /// keep their state per item. Returns true if it asks for the next profile.
-    pub fn tap_menu_item(&mut self, menu: &str, item: usize, action: &ButtonAction, out: &mut Vec<OutEvent>) -> bool {
+    /// keep their state per item.
+    pub fn tap_menu_item(&mut self, menu: &str, item: usize, action: &ButtonAction, out: &mut Vec<OutEvent>) {
         let src = Source::MenuItem(menu.to_string(), item);
-        let switch = self.digital(&src, action, true, out);
+        self.digital(&src, action, true, out);
         self.digital(&src, action, false, out);
-        switch
     }
 
     /// Active layers, oldest first.
@@ -414,14 +413,8 @@ impl Engine {
         }
     }
 
-    /// Processes one input. Returns true if the input requested switching to the next profile.
-    pub fn handle(
-        &mut self,
-        profile: &Profile,
-        ev: InputEvent,
-        now: Instant,
-        out: &mut Vec<OutEvent>,
-    ) -> bool {
+    /// Processes one input.
+    pub fn handle(&mut self, profile: &Profile, ev: InputEvent, now: Instant, out: &mut Vec<OutEvent>) {
         let gyro = &profile.gyro;
         let before = self.gyro_controls_held(gyro);
         if let InputEvent::Button(b, pressed) = ev {
@@ -431,7 +424,7 @@ impl Engine {
                 self.raw_buttons.remove(&b);
             }
         }
-        let switch = self.handle_mapped(profile, ev, now, out);
+        self.handle_mapped(profile, ev, now, out);
         let after = self.gyro_controls_held(gyro);
         if matches!(gyro.activation, GyroActivation::Toggle(_)) && after.0 && !before.0 {
             self.gyro.toggled_on = !self.gyro.toggled_on;
@@ -446,40 +439,31 @@ impl Engine {
         if let InputEvent::Axis(axis, _) = ev
             && let Some(s) = axis_stick(axis)
         {
-            return self.update_stick_buttons(profile, s, now, out) | switch;
+            self.update_stick_buttons(profile, s, now, out);
         }
-        switch
     }
 
     /// Presses or releases a stick's direction buttons (e.g. `Button::LeftStickUp`) as it
     /// moves past its press threshold, feeding them through the normal button path so they
     /// get actions, gestures and combos.
-    fn update_stick_buttons(&mut self, profile: &Profile, s: Stick, now: Instant, out: &mut Vec<OutEvent>) -> bool {
+    fn update_stick_buttons(&mut self, profile: &Profile, s: Stick, now: Instant, out: &mut Vec<OutEvent>) {
         let cfg = profile.stick(s);
         let (x, y) = self.stick_pos(s, cfg.deadzone);
         let t = cfg.key_threshold;
         let [up, down, left, right] = Button::stick_directions(s);
-        let mut switch = false;
         for (b, v) in [(up, -y), (down, y), (left, -x), (right, x)] {
             let pressed = self.stick_buttons.contains(&b);
             if !pressed && v >= t {
                 self.stick_buttons.insert(b);
-                switch |= self.handle(profile, InputEvent::Button(b, true), now, out);
+                self.handle(profile, InputEvent::Button(b, true), now, out);
             } else if pressed && v < t - STICK_DIRECTION_HYSTERESIS {
                 self.stick_buttons.remove(&b);
-                switch |= self.handle(profile, InputEvent::Button(b, false), now, out);
+                self.handle(profile, InputEvent::Button(b, false), now, out);
             }
         }
-        switch
     }
 
-    fn handle_mapped(
-        &mut self,
-        profile: &Profile,
-        ev: InputEvent,
-        now: Instant,
-        out: &mut Vec<OutEvent>,
-    ) -> bool {
+    fn handle_mapped(&mut self, profile: &Profile, ev: InputEvent, now: Instant, out: &mut Vec<OutEvent>) {
         match ev {
             InputEvent::Button(b, true) if profile.in_combo(b) => {
                 let deadline = match profile.button(b) {
@@ -487,14 +471,14 @@ impl Engine {
                     _ => Some(now + Duration::from_millis(profile.combo_window_ms)),
                 };
                 self.members.insert(b, ComboMember::Pending { deadline });
-                self.try_combo(profile, out)
+                self.try_combo(profile, out);
             }
             InputEvent::Button(b, false) if self.members.contains_key(&b) => {
                 match self.members.remove(&b) {
                     // Released inside the window: a quick tap of the button on its own.
                     Some(ComboMember::Pending { .. }) => {
-                        let switch = self.solo(profile, b, true, now, out);
-                        self.solo(profile, b, false, now, out) | switch
+                        self.solo(profile, b, true, now, out);
+                        self.solo(profile, b, false, now, out);
                     }
                     Some(ComboMember::Fired) => self.solo(profile, b, false, now, out),
                     Some(ComboMember::Consumed) => {
@@ -507,9 +491,8 @@ impl Engine {
                         for src in combos {
                             self.digital(&src, &ButtonAction::Disabled, false, out);
                         }
-                        false
                     }
-                    None => false,
+                    None => {}
                 }
             }
             InputEvent::Button(b, pressed) => self.solo(profile, b, pressed, now, out),
@@ -527,7 +510,7 @@ impl Engine {
     }
 
     /// Fires the largest combo whose members are all pending.
-    fn try_combo(&mut self, profile: &Profile, out: &mut Vec<OutEvent>) -> bool {
+    fn try_combo(&mut self, profile: &Profile, out: &mut Vec<OutEvent>) {
         let ready = profile
             .combos
             .iter()
@@ -538,28 +521,27 @@ impl Engine {
                     .all(|b| matches!(self.members.get(b), Some(ComboMember::Pending { .. })))
             })
             .max_by_key(|c| c.buttons.len());
-        let Some(combo) = ready else { return false };
+        let Some(combo) = ready else { return };
         for b in &combo.buttons {
             self.members.insert(*b, ComboMember::Consumed);
         }
         let mut id = combo.buttons.clone();
         id.sort();
         id.dedup();
-        self.digital(&Source::Combo(id), &combo.action, true, out)
+        self.digital(&Source::Combo(id), &combo.action, true, out);
     }
 
-    /// Fires combo members whose window has run out. Returns true on a profile switch request.
-    pub fn timers(&mut self, profile: &Profile, now: Instant, out: &mut Vec<OutEvent>) -> bool {
+    /// Fires combo members whose window has run out.
+    pub fn timers(&mut self, profile: &Profile, now: Instant, out: &mut Vec<OutEvent>) {
         let due: Vec<Button> = self
             .members
             .iter()
             .filter(|(_, m)| matches!(m, ComboMember::Pending { deadline: Some(d) } if *d <= now))
             .map(|(b, _)| *b)
             .collect();
-        let mut switch = false;
         for b in due {
             self.members.insert(b, ComboMember::Fired);
-            switch |= self.solo(profile, b, true, now, out);
+            self.solo(profile, b, true, now, out);
         }
 
         let due: Vec<(Button, GestureState)> = self
@@ -584,24 +566,23 @@ impl Engine {
                 GestureState::Down { long_deadline: Some(_), .. } => {
                     self.gestures.insert(b, GestureState::Holding);
                     if let Some(action) = &gestures.long_press {
-                        switch |= self.digital(&Source::Gesture(b), action, true, out);
+                        self.digital(&Source::Gesture(b), action, true, out);
                     }
                 }
                 // Held past the tap window with no long press set: a plain press, held (so
                 // e.g. a menu on it stays up while held).
                 GestureState::Down { .. } => {
                     self.gestures.insert(b, GestureState::Pressed);
-                    switch |= self.digital(&Source::Button(b), profile.button(b), true, out);
+                    self.digital(&Source::Button(b), profile.button(b), true, out);
                 }
                 // No further tap came: the sequence so far is final.
                 GestureState::Up { taps, .. } => {
                     self.gestures.remove(&b);
-                    switch |= self.tap_sequence(profile, b, taps, out);
+                    self.tap_sequence(profile, b, taps, out);
                 }
                 GestureState::Holding | GestureState::Pressed => {}
             }
         }
-        switch
     }
 
     /// Earliest moment `timers` has work to do.
@@ -621,21 +602,24 @@ impl Engine {
     /// A button acting on its own (not as part of a combo). Runs gesture detection if the
     /// button has gestures, otherwise presses/releases its action directly.
     #[expect(clippy::too_many_arguments, reason = "predates the size lints")]
-    fn solo(&mut self, profile: &Profile, b: Button, pressed: bool, now: Instant, out: &mut Vec<OutEvent>) -> bool {
+    fn solo(&mut self, profile: &Profile, b: Button, pressed: bool, now: Instant, out: &mut Vec<OutEvent>) {
         let Some(gestures) = profile.gestures(b) else {
             // Gestures may have been removed mid-sequence; a release still has to land.
             if !pressed {
                 match self.gestures.remove(&b) {
                     Some(GestureState::Holding) => {
-                        return self.digital(&Source::Gesture(b), &ButtonAction::Disabled, false, out);
+                        self.digital(&Source::Gesture(b), &ButtonAction::Disabled, false, out);
+                        return;
                     }
                     Some(GestureState::Pressed) => {
-                        return self.digital(&Source::Button(b), &ButtonAction::Disabled, false, out);
+                        self.digital(&Source::Button(b), &ButtonAction::Disabled, false, out);
+                        return;
                     }
                     _ => {}
                 }
             }
-            return self.digital(&Source::Button(b), profile.button(b), pressed, out);
+            self.digital(&Source::Button(b), profile.button(b), pressed, out);
+            return;
         };
         let max_taps = gestures.max_taps();
         if pressed {
@@ -647,75 +631,64 @@ impl Engine {
                 // Final tap of the longest sequence: fire now and hold until release.
                 self.gestures.insert(b, GestureState::Holding);
                 let action = gestures.for_taps(taps).unwrap_or(profile.button(b));
-                return self.digital(&Source::Gesture(b), action, true, out);
+                self.digital(&Source::Gesture(b), action, true, out);
+                return;
             }
             let long_deadline = (taps == 1 && gestures.long_press.is_some())
                 .then(|| now + Duration::from_millis(profile.long_press_ms));
             let hold_deadline = (taps == 1 && gestures.long_press.is_none())
                 .then(|| now + Duration::from_millis(profile.tap_window_ms));
             self.gestures.insert(b, GestureState::Down { taps, long_deadline, hold_deadline });
-            false
         } else {
             match self.gestures.remove(&b) {
                 Some(GestureState::Holding) => {
-                    self.digital(&Source::Gesture(b), &ButtonAction::Disabled, false, out)
+                    self.digital(&Source::Gesture(b), &ButtonAction::Disabled, false, out);
                 }
-                Some(GestureState::Pressed) => self.digital(&Source::Button(b), &ButtonAction::Disabled, false, out),
+                Some(GestureState::Pressed) => {
+                    self.digital(&Source::Button(b), &ButtonAction::Disabled, false, out);
+                }
                 Some(GestureState::Down { taps, .. }) if taps < max_taps => {
                     let deadline = now + Duration::from_millis(profile.tap_window_ms);
                     self.gestures.insert(b, GestureState::Up { taps, deadline });
-                    false
                 }
                 // Nothing more can follow (e.g. only a long press is set): act as a tap now.
                 Some(GestureState::Down { taps, .. }) => self.tap_sequence(profile, b, taps, out),
-                _ => false,
+                _ => {}
             }
         }
     }
 
     /// Emits the result of a finished tap sequence as a quick press and release.
-    fn tap_sequence(&mut self, profile: &Profile, b: Button, taps: u8, out: &mut Vec<OutEvent>) -> bool {
+    fn tap_sequence(&mut self, profile: &Profile, b: Button, taps: u8, out: &mut Vec<OutEvent>) {
         let gestures = profile.gestures(b);
-        let mut switch = false;
         match gestures.and_then(|g| g.for_taps(taps)) {
-            Some(action) => switch |= self.tap(&Source::Gesture(b), action, out),
+            Some(action) => self.tap(&Source::Gesture(b), action, out),
             // e.g. a double tap when only a triple tap is set: that many normal taps.
             None => {
                 for _ in 0..taps {
-                    switch |= self.tap(&Source::Button(b), profile.button(b), out);
+                    self.tap(&Source::Button(b), profile.button(b), out);
                 }
             }
         }
-        switch
     }
 
-    fn tap(&mut self, src: &Source, action: &ButtonAction, out: &mut Vec<OutEvent>) -> bool {
-        let switch = self.digital(src, action, true, out);
+    fn tap(&mut self, src: &Source, action: &ButtonAction, out: &mut Vec<OutEvent>) {
+        self.digital(src, action, true, out);
         self.digital(src, action, false, out);
-        switch
     }
 
-    fn digital(
-        &mut self,
-        src: &Source,
-        action: &ButtonAction,
-        pressed: bool,
-        out: &mut Vec<OutEvent>,
-    ) -> bool {
+    fn digital(&mut self, src: &Source, action: &ButtonAction, pressed: bool, out: &mut Vec<OutEvent>) {
         if pressed {
             if self.held.contains_key(src) {
-                return false;
+                return;
             }
             self.held.insert(src.clone(), action.clone());
             if let Some(from) = src.fired_from() {
                 self.fired.push((from, action.clone()));
             }
-            self.emit(src, action, true, 0, out)
-        } else {
-            if let Some(action) = self.held.remove(src) {
-                self.emit(src, &action, false, 0, out);
-            }
-            false
+            self.emit(src, action, true, 0, out);
+        } else if let Some(action) = self.held.remove(src) {
+            self.emit(src, &action, false, 0, out);
         }
     }
 
@@ -737,10 +710,9 @@ impl Engine {
     }
 
     /// Emits press/release for an action. `slot` is the position of this node among the
-    /// Toggle/Turbo nodes of the input's action (see [`StateId`]). Returns true if it
-    /// requests the next profile.
+    /// Toggle/Turbo nodes of the input's action (see [`StateId`]).
     #[expect(clippy::too_many_lines, clippy::too_many_arguments, clippy::cognitive_complexity, reason = "predates the size lints")]
-    fn emit(&mut self, src: &Source, action: &ButtonAction, pressed: bool, slot: usize, out: &mut Vec<OutEvent>) -> bool {
+    fn emit(&mut self, src: &Source, action: &ButtonAction, pressed: bool, slot: usize, out: &mut Vec<OutEvent>) {
         match action {
             ButtonAction::Disabled => {}
             ButtonAction::Gamepad(b) => match b.stick_direction() {
@@ -780,7 +752,6 @@ impl Engine {
                     out.extend(codes.into_iter().rev().map(|k| OutEvent::Key(k, false)));
                 }
             }
-            ButtonAction::NextProfile => return pressed,
         ButtonAction::ToggleOverlay => {
             if pressed {
                 self.overlay_toggled = Some(crate::keyboard::Layout::Keyboard);
@@ -835,39 +806,38 @@ impl Engine {
                     slots.push(next);
                     next += stateful_nodes(a);
                 }
-                let mut switch = false;
                 if pressed {
                     for (a, s) in actions.iter().zip(&slots) {
-                        switch |= self.emit(src, a, true, *s, out);
+                        self.emit(src, a, true, *s, out);
                     }
                 } else {
                     for (a, s) in actions.iter().zip(&slots).rev() {
                         self.emit(src, a, false, *s, out);
                     }
                 }
-                return switch;
             }
             // Only presses matter: each one flips the inner action on or off.
             ButtonAction::Toggle(Toggled { action: inner, .. }) => {
                 if !pressed {
-                    return false;
+                    return;
                 }
                 let id = (src.clone(), slot);
                 if let Some(inner) = self.toggled.remove(&id) {
                     self.emit(src, &inner, false, slot + 1, out);
-                    return false;
+                    return;
                 }
-                return self.toggle_on(src, inner, slot, out);
+                self.toggle_on(src, inner, slot, out);
             }
             ButtonAction::Turbo { action: inner, rate, every_ms } => {
                 let id = (src.clone(), slot);
                 if pressed {
                     if self.turbo.contains_key(&id) {
-                        return false;
+                        return;
                     }
                     let (inner, half_period) = self.turbo_pace(inner, *rate, *every_ms);
                     self.turbo.insert(id, TurboState { action: inner.clone(), half_period, elapsed: 0.0, down: true });
-                    return self.emit(src, &inner, true, slot + 1, out);
+                    self.emit(src, &inner, true, slot + 1, out);
+                    return;
                 }
                 if let Some(state) = self.turbo.remove(&id)
                     && state.down
@@ -882,36 +852,34 @@ impl Engine {
                     if *repeat {
                         self.stop_macro(&id, out);
                     }
-                    return false;
+                    return;
                 }
                 if self.macros_running.contains_key(&id) {
-                    return false;
+                    return;
                 }
                 let Some(ops) = self.macro_defs.get(name).cloned() else {
                     crate::monitor::log!("no macro named {name:?}");
-                    return false;
+                    return;
                 };
                 let run = MacroRun { ops, next: 0, wait: 0.0, repeat: *repeat, held: Vec::new(), sticks: Vec::new() };
                 self.macros_running.insert(id.clone(), run);
                 self.advance_macro(&id, 0.0, out);
             }
         }
-        false
     }
 
     /// Turns a Toggle (at `slot` of `src`'s action) on, pressing its inner action.
-    fn toggle_on(&mut self, src: &Source, inner: &ButtonAction, slot: usize, out: &mut Vec<OutEvent>) -> bool {
+    fn toggle_on(&mut self, src: &Source, inner: &ButtonAction, slot: usize, out: &mut Vec<OutEvent>) {
         self.toggled.insert((src.clone(), slot), inner.clone());
         // A menu opened from here stays up until toggled off.
         let was = std::mem::replace(&mut self.toggling, true);
-        let switch = self.emit(src, inner, true, slot + 1, out);
+        self.emit(src, inner, true, slot + 1, out);
         self.toggling = was;
-        switch
     }
 
     /// Switches on every Toggle set to start on, in the profile's mappings and the game's menu
     /// items, as if pressed (one that's on already stays on). For when the game starts.
-    pub fn start_toggles(&mut self, profile: &Profile, menus: &[Menu], out: &mut Vec<OutEvent>) -> bool {
+    pub fn start_toggles(&mut self, profile: &Profile, menus: &[Menu], out: &mut Vec<OutEvent>) {
         let mut inputs: Vec<(Source, &ButtonAction)> = Vec::new();
         inputs.extend(profile.buttons.iter().map(|(b, a)| (Source::Button(*b), a)));
         for (b, g) in &profile.gestures {
@@ -935,17 +903,15 @@ impl Engine {
         for m in menus {
             inputs.extend(m.items.iter().enumerate().map(|(i, item)| (Source::MenuItem(m.name.clone(), i), &item.action)));
         }
-        let mut switch = false;
         for (src, action) in inputs {
             let mut starting = Vec::new();
             start_on_toggles(action, 0, &mut starting);
             for (slot, inner) in starting {
                 if !self.toggled.contains_key(&(src.clone(), slot)) {
-                    switch |= self.toggle_on(&src, inner, slot, out);
+                    self.toggle_on(&src, inner, slot, out);
                 }
             }
         }
-        switch
     }
 
     /// What a turbo repeats, and the seconds between its flips (half a turbo cycle). A macro is
@@ -981,7 +947,7 @@ impl Engine {
         }
     }
 
-    fn trigger(&mut self, profile: &Profile, t: Trigger, value: f32, out: &mut Vec<OutEvent>) -> bool {
+    fn trigger(&mut self, profile: &Profile, t: Trigger, value: f32, out: &mut Vec<OutEvent>) {
         let action = profile.trigger(t);
         // A virtual trigger no longer fed (a layer changed this one's mode) goes back to rest.
         let target = match action {
@@ -995,13 +961,12 @@ impl Engine {
             out.push(OutEvent::PadAxis(trigger_axis(old), 0.0));
         }
         let src = Source::Trigger(t);
-        let mut switch = false;
         // A pull keeps its action until let go past where it pressed.
         if let Some(threshold) = self.trigger_release.get(&t).copied()
             && value < threshold - TRIGGER_HYSTERESIS
         {
             self.trigger_release.remove(&t);
-            switch |= self.digital(&src, &ButtonAction::Disabled, false, out);
+            self.digital(&src, &ButtonAction::Disabled, false, out);
         }
         match action {
             TriggerAction::Disabled => {}
@@ -1012,16 +977,16 @@ impl Engine {
             TriggerAction::Button { action, threshold } => {
                 if !self.trigger_release.contains_key(&t) && value >= *threshold {
                     self.trigger_release.insert(t, *threshold);
-                    switch |= self.digital(&src, action, true, out);
+                    self.digital(&src, action, true, out);
                 }
             }
         }
-        self.zones(profile, Analog::Trigger(t), value, out) | switch
+        self.zones(profile, Analog::Trigger(t), value, out);
     }
 
     /// Presses/releases zone actions for an analog input at `value` (0.0..1.0). Zones are
     /// inactive at rest (value 0), so a zone starting at 0 means "as soon as it moves".
-    fn zones(&mut self, profile: &Profile, analog: Analog, value: f32, out: &mut Vec<OutEvent>) -> bool {
+    fn zones(&mut self, profile: &Profile, analog: Analog, value: f32, out: &mut Vec<OutEvent>) {
         let inside = |(min, max): (f32, f32), margin: f32| {
             // The top zone includes full deflection itself.
             let below_max = max >= 1.0 || value < max + margin;
@@ -1029,7 +994,6 @@ impl Engine {
         };
         // Release first, by the bounds each active zone pressed with (a layer may have
         // changed the zones since), so moving between adjacent zones never holds both.
-        let mut switch = false;
         let leaving: Vec<usize> = self
             .zone_bounds
             .iter()
@@ -1038,16 +1002,15 @@ impl Engine {
             .collect();
         for i in leaving {
             self.zone_bounds.remove(&(analog, i));
-            switch |= self.digital(&Source::Zone(analog, i), &ButtonAction::Disabled, false, out);
+            self.digital(&Source::Zone(analog, i), &ButtonAction::Disabled, false, out);
         }
         for (i, zone) in profile.zones(analog).iter().enumerate() {
             let bounds = (zone.min, zone.max);
             if !self.zone_bounds.contains_key(&(analog, i)) && inside(bounds, 0.0) {
                 self.zone_bounds.insert((analog, i), bounds);
-                switch |= self.digital(&Source::Zone(analog, i), &zone.action, true, out);
+                self.digital(&Source::Zone(analog, i), &zone.action, true, out);
             }
         }
-        switch
     }
 
     /// Changes the gyro's stick deflection, re-sending affected sticks.
@@ -1413,17 +1376,6 @@ mod tests {
         assert!(e.take_fired().is_empty());
     }
 
-    #[test]
-    fn next_profile_is_requested_only_on_press() {
-        let mut p = Profile::passthrough("p");
-        p.set_button(Button::Start, ButtonAction::NextProfile);
-        let mut e = Engine::default();
-        let mut out = Vec::new();
-        assert!(e.handle(&p, InputEvent::Button(Button::Start, true), Instant::now(), &mut out));
-        assert!(!e.handle(&p, InputEvent::Button(Button::Start, false), Instant::now(), &mut out));
-        assert!(out.is_empty());
-    }
-
     /// A profile whose Guide holds the default Guide layer, and that layer applied over it.
     fn guide_setup() -> (Profile, Profile) {
         let base = Profile::passthrough("p");
@@ -1671,14 +1623,15 @@ mod tests {
         p.set_button(Button::Guide, ButtonAction::Disabled);
         p.combos.push(Combo {
             buttons: vec![Button::Guide, Button::South],
-            action: ButtonAction::NextProfile,
+            action: ButtonAction::Screenshot,
         });
         let mut e = Engine::default();
         let t0 = Instant::now();
         step(&mut e, &p, InputEvent::Button(Button::Guide, true), t0);
         assert_eq!(e.next_deadline(), None);
         let mut out = Vec::new();
-        assert!(e.handle(&p, InputEvent::Button(Button::South, true), t0 + Duration::from_secs(5), &mut out));
+        e.handle(&p, InputEvent::Button(Button::South, true), t0 + Duration::from_secs(5), &mut out);
+        assert!(e.take_screenshot());
     }
 
     #[test]
@@ -1834,7 +1787,7 @@ mod tests {
         let mut p = Profile::passthrough("p");
         p.gestures.insert(
             Button::South,
-            crate::config::Gestures { long_press: Some(ButtonAction::NextProfile), ..Default::default() },
+            crate::config::Gestures { long_press: Some(ButtonAction::Keys(vec!["KEY_F5".into()])), ..Default::default() },
         );
         let mut e = Engine::default();
         let t0 = Instant::now();
@@ -1843,10 +1796,11 @@ mod tests {
             press(&mut e, &p, Button::South, false, ms(t0, 100)),
             vec![OutEvent::PadButton(Button::South, true), OutEvent::PadButton(Button::South, false)]
         );
-        // Held past the threshold: switches profile instead.
+        // Held past the threshold: the long press fires.
         press(&mut e, &p, Button::South, true, ms(t0, 1000));
         let mut out = Vec::new();
-        assert!(e.timers(&p, ms(t0, 1500), &mut out));
+        e.timers(&p, ms(t0, 1500), &mut out);
+        assert_eq!(out, vec![OutEvent::Key(KeyCode::KEY_F5, true)]);
     }
 
     #[test]

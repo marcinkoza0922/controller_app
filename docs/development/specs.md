@@ -224,7 +224,7 @@ doesn't block.
 requires. With no controller connected there is nothing to judge by, so every profile counts.
 - The Guide offer for a library game lists only compatible profiles, and skips the question when
   one is left (its rules are then pointed at it). A pack with no compatible profile isn't offered.
-- *Next profile* (Guide's cycling) skips incompatible profiles of the game.
+- *Next profile* (`padwight next-profile`) skips incompatible profiles of the game.
 - When a window's rule picks an incompatible profile, the game's first compatible one is used.
 
 **On import** (and in the library preview), the profiles that need a feature the controller lacks

@@ -99,9 +99,8 @@ pub fn wrapped(current: &ButtonAction, wrap: Wrap) -> ButtonAction {
 /// The actions offered, after the pad and gesture rows.
 type Choice = (&'static str, fn() -> ButtonAction);
 
-const CHOICES: [Choice; 17] = [
+const CHOICES: [Choice; 16] = [
     ("Disabled", || ButtonAction::Disabled),
-    ("Next profile", || ButtonAction::NextProfile),
     ("On-screen keyboard", || ButtonAction::ToggleOverlay),
     ("Screenshot", || ButtonAction::Screenshot),
     ("Left click", || ButtonAction::Mouse(MouseButton::Left)),

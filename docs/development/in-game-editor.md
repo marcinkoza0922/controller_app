@@ -30,7 +30,7 @@ A player can change the controls of the game they are playing without leaving it
 
 ## Phase 2a (done): Edit Controls for buttons
 
-- `src/layout_editor.rs`: three pages. The button list (each row shows the button's action), one button's action (Gamepad button…, Disabled, Next profile, On-screen keyboard, Screenshot), and the choice of gamepad button. A choice goes back to the button list.
+- `src/layout_editor.rs`: three pages. The button list (each row shows the button's action), one button's action (Gamepad button…, Disabled, On-screen keyboard, Screenshot), and the choice of gamepad button. A choice goes back to the button list.
 - Choosing Edit Controls outside a game makes the pack first (`pack_from_general`), so the editor edits the game's own profile. With no window in front, it is refused: the menu goes back to its top page and says "Edit Controls needs a game" (`settings_input` in `daemon.rs`).
 - The editor is drawn with `MenuView`, so the overlay process didn't change.
 - Button rows carry the controller chips (A, B, LB, LS and so on, as the rest of the app draws them): the top page, the pad picker, gestures, combos and layer bindings. Stick and trigger rows use LS, RS, LT and RT.
@@ -54,7 +54,7 @@ Zones (done): a stick's or trigger's page has a Zones row. A zone's page sets it
 
 Gyro activation (done): "Activation" cycles always, held with LT or RT, off while LT or RT is held, and toggled by LT or RT. Other inputs stay in the pack file.
 
-Action choices (done): every simple `ButtonAction` the editor can offer is in the action page: Disabled, Next profile, the on-screen keyboard and numpad, screenshot, recording, media controls, force quit, mouse buttons (left, right, middle, back, forward), wheel in all four directions, and keys (a picker that ticks several at once). Toggle, turbo and the turbo rate or the toggle's start state are on the same page. Picker rows open a list of the game's layers, macros, menus, info overlays or log overlays. A macro picked this way plays once; its repeat setting stays in the pack file.
+Action choices (done): every simple `ButtonAction` the editor can offer is in the action page: Disabled, the on-screen keyboard and numpad, screenshot, recording, media controls, force quit, mouse buttons (left, right, middle, back, forward), wheel in all four directions, and keys (a picker that ticks several at once). Toggle, turbo and the turbo rate or the toggle's start state are on the same page. Picker rows open a list of the game's layers, macros, menus, info overlays or log overlays. A macro picked this way plays once; its repeat setting stays in the pack file.
 
 Still in the pack file: Multi, which holds several actions in one slot. Stick and steering gyro modes, and the gyro's other inputs, are there too.
 

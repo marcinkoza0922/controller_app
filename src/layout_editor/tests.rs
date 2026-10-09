@@ -32,7 +32,7 @@ fn a_choice_sets_the_button_and_back_leaves_the_editor() {
     editor.choose(&mut config);
     editor.cursor = action_rows(Slot::Button(Button::South)).iter().position(|r| matches!(r, ActionRow::Choice(1))).unwrap();
     assert_eq!(editor.choose(&mut config), EditStep::Changed);
-    assert_eq!(config.active().unwrap().button(Button::South), &ButtonAction::NextProfile);
+    assert_eq!(config.active().unwrap().button(Button::South), &ButtonAction::ToggleOverlay);
     assert_eq!(editor.back(), EditStep::Leave);
 }
 
@@ -53,7 +53,7 @@ fn a_double_tap_gesture_is_set_from_the_gestures_page() {
         .unwrap();
     assert_eq!(editor.choose(&mut config), EditStep::Changed);
     let profile = config.active().unwrap();
-    assert_eq!(profile.gestures[&Button::South].double_tap, Some(ButtonAction::NextProfile));
+    assert_eq!(profile.gestures[&Button::South].double_tap, Some(ButtonAction::ToggleOverlay));
     // Back on the gestures page, then the button, then the top.
     assert_eq!(editor.page, Page::Gestures(Button::South));
 }
@@ -70,7 +70,7 @@ fn a_layer_button_is_bound_from_the_layers_page() {
     assert_eq!(editor.page, Page::Layer(0));
     editor.cursor = Button::ALL.iter().position(|&b| b == Button::South).unwrap();
     editor.choose(&mut config);
-    let shot = action_rows(Slot::Layer(0, Button::South)).iter().position(|r| matches!(r, ActionRow::Choice(3))).unwrap();
+    let shot = action_rows(Slot::Layer(0, Button::South)).iter().position(|r| matches!(r, ActionRow::Choice(2))).unwrap();
     editor.cursor = shot;
     assert_eq!(editor.choose(&mut config), EditStep::Changed);
     assert_eq!(config.general.layers[0].buttons.get(&Button::South), Some(&ButtonAction::Screenshot));
@@ -94,7 +94,7 @@ fn a_combo_is_added_given_buttons_and_an_action_and_then_deleted() {
     // Action: Screenshot.
     editor.cursor = Button::ALL.len();
     editor.choose(&mut config);
-    let shot = action_rows(Slot::Combo(0)).iter().position(|r| matches!(r, ActionRow::Choice(3))).unwrap();
+    let shot = action_rows(Slot::Combo(0)).iter().position(|r| matches!(r, ActionRow::Choice(2))).unwrap();
     editor.cursor = shot;
     editor.choose(&mut config);
     assert_eq!(config.active().unwrap().combos[0].action, ButtonAction::Screenshot);
@@ -266,7 +266,7 @@ fn a_trigger_zone_is_added_and_given_an_action() {
     assert_eq!(editor.page, Page::Zone(Analog::Trigger(Trigger::Left), 0));
     editor.cursor = zones::ZONE_ACTION;
     editor.choose(&mut config);
-    let shot = action_rows(Slot::Zone(Analog::Trigger(Trigger::Left), 0)).iter().position(|r| matches!(r, ActionRow::Choice(3))).unwrap();
+    let shot = action_rows(Slot::Zone(Analog::Trigger(Trigger::Left), 0)).iter().position(|r| matches!(r, ActionRow::Choice(2))).unwrap();
     editor.cursor = shot;
     assert_eq!(editor.choose(&mut config), EditStep::Changed);
     assert_eq!(zones::zone_action(&config, Analog::Trigger(Trigger::Left), 0), ButtonAction::Screenshot);

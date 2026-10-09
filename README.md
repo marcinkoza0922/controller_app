@@ -89,7 +89,7 @@ To run the daemon at login, copy `dist/padwight-flatpak.service` to `~/.config/s
 
 Each profile maps:
 
-- **buttons**: to a gamepad button, a key or key combo (`LEFTCTRL+C`), a mouse button, the scroll wheel (one notch per press, continuous while held), *next profile*, or **several of these at once**.
+- **buttons**: to a gamepad button, a key or key combo (`LEFTCTRL+C`), a mouse button, the scroll wheel (one notch per press, continuous while held), or **several of these at once**.
 - **back paddles**: on controllers that have them (Xbox Elite, DualSense Edge, Steam Deck), the paddles get their own section under the buttons and map like any other button. Each profile says whether it needs them, like gyro.
 - **sticks**: to a gamepad stick, mouse pointer, scroll wheel, flick stick or a button ring (its sectors can press keys, e.g. WASD or the arrows), with a deadzone, a response curve and an adjustable press threshold. Mouse sticks also have **acceleration** (speed grows while held at full push), **Invert Y**, and under *Advanced response* a ramp time, an outer-edge boost, a vertical speed ratio and smoothing. Scroll sticks have **Invert Y** too. Each stick's **directions also act as buttons** on top of that (Left Stick Up, …): they can have any action or gesture and can be part of combos, e.g. LB + Right Stick Right. Gamepad outputs include stick directions too, so a button (or the D-pad) can push the virtual stick, and two directions make a diagonal.
 - **button rings**: a stick can instead act as a ring of 4, 8 or 12 sectors; pointing it into a sector holds that sector's action (any action a button can have), with the angle of the first sector, how far out the stick must go and how sticky the sector boundaries are adjustable.
@@ -103,7 +103,7 @@ On top of that:
 - **Gestures**: double tap, triple tap and long press per button. The final tap of a sequence fires on press and holds, so "double-tap and hold" works. A quick tap on a button with gestures fires once the gesture is decided; holding it past the tap window presses the button's own action right away and holds it until release (unless a long press is set).
 - **Zones**: extra actions held while a stick or trigger is within part of its travel. For example, Left Shift on a partial stick push gives walk/run with WASD, and a half versus full trigger pull can do different things. Zones are hidden for controllers whose triggers are on/off only (e.g. Switch pads).
 
-General's defaults are **Gamepad** (1:1 passthrough) and **Desktop** (left stick moves the mouse, right stick scrolls, A/B click, LB+RB = Alt+Tab). Guide holds the Guide layer, and Guide + D-pad Up cycles between the profiles of the active setup in both.
+General's defaults are **Gamepad** (1:1 passthrough) and **Desktop** (left stick moves the mouse, right stick scrolls, A/B click, LB+RB = Alt+Tab). Guide holds the Guide layer. Profiles switch from Quick Settings (Guide + Start) or the app, never from the controller alone.
 
 More templates are available under "New from template…" in the GUI:
 

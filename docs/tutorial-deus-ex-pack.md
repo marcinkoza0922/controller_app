@@ -74,7 +74,7 @@ On the profile's **Buttons** sub-tab, set each button:
 **Why the less obvious ones:**
 
 - **B = Mouse Right, not a key.** The overlay labels B as "Use," and the pack maps it to the right mouse button. The pack's description says it targets the game's default keys, so confirm in game that Use really is on the right mouse button by default.
-- **D-pad Up is Disabled, on purpose.** Writing it out, instead of leaving it unset, documents the choice. D-pad Up has a job elsewhere: in the Guide layer it's **Next profile** (Step 8), and in the gyro profiles it's the **gyro clutch** (Step 10). Leaving it unbound in the base profile keeps it free for those.
+- **D-pad Up is Disabled, on purpose.** Writing it out, instead of leaving it unset, documents the choice. D-pad Up has a job elsewhere: in the gyro profiles it's the **gyro clutch** (Step 10). Leaving it unbound in the base profile keeps it free for that.
 - **Lean on Q and E.** The pack's choice. The Controls overlay labels them "Lean," so they're the keys to check first in game.
 
 > **Known mismatch to check in game.** The Controls overlay (Step 8) shows the D-pad as "Lean" on left and right, and as "Drop / throw" on **down**. But D-pad Down is mapped to **Tab**, not a drop or throw key. Either the overlay row is wrong or the mapping is. The pack ships as is, so verify in game and fix whichever is wrong. Don't assume either.
@@ -177,7 +177,7 @@ Guide is the shift key. Holding it changes what the other buttons do, so you can
 2. On the **Layers** tab, check the **Guide** layer. Padwight creates one when a profile holds Guide down. Its settings in the pack are:
    - **Indicator**: bindings, at the bottom left, after 250 ms (so a quick tap doesn't flash it).
    - **Swallow unbound**: on.
-   - **Bindings**: East (B) = force quit, North (Y) = numpad, West (X) = keyboard, RB = screenshot, L3 = start/stop recording, D-pad Up = next profile, D-pad Down = Tab, D-pad Left = Esc, D-pad Right = Enter, RT = left click, LT = right click, right stick = mouse at 1600.
+   - **Bindings**: East (B) = force quit, North (Y) = numpad, West (X) = keyboard, RB = screenshot, L3 = start/stop recording, D-pad Down = Tab, D-pad Left = Esc, D-pad Right = Enter, RT = left click, LT = right click, right stick = mouse at 1600.
 
 ![The Guide layer on the Layers tab: name, the bindings indicator, and the controller drawing with the layer's bindings](images/layers-guide.png)
 
@@ -187,7 +187,7 @@ Guide is the shift key. Holding it changes what the other buttons do, so you can
 
 - **Swallow unbound.** While Guide is held, a button the layer doesn't set does nothing. Without this, Guide + A would still press Space and make you jump while you're in the keyboard. *(This is the layer option's stated purpose in the [Guide design notes](development/guide.md).)*
 - **Guide holds a layer instead of cycling profiles.** Plain Guide used to switch profiles, but Steam also uses Guide. Holding Guide for shortcuts keeps the button useful without taking it from Steam, and a double tap still reaches Steam (Step 7).
-- **Next profile moves to Guide + D-pad Up.** It stays reachable without a button of its own, and the base profile leaves D-pad Up unbound.
+- **No profile switching from the controller.** Profiles switch in Quick Settings (Guide + Start) or in the app, so the Guide layer leaves D-pad Up unbound.
 - **One layer.** The pack has a single layer, so all the system shortcuts live in one place.
 
 **Pack check:** the library check requires every profile's Guide button to hold a layer named Guide, and requires the pack to contain that layer. The Deus Ex pack contains its own copy.
@@ -302,7 +302,7 @@ The library is the set of packs that ship with the app, in `packs/`.
 | Choice | Why |
 |---|---|
 | Tap window 250 ms, no combos | Combos delay every member press. The Guide layer does the job without them. |
-| D-pad Up disabled | Reserved: next profile in the Guide layer, and the gyro clutch in the gyro profiles. |
+| D-pad Up disabled | Reserved for the gyro clutch in the gyro profiles. |
 | Lean on Q / E | Keeps the left thumb on the stick; the overlay names them "Lean." *(Inferred.)* |
 | Mouse right for Use | Overlay says Use; the pack maps it to the right mouse button. Confirm in game. |
 | Radial menus on the right stick, held by the bumpers | One gesture: hold, aim, release. Aiming needs no extra button. |
