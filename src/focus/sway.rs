@@ -11,7 +11,7 @@ use std::{
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
 
-use super::{Notify, Reported, report};
+use super::{FocusEvent, Notify, Reported, report};
 
 const MAGIC: &[u8; 6] = b"i3-ipc";
 const SUBSCRIBE: u32 = 2;
@@ -70,13 +70,18 @@ impl Sway {
         loop {
             let (kind, payload) = read_frame(&mut self.0)?;
             let json: Value = serde_json::from_slice(&payload)?;
-            let window = match kind {
-                GET_TREE => focused_window(&json),
-                EVENT_WINDOW if json["change"] == "focus" => Some(&json["container"]),
-                _ => None,
-            };
-            if let Some(window) = window.and_then(reported) {
-                report(notify, window);
+            match kind {
+                GET_TREE => match focused_window(&json).and_then(reported) {
+                    Some(window) => report(notify, window),
+                    None => notify(FocusEvent::Unfocused),
+                },
+                EVENT_WINDOW if json["change"] == "focus" => match reported(&json["container"]) {
+                    Some(window) => report(notify, window),
+                    None => notify(FocusEvent::Unfocused),
+                },
+                // Closing the focused window moves focus without a focus event, so ask again.
+                EVENT_WINDOW if json["change"] == "close" => send(&mut self.0, GET_TREE, b"")?,
+                _ => {}
             }
         }
     }
@@ -143,6 +148,33 @@ mod tests {
         let (mut a, mut b) = UnixStream::pair().unwrap();
         send(&mut a, GET_TREE, b"{}").unwrap();
         assert_eq!(read_frame(&mut b).unwrap(), (GET_TREE, b"{}".to_vec()));
+    }
+
+    #[test]
+    fn a_focus_change_to_nothing_reports_unfocused() {
+        use std::sync::{Arc, Mutex};
+
+        use crate::focus::FocusEvent;
+
+        let (client, mut server) = UnixStream::pair().unwrap();
+        let frame = |kind: u32, json: &Value| {
+            let body = json.to_string();
+            let mut msg = [MAGIC.as_slice(), &u32::try_from(body.len()).unwrap().to_ne_bytes(), &kind.to_ne_bytes()].concat();
+            msg.extend_from_slice(body.as_bytes());
+            msg
+        };
+        // An empty workspace (no pid) is what focus moves to when the last window closes.
+        let empty = serde_json::json!({"change": "focus", "container": {"name": "2", "nodes": []}});
+        server.write_all(&frame(EVENT_WINDOW, &empty)).unwrap();
+        server.shutdown(std::net::Shutdown::Write).unwrap();
+
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        let notify: Notify = Arc::new(move |ev| {
+            sink.lock().unwrap().push(matches!(ev, FocusEvent::Unfocused));
+        });
+        assert!(Sway(client).follow(&notify).is_err(), "ends when the socket closes");
+        assert_eq!(*seen.lock().unwrap(), [true]);
     }
 
     #[test]

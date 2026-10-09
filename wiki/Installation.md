@@ -1,6 +1,6 @@
 # Installation
 
-padwight runs on Linux. It needs a Wayland or X11 desktop for the on-screen overlays, and a desktop with focus tracking (KDE Plasma, Sway or Hyprland) for automatic profile switching. See [Desktop support](Desktop-Support).
+padwight runs on Linux. It needs a Wayland or X11 desktop for the on-screen overlays, and a desktop with focus tracking (KDE Plasma, GNOME, Hyprland, Sway, or a wlroots compositor such as labwc) for automatic profile switching. See [Desktop support](Desktop-Support).
 
 ## Build and install
 

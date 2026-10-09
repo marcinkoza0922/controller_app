@@ -110,10 +110,14 @@ pub struct SwitchEvent {
 pub enum FocusBackend {
     /// KWin script reports focus changes (KDE Plasma, Wayland or X11).
     Kwin,
+    /// Our GNOME Shell extension reports focus changes (GNOME, Wayland or X11).
+    GnomeShell,
     /// Sway's IPC socket reports focus changes.
     Sway,
     /// Hyprland's event socket reports focus changes.
     Hyprland,
+    /// The compositor's `wlr-foreign-toplevel-management` reports focus changes (labwc, Wayfire, river, and others).
+    Wlroots,
     /// No focus information: rules match against running processes instead.
     #[default]
     ProcessScan,
@@ -124,8 +128,10 @@ impl FocusBackend {
     pub fn desktop(self) -> Option<&'static str> {
         match self {
             Self::Kwin => Some("KWin"),
+            Self::GnomeShell => Some("GNOME Shell"),
             Self::Sway => Some("Sway"),
             Self::Hyprland => Some("Hyprland"),
+            Self::Wlroots => Some("wlroots"),
             Self::ProcessScan => None,
         }
     }

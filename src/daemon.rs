@@ -1337,17 +1337,7 @@ impl Daemon {
                 let _ = reply.send(self.request(req));
             }
             Msg::Tray(cmd) => self.tray_command(cmd),
-            Msg::Focus(FocusEvent::Backend(backend)) => {
-                // Only a change of backend starts the process scan again. The first report can
-                // arrive after a scan that already switched for a running game, and clearing then
-                // would leave the daemon unable to notice that game exit.
-                if self.focus_backend != backend {
-                    self.focus_backend = backend;
-                    // Re-evaluate from scratch the next time processes are scanned.
-                    self.scan_target = None;
-                }
-            }
-            Msg::Focus(FocusEvent::Focused(window)) => self.window_focused(&window),
+            Msg::Focus(event) => self.focus_event(event),
             Msg::Toast(lines) => self.say(lines),
             Msg::Media(state) => self.update_media(state),
             Msg::RecordingStarted { pid } => {
@@ -1513,6 +1503,31 @@ impl Daemon {
         }
         if let Some((game, pid)) = focus::game_launch(&self.config, window) {
             self.launched(&game, pid);
+        }
+    }
+
+    fn focus_event(&mut self, event: FocusEvent) {
+        match event {
+            FocusEvent::Backend(backend) => {
+                // Only a change of backend starts the process scan again. The first report can
+                // arrive after a scan that already switched for a running game, and clearing then
+                // would leave the daemon unable to notice that game exit.
+                if self.focus_backend != backend {
+                    self.focus_backend = backend;
+                    // Re-evaluate from scratch the next time processes are scanned.
+                    self.scan_target = None;
+                }
+            }
+            FocusEvent::Focused(window) => self.window_focused(&window),
+            FocusEvent::Unfocused => self.window_unfocused(),
+        }
+    }
+
+    /// Nothing has focus (the desktop, or an empty workspace), so no game's rules apply.
+    fn window_unfocused(&mut self) {
+        self.focused = None;
+        if self.config.auto_switch.enabled {
+            self.leave_game("no window has focus");
         }
     }
 

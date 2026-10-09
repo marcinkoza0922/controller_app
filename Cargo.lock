@@ -2740,6 +2740,8 @@ dependencies = [
  "serde_json",
  "tokio",
  "toml",
+ "wayland-client",
+ "wayland-protocols-wlr",
  "winit-core",
  "zbus",
 ]

@@ -15,7 +15,10 @@ const KWIN: &str = "org.kde.KWin";
 fn script() -> String {
     format!(
         r#"function report(w) {{
-    if (!w) return;
+    if (!w) {{
+        callDBus("{BUS_NAME}", "{OBJECT_PATH}", "{INTERFACE}", "FocusCleared");
+        return;
+    }}
     callDBus("{BUS_NAME}", "{OBJECT_PATH}", "{INTERFACE}", "WindowActivated",
              String(w.resourceClass || ""), String(w.pid || 0), String(w.caption || ""));
 }}

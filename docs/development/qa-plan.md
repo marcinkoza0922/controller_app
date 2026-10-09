@@ -197,3 +197,28 @@ scripts/kernel-test-docker.sh process_        # D-0, process-scan switching
 scripts/kernel-test-docker.sh gui_            # U-0, the settings window under Xvfb
 scripts/kernel-test-docker.sh socket_fallback # I-9
 ```
+
+Desktop sessions (need test VMs, see below; not run in CI). Rerun them when the daemon's
+interaction with the system changes (focus tracking, input, the GNOME extension), and when a
+desktop, the kernel or the input stack gets a new release:
+
+```sh
+scripts/desktop-versions.sh   # network: latest GNOME, Plasma, Sway and Hyprland releases; exits 1 if GNOME's major isn't in the extension's shell-version list
+DESKTOP_TEST_HOST=dev@127.0.0.1 DESKTOP_TEST_SSH_OPTS="-p <port> -i vms/id_ed25519" scripts/desktop-test.sh gnome   # or kde, sway, hyprland, labwc (a wlroots compositor)
+```
+
+`desktop-test.sh` syncs the checkout to the VM, builds it, and runs the checks in that session:
+the tracker is found, a terminal's window is seen, its rule switches the profile, and the profile
+falls back when the window closes. Set `DESKTOP_TEST_QMP` to the VM's QMP socket to close the GNOME
+Overview first. Run it only against a throwaway VM: the daemon grabs gamepads and creates virtual
+input devices. Record the versions it prints with the result.
+
+Last run, 2026-10-09, kernel 7.2.9. Each row is the native build, with the Flatpak in the last column where it was run:
+
+| Desktop | Version | Checks | Flatpak |
+|---|---|---|---|
+| GNOME | 51.0 | all pass (overlay skipped) | all pass (overlay skipped) |
+| KDE Plasma | 6.7.5 | all pass | all pass |
+| Sway | 1.12 | all pass | focus falls back to processes; overlay and rules skipped |
+| Hyprland | 0.56.2 | all pass | all pass except the overlay, skipped (layer-shell hidden) |
+| labwc | 0.20.2 | all pass | focus falls back to processes; overlay and rules skipped |

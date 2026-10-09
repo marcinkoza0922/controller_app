@@ -18,7 +18,7 @@ A rule matches a window by its program name, its Steam App ID, or its window cla
 
 To make a rule quickly, focus the game and use **Recently focused windows** on the setup's Details tab. It adds a rule for the profile you're editing.
 
-> **Tip:** automatic switching needs a desktop that reports which window has focus: KDE Plasma, Sway or Hyprland. On GNOME it doesn't work. See [Troubleshooting](troubleshooting.md).
+> **Tip:** automatic switching needs a desktop that reports which window has focus: KDE Plasma, GNOME, Hyprland, Sway, or a wlroots compositor such as labwc. See [Troubleshooting](troubleshooting.md).
 
 ## Shared items
 

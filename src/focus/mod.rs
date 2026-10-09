@@ -3,10 +3,12 @@
 //! profile. Desktops without a tracker fall back to matching running processes.
 
 mod dbus;
+mod gnome;
 mod hyprland;
 mod identify;
 mod kwin;
 mod sway;
+mod wlroots;
 
 use std::{sync::Arc, thread, time::Duration};
 
@@ -26,6 +28,8 @@ const WATCHDOG: Duration = Duration::from_secs(10);
 /// Events the focus tracker sends to the daemon.
 pub enum FocusEvent {
     Focused(WindowInfo),
+    /// Nothing has focus, such as the desktop or an empty workspace.
+    Unfocused,
     Backend(FocusBackend),
 }
 
@@ -97,15 +101,28 @@ fn track(reporter: &mut Reporter, conn: Option<&Connection>) {
         if let Err(e) = hypr.follow(&notify) {
             log!("lost Hyprland: {e:#}");
         }
-    } else {
-        let backend = conn.map_or(FocusBackend::ProcessScan, shell_backend);
+    } else if let Some(backend) = conn.and_then(shell_backend) {
         reporter.backend(backend);
+    } else if let Ok(wl) = wlroots::connect() {
+        reporter.backend(FocusBackend::Wlroots);
+        if let Err(e) = wl.follow(&notify) {
+            log!("lost the Wayland compositor: {e:#}");
+        }
+    } else {
+        reporter.backend(FocusBackend::ProcessScan);
     }
 }
 
-/// The tracker for a desktop reached over D-Bus: KWin.
-fn shell_backend(conn: &Connection) -> FocusBackend {
-    if kwin::ensure_script(conn).is_ok() { FocusBackend::Kwin } else { FocusBackend::ProcessScan }
+/// The tracker for a desktop reached over D-Bus: KWin, or GNOME Shell with our extension. `None`
+/// when the desktop isn't one of those.
+fn shell_backend(conn: &Connection) -> Option<FocusBackend> {
+    if kwin::ensure_script(conn).is_ok() {
+        Some(FocusBackend::Kwin)
+    } else if gnome::is_running(conn) && gnome::ensure_extension(conn).is_ok() {
+        Some(FocusBackend::GnomeShell)
+    } else {
+        None
+    }
 }
 
 fn rule_matches(kind: RuleKind, value: &str, info: &WindowInfo) -> bool {
