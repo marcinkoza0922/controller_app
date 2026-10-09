@@ -435,9 +435,8 @@ pub(super) fn action_value<'a>(
                 move |on: bool| on_change(ButtonAction::Toggle(Toggled { action: inner.clone(), start_on: on }))
             };
             column![
-                row![
+                column![
                     text("Each press turns this on or off:").size(12).color(MUTED_COLOR),
-                    space::horizontal(),
                     tooltip(
                         checkbox(start_on).label("On when the game starts").size(14).text_size(12).on_toggle(starting),
                         container(
@@ -453,8 +452,7 @@ pub(super) fn action_value<'a>(
                         tooltip::Position::Top,
                     ),
                 ]
-                .spacing(8)
-                .align_y(Alignment::Center),
+                .spacing(4),
                 action_editor(inner, default_button, TOGGLE_INNER_KINDS, wrap, field.child(0), names),
             ]
             .spacing(4)

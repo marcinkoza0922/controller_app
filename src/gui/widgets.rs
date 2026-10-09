@@ -263,6 +263,13 @@ pub(super) fn labeled<'a>(label: impl text::IntoFragment<'a>, editor: Element<'a
         .into()
 }
 
+/// Lets a wide row scroll sideways, with its bar below, instead of running off screen.
+pub(super) fn scroll_x<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    scrollable(content)
+        .direction(scrollable::Direction::Horizontal(scrollable::Scrollbar::new().spacing(4)))
+        .into()
+}
+
 #[expect(clippy::too_many_arguments, reason = "predates the size lints")]
 pub(super) fn value_slider<'a>(
     label: &'a str,
