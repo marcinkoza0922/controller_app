@@ -18,7 +18,7 @@ use std::{
 };
 
 use common::{
-    Daemon, TIMEOUT, daemon_log, hold_config, serial, spawn_daemon, temp_root, wait_for,
+    Daemon, TIMEOUT, assert_log_clean, daemon_log, hold_config, serial, spawn_daemon, temp_root, wait_for,
     input::{Reader, find_node, grabbed},
     uhid::{BUTTON_EAST, BUTTON_SOUTH, HidPad},
 };
@@ -121,6 +121,7 @@ fn scenario(signal: Signal) {
     wait_for("the daemon's virtual devices to disappear", || {
         (find_node("Padwight Virtual Keyboard").is_none() && find_node("Padwight Virtual Mouse").is_none()).then_some(())
     });
+    assert_log_clean(&root);
 
     let _ = fs::remove_dir_all(&root);
 }

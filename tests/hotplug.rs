@@ -14,7 +14,7 @@ mod common;
 use std::{fs, thread, time::Duration};
 
 use common::{
-    Daemon, daemon_log, hold_config, input::{Reader, find_node, grabbed}, serial, spawn_daemon, temp_root,
+    Daemon, assert_log_clean, daemon_log, hold_config, input::{Reader, find_node, grabbed}, serial, spawn_daemon, temp_root,
     uhid::{BUTTON_EAST, BUTTON_SOUTH, HidPad}, wait_for,
 };
 use evdev::KeyCode;
@@ -31,8 +31,13 @@ fn start(root: &std::path::Path) -> Daemon {
 
 /// Creates a controller and waits until the daemon has grabbed it.
 fn connect() -> HidPad {
-    let pad = HidPad::new(NAME);
-    wait_for("the daemon to grab the controller", || find_node(NAME).filter(|path| grabbed(path)));
+    connect_as(NAME)
+}
+
+/// Creates a controller called `name` and waits until the daemon has grabbed it.
+fn connect_as(name: &str) -> HidPad {
+    let pad = HidPad::new(name);
+    wait_for("the daemon to grab the controller", || find_node(name).filter(|path| grabbed(path)));
     pad
 }
 
@@ -76,6 +81,9 @@ fn hotplug_unplugging_releases_what_was_held() {
     assert!(daemon.0.try_wait().unwrap().is_none(), "the daemon keeps running after an unplug");
     let log = daemon_log(&root);
     assert!(log.contains(&format!("device gone: {NAME}")), "the daemon noticed the unplug: {log}");
+    let _ = daemon.0.kill();
+    let _ = daemon.0.wait();
+    assert_log_clean(&root);
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -98,5 +106,35 @@ fn hotplug_replugging_the_same_controller_works_again() {
     assert!(daemon.0.try_wait().unwrap().is_none(), "the daemon keeps running across the replug");
     let log = daemon_log(&root);
     assert_eq!(log.matches(&format!("managing {NAME} (")).count(), 2, "the controller was taken twice: {log}");
+    let _ = daemon.0.kill();
+    let _ = daemon.0.wait();
+    assert_log_clean(&root);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+#[ignore]
+fn hotplug_a_different_controller_takes_over_and_is_remapped() {
+    let _serial = serial();
+    let root = temp_root();
+    let mut daemon = start(&root);
+    let mut keys = Reader::open("Padwight Virtual Keyboard");
+    let mut mouse = Reader::open("Padwight Virtual Mouse");
+    let mut pad = connect();
+    hold(&mut pad, &mut keys, &mut mouse);
+    unplug_while_held(pad, &mut keys, &mut mouse);
+
+    // A different controller in the same place: it is grabbed and its buttons are remapped.
+    const OTHER: &str = "Other Controller";
+    let mut pad = connect_as(OTHER);
+    hold(&mut pad, &mut keys, &mut mouse);
+
+    assert!(daemon.0.try_wait().unwrap().is_none(), "the daemon keeps running when the controller changes");
+    let log = daemon_log(&root);
+    assert!(log.contains(&format!("managing {OTHER} (")), "the daemon took the new controller: {log}");
+    assert!(log.contains(&format!("device gone: {NAME}")), "the daemon let go of the old one: {log}");
+    let _ = daemon.0.kill();
+    let _ = daemon.0.wait();
+    assert_log_clean(&root);
     let _ = fs::remove_dir_all(&root);
 }
