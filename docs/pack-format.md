@@ -322,16 +322,18 @@ opacity = 0.94
 
 ## Overlay sounds
 
-`[sounds.<overlay>]` sets the sounds an overlay makes as its cursor moves (`step`) and when something is picked (`pick`). Each overlay has its own table, and every key is optional. A missing overlay uses the defaults.
+`[sounds.<overlay>]` sets the sounds an overlay makes as its cursor moves (`step`), when something is picked (`pick`), and as it pops in (`open`) and out (`close`). Each overlay has its own table, and every key is optional. A missing overlay uses the defaults, and the open and close cues default to a quiet bubble.
 
 ```toml
 [sounds.menu]
-enabled = true                # false silences both cues
+enabled = true                # false silences all four cues
 step = { kind = "knock", volume = 0.07, pitch = 1.0, length = 0.8 }
 pick = { kind = "thud", volume = 0.3, pitch = 0.8, length = 1.4 }
+open = { kind = "swish", volume = 0.04, pitch = 1.0, length = 1.0 }
+close = { kind = "swish", volume = 0.03, pitch = 1.0, length = 1.2 }
 ```
 
-The overlays are `keyboard` (the on-screen keyboard), `numpad`, `menu` (every menu layout, and the Guide + Start menu), `media` (the media controls) and `offer` (library offers). Input logs and info overlays have no cursor, so they make no sounds.
+The overlays are `keyboard` (the on-screen keyboard), `numpad`, `menu` (every menu layout, and the Guide + Start menu), `media` (the media controls) and `offer` (library offers). Input logs and info overlays have no cursor, so they make no sounds, and their appearing and going make none either.
 
 | `kind` | Sounds like |
 |---|---|

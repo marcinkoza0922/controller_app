@@ -164,15 +164,17 @@ impl SoundSpec {
     }
 }
 
-/// The sounds of one kind of overlay: whether it makes any, a cue for each step of the cursor
-/// and one for a pick.
+/// The sounds of one kind of overlay: whether it makes any, a cue for each step of the cursor,
+/// one for a pick, and one as it pops in and out.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct OverlaySounds {
-    /// Off silences both.
+    /// Off silences all of them.
     pub enabled: bool,
     pub step: SoundSpec,
     pub pick: SoundSpec,
+    pub open: SoundSpec,
+    pub close: SoundSpec,
 }
 
 impl Default for OverlaySounds {
@@ -181,6 +183,9 @@ impl Default for OverlaySounds {
             enabled: true,
             step: SoundSpec::new(SoundKind::Click, 0.12, 1.2),
             pick: SoundSpec::new(SoundKind::Pop, 0.3, 1.0),
+            // Quieter than a step, so an overlay coming or going is noticed without pulling focus.
+            open: SoundSpec::new(SoundKind::Pop, 0.05, 1.3),
+            close: SoundSpec::new(SoundKind::Pop, 0.04, 0.8),
         }
     }
 }
@@ -258,6 +263,8 @@ impl SoundSet {
         Some(match feedback {
             Feedback::Step => sounds.step,
             Feedback::Pick => sounds.pick,
+            Feedback::Open => sounds.open,
+            Feedback::Close => sounds.close,
         })
     }
 
@@ -274,11 +281,13 @@ impl SoundSet {
     }
 }
 
-/// What an input did in an overlay: a pick, or a step of the cursor.
+/// What happened in an overlay: a pick, a step of the cursor, or it popping in or out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Feedback {
     Step,
     Pick,
+    Open,
+    Close,
 }
 
 impl Feedback {
@@ -500,6 +509,8 @@ mod tests {
             let sounds = set.get(overlay);
             assert!(sounds.enabled, "{overlay:?}");
             assert!(sounds.step.volume < sounds.pick.volume, "steps are fainter than picks");
+            assert!(sounds.open.volume < sounds.step.volume, "popping in is fainter than a step");
+            assert!(sounds.close.volume < sounds.step.volume, "popping out is fainter than a step");
         }
     }
 
@@ -519,7 +530,10 @@ mod tests {
         set.menu.enabled = false;
         assert_eq!(set.cue(SoundOverlay::Menu, Feedback::Step), None);
         assert_eq!(set.cue(SoundOverlay::Menu, Feedback::Pick), None);
+        assert_eq!(set.cue(SoundOverlay::Menu, Feedback::Open), None);
+        assert_eq!(set.cue(SoundOverlay::Menu, Feedback::Close), None);
         assert_eq!(set.cue(SoundOverlay::Keyboard, Feedback::Pick), Some(set.keyboard.pick));
+        assert_eq!(set.cue(SoundOverlay::Keyboard, Feedback::Open), Some(set.keyboard.open));
         assert!(!SoundSet::default().silenced().keyboard.enabled);
     }
 

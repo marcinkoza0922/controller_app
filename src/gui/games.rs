@@ -402,7 +402,7 @@ impl App {
         rows.push(button(text("Turn every sound off").size(13)).style(style::secondary).on_press(Message::SetSounds(set.silenced())).into());
         section(
             "Overlay sounds",
-            Some("A faint sound as the cursor moves in an overlay, and another when something is picked. These apply to every setup that doesn't set its own on its Details tab. Any overlay can be turned off.".into()),
+            Some("A faint sound as the cursor moves in an overlay, another when something is picked, and a softer one as it pops in and out. These apply to every setup that doesn't set its own on its Details tab. Any overlay can be turned off.".into()),
             rows,
         )
     }
@@ -420,7 +420,7 @@ impl App {
         rows.push(buttons.into());
         section(
             "Overlay sounds",
-            Some("A faint sound as the cursor moves in an overlay, and another when something is picked. Any sound this setup doesn't set uses the global sounds from App settings. Any overlay can be turned off.".into()),
+            Some("A faint sound as the cursor moves in an overlay, another when something is picked, and a softer one as it pops in and out. Any sound this setup doesn't set uses the global sounds from App settings. Any overlay can be turned off.".into()),
             rows,
         )
     }
@@ -875,6 +875,8 @@ fn overlay_sounds<'a>(set: SoundSet, overlay: SoundOverlay, change: fn(SoundSet)
     if current.enabled {
         block = block.push(cue_row("Step", current.step, move |step| put(OverlaySounds { step, ..current })));
         block = block.push(cue_row("Pick", current.pick, move |pick| put(OverlaySounds { pick, ..current })));
+        block = block.push(cue_row("Open", current.open, move |open| put(OverlaySounds { open, ..current })));
+        block = block.push(cue_row("Close", current.close, move |close| put(OverlaySounds { close, ..current })));
     }
     block.into()
 }
@@ -897,7 +899,7 @@ fn cue_row<'a>(label: &'static str, spec: SoundSpec, put: impl Fn(SoundSpec) -> 
         .align_y(Alignment::Center)
     };
     let head = row![
-        text(label).size(14).width(44),
+        text(label).size(14).width(52),
         dropdown(SoundKind::ALL, Some(spec.kind), move |kind| put(SoundSpec { kind, ..spec })).width(120),
         button(text("Play").size(13)).style(style::secondary).on_press(Message::PreviewSound(spec)),
     ]
