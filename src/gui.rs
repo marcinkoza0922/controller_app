@@ -22,7 +22,7 @@ use iced::{
 
 use crate::{
     config::{
-        Analog, Button, ButtonAction, CarouselControls, Cluster, Combo, Config, Feature, Game, GestureKind, GRID_MAX, GyroActivation,
+        Analog, Appearance, Button, ButtonAction, CarouselControls, Cluster, Combo, Config, Feature, Game, GestureKind, GRID_MAX, GyroActivation,
         CurrentInput, GyroConfig, GyroHorizontal, GyroInput, GyroMode, InfoOverlay, ItemKind, LogOverlay, Macro, MacroStep, Menu, MenuItem,
         MenuKind, MenuKindTag, MouseButton, OverlayStyle, Paint, Profile, ProfileRef, Rule, RuleKind, ScopeRef,
         ScreenPosition, Stick, StickAction, StickConfig, Toggled, Trigger, TriggerAction, WheelDirection, Zone, free_name,
@@ -357,6 +357,7 @@ enum Message {
     InsertInfoToken(usize, usize, usize, TokenChoice),
     RemoveInfoCell(usize, usize, usize),
     SetInfoGlyphs(PadFamily),
+    SetAppearance(Appearance),
     NewLog,
     ToggleLog(usize),
     ToggleLogAppearance(usize),
@@ -547,7 +548,12 @@ impl App {
     }
 
     fn theme(&self) -> iced::Theme {
-        <iced::Theme as iced::theme::Base>::default(self.theme_mode)
+        let mode = match self.config.appearance {
+            Appearance::Auto => self.theme_mode,
+            Appearance::Light => iced::theme::Mode::Light,
+            Appearance::Dark => iced::theme::Mode::Dark,
+        };
+        <iced::Theme as iced::theme::Base>::default(mode)
     }
 
     fn subscription(&self) -> Subscription<Message> {

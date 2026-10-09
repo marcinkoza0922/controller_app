@@ -15,7 +15,7 @@ use crate::{
     system_menu::active_profile_mut,
 };
 
-use buttons::{ActionRow, Picker, Slot, action_row_label, action_title, choice_action, page_rows, tuned, wrapped};
+use buttons::{ActionRow, Picker, Slot, action_row_keyword, action_row_label, action_title, choice_action, page_rows, tuned, wrapped};
 use crate::config::Analog;
 use zones::{ZONE_ACTION, ZONE_DELETE, ZONE_FROM, ZONE_ROWS, ZONE_TO};
 use macros::{StepKind, add_macro, choose_macro_row, macro_page, macro_rows};
@@ -448,7 +448,7 @@ impl LayoutEditor {
             Page::Top => (top_rows().into_iter().map(|row| top_item(row, config)).collect(), "A change · B back"),
             Page::Action(slot) => {
                 let current = current_action(config, slot);
-                (page_rows(slot, &current).into_iter().map(|row| item(action_row_label(row, &current))).collect(), "A choose · B back")
+                (page_rows(slot, &current).into_iter().map(|row| ItemView { keyword: action_row_keyword(row), ..item(action_row_label(row, &current)) }).collect(), "A choose · B back")
             }
             Page::Pad(_) => (Button::ALL.iter().map(|&p| button_item(p, String::new())).collect(), "A choose · B back"),
             Page::Gestures(b) => (

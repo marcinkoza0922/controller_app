@@ -9,7 +9,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    config::{Button, ButtonAction, CarouselControls, Menu, MenuKind, OverlayStyle, Stick, Trigger},
+    config::{Button, ButtonAction, CarouselControls, Keyword, Menu, MenuKind, OverlayStyle, Stick, Trigger},
     engine::Opener,
     input::{Axis, InputEvent},
 };
@@ -53,6 +53,9 @@ pub struct ItemView {
     /// What kind of row it is, for its background.
     #[serde(default)]
     pub tone: Tone,
+    /// The keyword the row's action starts with (Macro, Turbo…), drawn as its icon in front of the label.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keyword: Option<Keyword>,
 }
 
 /// What kind of row an item is. The overlay tints each kind differently, so a row that adds to
@@ -276,6 +279,7 @@ impl MenuSession {
                 submenu: matches!(item.action, ButtonAction::OpenMenu(_)),
                 buttons: Vec::new(),
                 tone: Tone::Normal,
+                keyword: None,
             })
             .collect();
         let radial = matches!(menu.kind, MenuKind::Radial { .. });

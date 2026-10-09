@@ -3,7 +3,7 @@
 The left side lists the pages and your setups. The rest of the window shows the page you picked.
 
 - **Overview**: your controller, drawn with the mapping of the profile in use on each button. It also lists the controllers padwight has found, with Test rumble and Calibrate gyro.
-- **App settings**: automatic switching, the default profile, and how the on-screen keyboard, numpad, media controls and in-game menu look.
+- **App settings**: the window's appearance (Auto, Light or Dark), automatic switching, the default profile, and how the on-screen keyboard, numpad, media controls and in-game menu look.
 - **Manual**: this guide.
 - **General**: the built-in setup for the desktop and plain gamepad use. Its profiles are used when no other setup matches.
 - **Setups**: your setups, one for each game, each with its own profiles. **+ Add setup** creates one.
