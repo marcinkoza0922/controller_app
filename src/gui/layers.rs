@@ -228,24 +228,25 @@ impl App {
     pub(super) fn view_layers<'a>(&'a self, names: &Names) -> Element<'a, Message> {
         let game = self.game();
         let picker_row = {
-            let names: Vec<String> = game.layers.iter().map(|l| l.name.clone()).collect();
-            let current = game.layers.get(self.layer).map(|l| l.name.clone());
-            row![
-                dropdown(names, current, Message::SelectLayer).placeholder("No layers yet").width(220),
-                button(text("+ New layer")).style(style::secondary).on_press(Message::NewLayer),
-                space::horizontal(),
-                button(text("Copy from another setup…").size(13)).style(button::text).on_press(Message::OpenBrowse(ItemKind::Layer)),
-                help(
+            let mut picker = row![].spacing(8).align_y(Alignment::Center);
+            // The picker only shows once there's a layer to pick.
+            if !game.layers.is_empty() {
+                let names: Vec<String> = game.layers.iter().map(|l| l.name.clone()).collect();
+                let current = game.layers.get(self.layer).map(|l| l.name.clone());
+                picker = picker.push(dropdown(names, current, Message::SelectLayer).width(220));
+            }
+            picker
+                .push(button(text("+ New layer")).style(style::secondary).on_press(Message::NewLayer))
+                .push(space::horizontal())
+                .push(button(text("Copy from another setup…").size(13)).style(button::text).on_press(Message::OpenBrowse(ItemKind::Layer)))
+                .push(help(
                     "A layer changes some of the controller's mappings while it's on, then restores them: e.g. hold LB, and the face buttons type F1–F4. Turn one on with \"Layer…\" on \
                      any button, trigger, stick direction, zone, gesture or combo: on while held, or wrapped \
                      in Toggle, until pressed again (that also works from a menu item). It applies over \
                      whichever of the game's profiles is active; what it doesn't set stays as in the profile. \
                      Several layers can be on at once; the newest wins."
                         .into(),
-                ),
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center)
+                ))
         };
         let mut col = column![picker_row].spacing(16);
         let Some(layer) = game.layers.get(self.layer) else {
