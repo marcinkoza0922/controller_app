@@ -195,7 +195,7 @@ Pick the style that suits the job:
 
 An item can open another menu of the same kind (radial menus can't open menus). The new menu is a child of the first, so letting go closes both. While a menu is open, the controller drives it, and anything the mappings were holding is released. A quick tap can't hold a menu up, so a menu opened by a tap (e.g. on a double tap that isn't the button's last gesture) needs a Toggle. Menus opened from the command line or an analog zone can't be held, so they stay until you choose an item or press B (Select for face-button menus). The overlay window stays running invisibly between uses, so menus appear instantly.
 
-Each menu is a collapsible card on the Menus tab, with a live preview. "Add a menu" adds another at the top. Under **Appearance**, each menu (and the keyboard) gets its own screen position (a 3×3 grid of corners, edges and center, so it fits any monitor size or aspect ratio), a size (50–200%), and a color and opacity for the background, items and selected item. Text switches between light and dark to stay readable. Older configs with `cascade` menus still load.
+Each menu is a collapsible card on the Menus tab, with a live preview. "Add a menu" adds another at the top. Under **Appearance**, each menu (and the keyboard) gets its own screen position (a 3×3 grid of corners, edges and center, so it fits any monitor size or aspect ratio), a size (50–200%), a width and height as percentages of the screen (or fitted to the contents), an x and y offset, a max width and max height that stop it stretching off screen, and a color and opacity for the background, items and selected item. Text switches between light and dark to stay readable. Older configs with `cascade` menus still load.
 
 ## In-game menu
 

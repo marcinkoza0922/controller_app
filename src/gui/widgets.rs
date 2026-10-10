@@ -1,5 +1,7 @@
 //! Small widgets in the app's style, shared by every page: dropdowns, fields, labeled rows, sections, ⓘ tips, the overlay style editor and previews.
 
+use std::ops::RangeInclusive;
+
 use iced::widget::{column, row};
 
 use super::*;
@@ -136,9 +138,32 @@ pub(super) fn style_editor<'a>(style: &OverlayStyle, on_change: OnStyle<'a>) -> 
     .spacing(10)
     .align_y(Alignment::Center);
 
+    let width = optional_slider(
+        "Set width",
+        style.width,
+        Span { default: 50.0, range: 10.0..=100.0, unit: "%" },
+        set_field(on_change.clone(), style, |s: &mut OverlayStyle, v: Option<f32>| s.width = v),
+    );
+    let height = optional_slider(
+        "Set height",
+        style.height,
+        Span { default: 50.0, range: 10.0..=100.0, unit: "%" },
+        set_field(on_change.clone(), style, |s: &mut OverlayStyle, v: Option<f32>| s.height = v),
+    );
+    let offset_x = percent_slider(style.x_offset, -50.0..=50.0, set_field(on_change.clone(), style, |s: &mut OverlayStyle, v: f32| s.x_offset = v));
+    let offset_y = percent_slider(style.y_offset, -50.0..=50.0, set_field(on_change.clone(), style, |s: &mut OverlayStyle, v: f32| s.y_offset = v));
+    let max_width = percent_slider(style.max_width, 10.0..=100.0, set_field(on_change.clone(), style, |s: &mut OverlayStyle, v: f32| s.max_width = v));
+    let max_height = percent_slider(style.max_height, 10.0..=100.0, set_field(on_change.clone(), style, |s: &mut OverlayStyle, v: f32| s.max_height = v));
+
     column![
         labeled("    Position", position.into()),
         labeled("    Size", size.into()),
+        labeled("    Width", width),
+        labeled("    Height", height),
+        labeled("    Offset X", offset_x),
+        labeled("    Offset Y", offset_y),
+        labeled("    Max width", max_width),
+        labeled("    Max height", max_height),
         labeled("    Corners", shape.into()),
         paint_editor("Background", &style.background, |s, p| s.background = p),
         paint_editor("Items", &style.items, |s, p| s.items = p),
@@ -146,6 +171,14 @@ pub(super) fn style_editor<'a>(style: &OverlayStyle, on_change: OnStyle<'a>) -> 
     ]
     .spacing(8)
     .into()
+}
+
+/// A slider for a number of percent of the display.
+fn percent_slider<'a>(value: f32, range: RangeInclusive<f32>, on_change: impl Fn(f32) -> Message + 'a) -> Element<'a, Message> {
+    row![slider(range, value, on_change).step(1.0_f32).width(220), text(format!("{value:.0}%")).size(13)]
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .into()
 }
 
 /// What a corners setting looks like, from square to circle.
@@ -182,16 +215,40 @@ pub(super) fn preview<'a>(panel: Element<'a, Message>) -> Element<'a, Message> {
 
 /// A checkbox for an optional number of seconds, with a slider while it's ticked.
 pub(super) fn seconds_option<'a>(label: &'static str, value: Option<f32>, default: f32, on_change: impl Fn(Option<f32>) -> Message + Clone + 'a) -> Element<'a, Message> {
+    optional_slider(label, value, Span { default, range: 1.0..=60.0, unit: " s" }, on_change)
+}
+
+/// How an optional slider runs: where it starts when ticked, its range, and the unit it shows.
+pub(super) struct Span {
+    pub default: f32,
+    pub range: RangeInclusive<f32>,
+    pub unit: &'static str,
+}
+
+/// A checkbox for an optional number, with a slider while it's ticked. Unticked, the number is
+/// unset: `value` is `None`.
+pub(super) fn optional_slider<'a>(label: &'static str, value: Option<f32>, span: Span, on_change: impl Fn(Option<f32>) -> Message + Clone + 'a) -> Element<'a, Message> {
     let toggle = on_change.clone();
+    let default = span.default;
     let mut line = row![checkbox(value.is_some()).label(label).on_toggle(move |on| toggle(on.then_some(default)))]
         .spacing(10)
         .align_y(Alignment::Center);
-    if let Some(seconds) = value {
+    if let Some(number) = value {
         line = line
-            .push(slider(1.0..=60.0, seconds, move |v| on_change(Some(v))).step(1.0_f32).width(180))
-            .push(text(format!("{seconds:.0} s")).size(13));
+            .push(slider(span.range, number, move |v| on_change(Some(v))).step(1.0_f32).width(180))
+            .push(text(format!("{number:.0}{}", span.unit)).size(13));
     }
     line.into()
+}
+
+/// A message for `on_change` with one field of `style` set to the value it's given.
+pub(super) fn set_field<'a, T: 'a>(on_change: OnStyle<'a>, style: &OverlayStyle, set: fn(&mut OverlayStyle, T)) -> impl Fn(T) -> Message + Clone + 'a {
+    let style = style.clone();
+    move |v| {
+        let mut s = style.clone();
+        set(&mut s, v);
+        on_change(s)
+    }
 }
 
 /// A dropdown in the app's style: stands out from cards, with a raised menu.

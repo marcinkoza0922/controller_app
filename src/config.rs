@@ -577,6 +577,25 @@ pub struct OverlayStyle {
     /// How round the corners are, 0..1: 0 is square, 1 is a circle wherever the shape allows.
     #[serde(default = "default_corners", skip_serializing_if = "is_default_corners")]
     pub corners: f32,
+    /// Width, as a percentage of the display. Unset, the overlay fits its contents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<f32>,
+    /// Length (height), as a percentage of the display. Unset, the overlay fits its contents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<f32>,
+    /// Moves the overlay right, as a percentage of the display's width (negative moves left).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub x_offset: f32,
+    /// Moves the overlay down, as a percentage of the display's height (negative moves up).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub y_offset: f32,
+    /// Widest the overlay may stretch, as a percentage of the display. Past it, contents wrap onto
+    /// the next line, and the overlay grows taller.
+    #[serde(default = "default_max_size", skip_serializing_if = "is_default_max_size")]
+    pub max_width: f32,
+    /// Tallest the overlay may grow, as a percentage of the display. Past it, contents scroll.
+    #[serde(default = "default_max_size", skip_serializing_if = "is_default_max_size")]
+    pub max_height: f32,
 }
 
 fn default_scale() -> f32 {
@@ -589,6 +608,15 @@ fn default_corners() -> f32 {
 
 fn is_default_corners(corners: &f32) -> bool {
     (corners - default_corners()).abs() < f32::EPSILON
+}
+
+/// Most of the display an overlay may cover, unless its style says less.
+fn default_max_size() -> f32 {
+    90.0
+}
+
+fn is_default_max_size(max: &f32) -> bool {
+    (max - default_max_size()).abs() < f32::EPSILON
 }
 
 fn default_background() -> Paint {
@@ -612,6 +640,12 @@ impl Default for OverlayStyle {
             items: default_items(),
             selected: default_selected(),
             corners: default_corners(),
+            width: None,
+            height: None,
+            x_offset: 0.0,
+            y_offset: 0.0,
+            max_width: default_max_size(),
+            max_height: default_max_size(),
         }
     }
 }
@@ -3006,6 +3040,22 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn overlay_size_and_offset_are_optional_and_unwritten_when_default() {
+        // Older configs fit their contents, sit where their position puts them, and cap at 90%.
+        let style: OverlayStyle = toml::from_str("position = \"center\"\n").unwrap();
+        assert_eq!((style.width, style.height), (None, None));
+        assert_eq!((style.x_offset, style.y_offset), (0.0, 0.0));
+        assert_eq!((style.max_width, style.max_height), (90.0, 90.0));
+        let written = toml::to_string(&OverlayStyle::default()).unwrap();
+        for key in ["width", "height", "x_offset", "y_offset", "max_width", "max_height"] {
+            assert!(!written.contains(key), "{key} is written by default: {written}");
+        }
+        let sized = OverlayStyle { width: Some(40.0), x_offset: -5.0, max_height: 60.0, ..OverlayStyle::default() };
+        let back: OverlayStyle = toml::from_str(&toml::to_string(&sized).unwrap()).unwrap();
+        assert_eq!(back, sized);
+    }
 
     #[test]
     fn overlay_corners_and_radial_options_are_optional() {

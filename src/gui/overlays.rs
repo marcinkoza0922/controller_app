@@ -151,7 +151,7 @@ impl App {
                 game.media_style.as_ref(),
                 &self.config.media_style,
                 Message::SetGameMediaStyle,
-                move |style| preview(crate::overlay::draw::media_panel(&crate::media::MediaView::sample(preview_style(style)), font, &crate::motion::Anim::still())),
+                move |style| preview(crate::overlay::draw::media_panel(&crate::media::MediaView::sample(preview_style(style)), font, &crate::overlay::fit::Fit::contents(), &crate::motion::Anim::still())),
             ),
             game_overlay_card(
                 "In-game menu",
@@ -160,7 +160,7 @@ impl App {
                 Message::SetGameMenuStyle,
                 move |style| {
                     let sample = crate::system_menu::main_page(preview_style(style), 0);
-                    preview(crate::overlay::draw::menu_panel(&sample, font, look))
+                    preview(crate::overlay::draw::menu_panel(&sample, font, look, &crate::overlay::fit::Fit::contents()))
                 },
             ),
         ]
@@ -209,7 +209,7 @@ fn keyboard_preview(layout: Layout, style: &OverlayStyle, font: iced::Font) -> E
         pressed: None,
         closing: 0.0,
     };
-    preview(crate::overlay::draw::keyboard_panel(&sample, font, &crate::motion::Anim::still()))
+    preview(crate::overlay::draw::keyboard_panel(&sample, font, &crate::overlay::fit::Fit::contents(), &crate::motion::Anim::still()))
 }
 
 /// What each motion style is like, for the settings to explain them.

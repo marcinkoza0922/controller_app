@@ -641,14 +641,14 @@ impl App {
                         let m = &items.menus[i];
                         let view = MenuSession::open(std::slice::from_ref(m), &m.name, Opener { buttons: vec![Button::LeftBumper], ..Opener::default() })
                             .and_then(|s| s.view(std::slice::from_ref(m)))
-                            .map(|v| preview(crate::overlay::draw::menu_panel(&crate::menu::MenuView { style: preview_style(&m.style), ..v }, self.preview_font(), self.menu_look())));
+                            .map(|v| preview(crate::overlay::draw::menu_panel(&crate::menu::MenuView { style: preview_style(&m.style), ..v }, self.preview_font(), self.menu_look(), &crate::overlay::fit::Fit::contents())));
                         (m.name.clone(), format!("{} · {} items", m.kind.tag().short(), m.items.len()), view)
                     }
                     ItemKind::Info => {
                         let o = &items.info[i];
                         let sample = InfoOverlay { style: preview_style(&o.style), ..o.clone() };
                         let view = crate::info::resolve(&sample, &crate::info::Live::sample(self.config.info_glyphs).with_layout(self.nintendo_layout()));
-                        (o.name.clone(), format!("{} rows", o.rows.len()), Some(preview(crate::overlay::draw::info_panel(&view, self.preview_font(), &crate::motion::Anim::still()))))
+                        (o.name.clone(), format!("{} rows", o.rows.len()), Some(preview(crate::overlay::draw::info_panel(&view, self.preview_font(), &crate::overlay::fit::Fit::contents(), &crate::motion::Anim::still()))))
                     }
                     ItemKind::Log => {
                         let o = &items.logs[i];
@@ -657,7 +657,7 @@ impl App {
                         let now = sample.now.unwrap_or_else(std::time::Instant::now);
                         let glyphs = crate::info::Glyphs { family: self.config.info_glyphs, nintendo_layout: self.nintendo_layout() };
                         let view = crate::inputlog::log_view(&sample.entries(None), s, &preview_style(&o.style), glyphs, now);
-                        (o.name.clone(), format!("input · {} lines", s.lines), Some(preview(crate::overlay::draw::log_panel(&view, self.preview_font(), &crate::motion::Anim::still()))))
+                        (o.name.clone(), format!("input · {} lines", s.lines), Some(preview(crate::overlay::draw::log_panel(&view, self.preview_font(), &crate::overlay::fit::Fit::contents(), &crate::motion::Anim::still()))))
                     }
                     ItemKind::Layer => {
                         let l = &items.layers[i];

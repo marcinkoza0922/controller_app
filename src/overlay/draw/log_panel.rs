@@ -3,10 +3,10 @@
 
 use iced::{
     Alignment, Element, Font,
-    widget::{column, container, row, space, text},
+    widget::{column, row, space, text},
 };
 
-use super::{Colors, colors, info_cell, panel_style};
+use super::{Colors, Fit, colors, framed, info_cell};
 use crate::{
     info::Segment,
     inputlog::{LogCell, LogView},
@@ -18,7 +18,7 @@ const RELEASED: f32 = 0.55;
 /// Labels longer than this are cut short, so one long macro name doesn't stretch the line.
 const LABEL_CHARS: usize = 22;
 
-pub fn log_panel<'a, M: 'a>(v: &LogView, font: Font, anim: &Anim) -> Element<'a, M> {
+pub fn log_panel<'a, M: 'a>(v: &LogView, font: Font, fit: &Fit, anim: &Anim) -> Element<'a, M> {
     if v.lines.is_empty() {
         return space().into();
     }
@@ -31,9 +31,9 @@ pub fn log_panel<'a, M: 'a>(v: &LogView, font: Font, anim: &Anim) -> Element<'a,
         for cell in &line.cells {
             cells = cells.push(log_cell(cell, c.faded(line.opacity), s, v, opacity * line.opacity));
         }
-        lines = lines.push(cells);
+        lines = lines.push(cells.wrap().vertical_spacing(4.0 * s));
     }
-    container(lines).padding([10.0 * s, 14.0 * s]).style(panel_style(c)).into()
+    framed(lines.into(), c, [10.0 * s, 14.0 * s], fit)
 }
 
 fn log_cell<'a, M: 'a>(cell: &LogCell, c: Colors, s: f32, v: &LogView, opacity: f32) -> Element<'a, M> {
