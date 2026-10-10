@@ -533,6 +533,7 @@ mod ui {
     fn update(state: &mut Overlay, message: Message) -> Task<Message> {
         match message {
             Message::State(frame) => {
+                timing_log(&format!("recv {}", unix_ns()));
                 let now = Instant::now();
                 let was_shown = state.shown();
                 state.panels.update(now, frame.active.iter().cloned().collect());
@@ -598,7 +599,28 @@ mod ui {
             return space().into();
         }
         // The surface covers the whole display, so each overlay sizes itself as shares of it.
-        responsive(move |display| stack(layers(state, display)).into()).into()
+        responsive(move |display| {
+            let started = Instant::now();
+            let built: Element<'_, Message> = stack(layers(state, display)).into();
+            timing_log(&format!("built {} {}", unix_ns(), started.elapsed().as_nanos()));
+            built
+        })
+        .into()
+    }
+
+    /// Profiling only. When `PADWIGHT_OVERLAY_TIMING` names a file, each received frame and each
+    /// build of the overlay's widgets is appended to it, as `recv <ns>` and `built <ns> <build ns>`.
+    /// Unset, this does nothing; the file is opened per call, so it is only for measuring.
+    fn timing_log(entry: &str) {
+        use std::io::Write;
+        let Some(path) = std::env::var_os("PADWIGHT_OVERLAY_TIMING") else { return };
+        if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            let _ = writeln!(file, "{entry}");
+        }
+    }
+
+    fn unix_ns() -> u128 {
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos())
     }
 
     /// The overlays on screen, sized for a display of `display`.
