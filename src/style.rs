@@ -85,22 +85,28 @@ pub fn segments(theme: &Theme) -> container::Style {
     }
 }
 
-/// One segment: the chosen one is a raised chip on the track.
+/// One segment: the chosen one is a raised chip on the track, lighter than the track in either
+/// theme (the page color would be darker than the track in dark mode), with an accent edge.
 pub fn segment(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |theme, status| {
         let p = theme.extended_palette();
         let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+        let chip = if p.is_dark { p.background.strong.color } else { p.background.base.color };
         let background = if selected {
-            Some(p.background.base.color.into())
+            Some(chip.into())
         } else if hovered {
-            Some(p.background.strong.color.into())
+            Some(Color { a: 0.5, ..p.background.strong.color }.into())
         } else {
             None
         };
         button::Style {
             background,
             text_color: if selected { p.primary.base.color } else { p.background.weak.text },
-            border: Border { radius: 6.0.into(), ..Border::default() },
+            border: Border {
+                width: if selected { 1.0 } else { 0.0 },
+                radius: 6.0.into(),
+                color: Color { a: 0.6, ..p.primary.base.color },
+            },
             shadow: if selected {
                 Shadow { color: Color { a: 0.25, ..Color::BLACK }, offset: Vector::new(0.0, 1.0), blur_radius: 3.0 }
             } else {
@@ -111,27 +117,55 @@ pub fn segment(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Sty
     }
 }
 
-/// Ordinary buttons. iced's own secondary is a flat mid-grey that looks the same as a
+/// Ordinary buttons. iced's own secondary is a flat mid-gray that looks the same as a
 /// disabled button; this one is a light field-like surface with an edge, so it reads as
-/// clickable, and fades out when disabled.
+/// clickable.
 pub fn secondary(theme: &Theme, status: button::Status) -> button::Style {
     let p = theme.extended_palette();
     let (background, border_color) = match status {
         button::Status::Active => (p.background.weak.color, p.background.strong.color),
         button::Status::Hovered => (p.background.strong.color, p.primary.base.color),
         button::Status::Pressed => (p.background.stronger.color, p.primary.base.color),
-        button::Status::Disabled => (p.background.weakest.color, p.background.weak.color),
+        button::Status::Disabled => return disabled(theme),
     };
-    let text_color = if status == button::Status::Disabled { muted(p.background.weak.text) } else { p.background.weak.text };
     button::Style {
         background: Some(background.into()),
-        text_color,
+        text_color: p.background.weak.text,
         border: Border { width: 1.0, radius: 5.0.into(), color: border_color },
         ..button::Style::default()
     }
 }
 
-/// A quiet "✕" for removing a card: muted until hovered, then red.
+/// The main action of a page or dialog (Save & apply): iced's primary, with the shared
+/// disabled look instead of its pale, hard-to-read blue.
+pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
+    match status {
+        button::Status::Disabled => disabled(theme),
+        _ => button::primary(theme, status),
+    }
+}
+
+/// A destructive action (Delete): iced's danger, with the shared disabled look.
+pub fn danger(theme: &Theme, status: button::Status) -> button::Style {
+    match status {
+        button::Status::Disabled => disabled(theme),
+        _ => button::danger(theme, status),
+    }
+}
+
+/// Every disabled button, whatever its style: no fill and a faint edge, so it doesn't read as
+/// clickable, with gray text that stays readable.
+fn disabled(theme: &Theme) -> button::Style {
+    let p = theme.extended_palette();
+    button::Style {
+        background: None,
+        text_color: muted(p.background.base.text),
+        border: Border { width: 1.0, radius: 5.0.into(), color: p.background.weak.color },
+        ..button::Style::default()
+    }
+}
+
+/// A quiet "Delete …" for deleting a whole item: muted until hovered, then red.
 pub fn quiet_danger(theme: &Theme, status: button::Status) -> button::Style {
     let p = theme.extended_palette();
     let text_color = match status {

@@ -437,17 +437,17 @@ mod tests {
 
                 // The middle of each sector is in that sector.
                 for i in 0..n {
-                    assert_eq!(sector_at(start + i as f32 * width), Some(i), "{sectors} sectors from {start}: centre of {i}");
+                    assert_eq!(sector_at(start + i as f32 * width), Some(i), "{sectors} sectors from {start}: center of {i}");
                 }
 
-                // A fine sweep: every direction is in a sector, and within half a width of its centre.
+                // A fine sweep: every direction is in a sector, and within half a width of its center.
                 let mut seen = vec![false; n];
                 for step in 0..3600 {
                     let deg = step as f32 / 10.0;
                     let s = sector_at(deg).unwrap_or_else(|| panic!("{sectors} sectors from {start}: no sector at {deg}"));
                     seen[s] = true;
                     let off = angle_diff(deg, start + s as f32 * width).abs();
-                    assert!(off <= width / 2.0 + 1e-3, "{sectors} sectors from {start}: {deg} is {off} from sector {s}'s centre");
+                    assert!(off <= width / 2.0 + 1e-3, "{sectors} sectors from {start}: {deg} is {off} from sector {s}'s center");
                 }
                 assert!(seen.iter().all(|&hit| hit), "{sectors} sectors from {start}: a sector is never picked");
             }

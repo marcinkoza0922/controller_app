@@ -51,7 +51,7 @@ fn log_cell<'a, M: 'a>(cell: &LogCell, c: Colors, s: f32, v: &LogView, opacity: 
     if v.show_holds
         && let Some(ms) = cell.hold_ms
     {
-        col = col.push(text(format!("{ms}ms")).font(c.font).size(11.0 * s).color(c.muted));
+        col = col.push(text(format!("{ms} ms")).font(c.font).size(11.0 * s).color(c.muted));
     }
     col.into()
 }

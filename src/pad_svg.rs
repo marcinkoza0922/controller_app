@@ -11,7 +11,7 @@ mod layout;
 pub use hit::{Part, hit, stick_value, trigger_value};
 #[cfg(test)]
 pub use hit::{face_center, stick_center};
-pub use labels::{HEIGHT, LABEL_COLUMN, LABEL_TEXT_SIZE, MARGIN, RIGHT_COLUMN_X, WIDTH, place_labels};
+pub use labels::{HEIGHT, LABEL_COLUMN, LABEL_TEXT_SIZE, MARGIN, RIGHT_COLUMN_X, WIDTH, leaders, place_labels};
 use layout::{DpadKind, Layout, Mark};
 
 use crate::{

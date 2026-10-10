@@ -310,10 +310,7 @@ impl MenuSession {
             }
         };
         let hint = match menu.kind {
-            MenuKind::Radial { stick, .. } => {
-                let stick = if stick == Stick::Left { "left stick" } else { "right stick" };
-                format!("Aim the {stick} · {close}")
-            }
+            MenuKind::Radial { stick, .. } => format!("Aim the {stick} · {close}"),
             MenuKind::Directional { cluster } => format!("Press a {} direction · {close}", cluster.to_string().to_lowercase()),
             MenuKind::List => format!("↑↓ move · A choose · {close}"),
             MenuKind::Buttons => format!("Press an item's button, or ↑↓ and A · {close}"),

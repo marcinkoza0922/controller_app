@@ -146,8 +146,8 @@ impl fmt::Display for Button {
             Button::Select => "Select / Back",
             Button::Start => "Start",
             Button::Guide => "Guide / Home",
-            Button::LeftStick => "Left Stick Click",
-            Button::RightStick => "Right Stick Click",
+            Button::LeftStick => "Left Stick Click (L3)",
+            Button::RightStick => "Right Stick Click (R3)",
             Button::DpadUp => "D-pad Up",
             Button::DpadDown => "D-pad Down",
             Button::DpadLeft => "D-pad Left",
@@ -2735,8 +2735,9 @@ pub struct Config {
     pub nintendo_layout: bool,
     /// Draws the added and removed rows of menus in blue and orange, with a + or − in front, so
     /// they can be told apart without red and green.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub colourblind_tones: bool,
+    /// The file keeps the key's first spelling, so configs that set it still load.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not", rename = "colourblind_tones")]
+    pub colorblind_tones: bool,
     /// Light, dark or the desktop's choice, for the settings window.
     #[serde(default, skip_serializing_if = "Appearance::is_auto")]
     pub appearance: Appearance,
@@ -2774,7 +2775,7 @@ impl Default for Config {
             active: ProfileRef::new(None, "Gamepad"),
             ignored_devices: Vec::new(),
             auto_switch: AutoSwitch::default(),
-            colourblind_tones: false,
+            colorblind_tones: false,
             appearance: Appearance::Auto,
             motion: MotionSet::default(),
             sounds: SoundSet::default(),

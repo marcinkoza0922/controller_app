@@ -39,7 +39,7 @@ impl Button {
     }
 }
 
-/// A word that says what an action does with its item, shown in its own colour.
+/// A word that says what an action does with its item, shown in its own color.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Keyword {
     Toggle,
@@ -65,7 +65,7 @@ impl Keyword {
     }
 }
 
-/// A summary in pieces, so the settings window can colour keywords and draw controller buttons
+/// A summary in pieces, so the settings window can color keywords and draw controller buttons
 /// as their glyphs. [`plain_text`] gives the plain text.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Piece {

@@ -4,7 +4,7 @@
 const MIN_WEIGHT: f32 = 0.25;
 
 /// Each item's arc in degrees clockwise from straight up, as `(start, end)`. Arcs are sized by
-/// their weights and fill the whole circle; the first is centred on up.
+/// their weights and fill the whole circle; the first is centered on up.
 pub fn arcs(weights: &[f32]) -> Vec<(f32, f32)> {
     if weights.is_empty() {
         return Vec::new();
@@ -55,7 +55,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn equal_weights_give_equal_arcs_centred_on_up() {
+    fn equal_weights_give_equal_arcs_centered_on_up() {
         let arcs = arcs(&[1.0; 4]);
         assert_eq!(arcs.len(), 4);
         assert!(arcs.iter().all(|(s, e)| (e - s - 90.0).abs() < 1e-4));

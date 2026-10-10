@@ -48,17 +48,17 @@ impl StepKind {
 const ADD_LABELS: [&str; 6] = ["Tap…", "Press…", "Release…", "Stick…", "Wait 100 ms", "Remove last step"];
 
 /// Directions a stick step can point, in row order: up, up right, right, down right, down, down
-/// left, left, up left and centre. Each stick has one row per direction.
+/// left, left, up left and center. Each stick has one row per direction.
 const DIRECTIONS: [(&str, f32, f32); 9] = [
-    ("up", 0.0, -1.0),
-    ("up right", 0.7, -0.7),
-    ("right", 1.0, 0.0),
-    ("down right", 0.7, 0.7),
-    ("down", 0.0, 1.0),
-    ("down left", -0.7, 0.7),
-    ("left", -1.0, 0.0),
-    ("up left", -0.7, -0.7),
-    ("centre", 0.0, 0.0),
+    ("Up", 0.0, -1.0),
+    ("Up Right", 0.7, -0.7),
+    ("Right", 1.0, 0.0),
+    ("Down Right", 0.7, 0.7),
+    ("Down", 0.0, 1.0),
+    ("Down Left", -0.7, 0.7),
+    ("Left", -1.0, 0.0),
+    ("Up Left", -0.7, -0.7),
+    ("Center", 0.0, 0.0),
 ];
 
 /// The stick step rows: the left stick's directions, then the right stick's.
@@ -81,7 +81,7 @@ pub fn stick_row_label(row: usize) -> String {
     } else {
         ("Right", DIRECTIONS[row - DIRECTIONS.len()])
     };
-    format!("{side} stick {name}")
+    format!("{side} Stick {name}")
 }
 
 /// Adds `step` to the end of macro `i`.
@@ -216,12 +216,12 @@ mod tests {
     }
 
     #[test]
-    fn a_stick_step_points_a_stick_and_is_labelled() {
+    fn a_stick_step_points_a_stick_and_is_labeled() {
         let mut config = Config::default();
         let i = add_macro(&mut config).unwrap();
         push_step(&mut config, i, stick_step(STICK_STEPS / 2 + 6));
         assert_eq!(config.active_game().macros[i].steps[0], MacroStep::Stick { stick: Stick::Right, x: -1.0, y: 0.0 });
-        assert_eq!(stick_row_label(2), "Left stick right");
+        assert_eq!(stick_row_label(2), "Left Stick Right");
     }
 }
 

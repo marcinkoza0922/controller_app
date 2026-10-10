@@ -1,6 +1,6 @@
 # Gyro (motion aiming)
 
-Some controllers have motion sensors, called gyro. padwight can use them to aim or steer: turn or tilt the controller to move the mouse or a stick. DualShock 4, DualSense, Switch Pro and Joy-Con controllers have gyro.
+Some controllers have motion sensors, called gyro. Padwight can use them to aim or steer: turn or tilt the controller to move the mouse or a stick. DualShock 4, DualSense, Switch Pro and Joy-Con controllers have gyro.
 
 - **Mouse**: turning the controller moves the mouse, like aiming with a mouse.
 - **Gamepad stick**: turning moves a virtual stick, which adds to the real one.

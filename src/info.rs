@@ -247,22 +247,22 @@ pub const TOKENS: &[(&str, &str)] = &[
     ("east", "Right face button (B / ○ / A)"),
     ("west", "Left face button (X / □ / Y)"),
     ("north", "Top face button (Y / △ / X)"),
-    ("lb", "Left bumper"),
-    ("rb", "Right bumper"),
-    ("lt", "Left trigger"),
-    ("rt", "Right trigger"),
+    ("lb", "Left Bumper"),
+    ("rb", "Right Bumper"),
+    ("lt", "Left Trigger"),
+    ("rt", "Right Trigger"),
     ("select", "Select / View / Share / −"),
     ("start", "Start / Menu / Options / +"),
     ("guide", "Guide / PS / Home"),
-    ("ls", "Left stick"),
-    ("rs", "Right stick"),
-    ("l3", "Left stick click"),
-    ("r3", "Right stick click"),
+    ("ls", "Left Stick"),
+    ("rs", "Right Stick"),
+    ("l3", "Left Stick Click (L3)"),
+    ("r3", "Right Stick Click (R3)"),
     ("dpad", "D-pad"),
-    ("up", "D-pad up"),
-    ("down", "D-pad down"),
-    ("left", "D-pad left"),
-    ("right", "D-pad right"),
+    ("up", "D-pad Up"),
+    ("down", "D-pad Down"),
+    ("left", "D-pad Left"),
+    ("right", "D-pad Right"),
     ("time", "Time (24-hour)"),
     ("time12", "Time (12-hour)"),
     ("date", "Date"),
@@ -666,7 +666,7 @@ pub fn glyph(label: &str, fill: Option<[u8; 3]>, round: bool) -> Segment {
     Segment::Glyph { label: label.to_string(), fill, round }
 }
 
-/// A keyboard key as a keycap: its label, in a slate colour that tells it from a controller's.
+/// A keyboard key as a keycap: its label, in a slate color that tells it from a controller's.
 pub fn key_glyph(code: &str) -> Segment {
     const KEY: [u8; 3] = [0x4a, 0x52, 0x5c];
     glyph(&crate::keyboard::label(code), Some(KEY), false)

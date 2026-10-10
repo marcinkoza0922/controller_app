@@ -201,6 +201,11 @@ fn drawn_keys() -> impl Iterator<Item = &'static Key> {
     MAIN.iter().chain(NAV.iter()).chain(NUMPAD.iter()).chain(PAD.iter()).flat_map(|r| r.iter()).chain(MEDIA).filter(|k| !k.code.is_empty())
 }
 
+/// The evdev code of the drawn key whose [`label`] is `name`, ignoring case.
+pub fn code_for_label(name: &str) -> Option<&'static str> {
+    drawn_keys().map(|k| k.code).find(|code| label(code).eq_ignore_ascii_case(name))
+}
+
 /// The name a `{keyboard:…}` token uses for an evdev key: its code without `KEY_`, in lower case
 /// (`KEY_A` is `a`, `KEY_LEFTSHIFT` is `leftshift`). `None` for a key no layout draws.
 pub fn token_name(code: &str) -> Option<String> {

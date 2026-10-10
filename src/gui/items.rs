@@ -27,41 +27,27 @@ impl fmt::Display for QuickChoice {
     }
 }
 
-/// The "add an info overlay" card.
+/// The info overlays tab's header: adds an info overlay.
 pub(super) fn view_new_info_card<'a>() -> Element<'a, Message> {
-    container(
-        row![
-            button(text("+ New info overlay")).style(style::secondary).on_press(Message::NewInfo),
-            text("Text and button glyphs on screen, e.g. a game's controls.").size(13).color(MUTED_COLOR),
-            space::horizontal(),
-            help(
-                "An info overlay puts a grid of text on screen without taking over the controller: a \
-                 game's controls with glyphs that match the controller in use, the time, CPU load and \
-                 more. Show it always while its game is active, or with the \"Show info \
-                 overlay…\" action."
-                    .into(),
-            ),
-        ]
-        .spacing(12)
-        .align_y(Alignment::Center),
+    items_header(
+        ItemKind::Info,
+        button(text("+ New info overlay")).style(style::secondary).on_press(Message::NewInfo).into(),
+        "Text and button glyphs on screen, e.g. a game's controls.",
+        "An info overlay puts a grid of text on screen without taking over the controller: a \
+         game's controls with glyphs that match the controller in use, the time, CPU load and \
+         more. Show it always while its game is active, or with the \"Show info \
+         overlay…\" action."
+            .into(),
     )
-    .padding(14)
-    .width(Length::Fill)
-    .style(style::card)
-    .into()
 }
 
-/// The "add a menu" card: one button per kind, kept apart from the menus themselves.
+/// The menus tab's header: adds a menu of each kind, kept apart from the menus themselves.
 pub(super) fn view_new_menu_card<'a>() -> Element<'a, Message> {
     let mut kinds = row![text("Add a menu:")].spacing(8).align_y(Alignment::Center);
     for kind in MenuKindTag::ALL {
         kinds = kinds.push(button(text(kind.short()).size(14)).style(style::secondary).on_press(Message::NewMenu(kind)));
     }
-    container(row![kinds, space::horizontal(), help(MENUS_HELP.into())].align_y(Alignment::Center))
-        .padding(14)
-        .width(Length::Fill)
-        .style(style::card)
-        .into()
+    items_header(ItemKind::Menu, kinds.into(), "A menu lists actions to pick from on screen.", MENUS_HELP.into())
 }
 
 /// A directional menu always has exactly four slots (up, right, down, left), some maybe empty.
@@ -153,7 +139,7 @@ fn item_boxes<'a>(kind: MenuKind, boxes: Vec<Element<'a, Message>>) -> Element<'
     rows.into()
 }
 
-/// "+ Add item", greyed out with a note once a grid is full.
+/// "+ Add item", grayed out with a note once a grid is full.
 fn add_menu_item_row<'a>(mi: usize, menu: &Menu) -> Element<'a, Message> {
     let full = item_limit(menu.kind).is_some_and(|limit| menu.items.len() >= limit);
     let mut add = row![button(text("+ Add item").size(13)).style(style::secondary).on_press_maybe((!full).then_some(Message::AddMenuItem(mi)))]
@@ -367,7 +353,7 @@ pub(super) fn unreleased_holds(m: &Macro) -> usize {
 pub(super) const MENUS_HELP: &str = "On-screen menus you open with the \"Open menu…\" action from any button, \
     gesture, combo or trigger. A menu is up while that input is held and closes when you let go; wrap the \
     action in \"Toggle\" to keep it up until pressed again. Radial: aim a stick, let go to choose. \
-    Directional: four slots on the D-pad or face buttons. List: move with the D-pad or left stick, A \
+    Directional: four slots on the D-pad or face buttons. List: move with the D-pad or Left Stick, A \
     chooses. Button menu: a list where items also have their own button. Carousel: cycle with the chosen \
     controls, A chooses. Grid: a list laid out in up to 6 columns and 6 rows, moved through in all four \
     directions. Items tap their action like a button press; an item can open another menu of the \
@@ -719,24 +705,14 @@ impl App {
     }
 
     pub(super) fn view_macros(&self, names: &Names) -> Element<'_, Message> {
-        let add = container(
-            row![
-                button(text("+ New macro")).style(style::secondary).on_press(Message::NewMacro),
-                text("A macro plays a sequence of inputs.").size(13).color(MUTED_COLOR),
-                space::horizontal(),
-                button(text("Copy from another setup…").size(13)).style(button::text).on_press(Message::OpenBrowse(ItemKind::Macro)),
-                help(
-                    "A macro plays a sequence of inputs. Map it to any button, gesture, combo, trigger, \
-                     zone or menu item with the \"Macro…\" action."
-                        .into(),
-                ),
-            ]
-            .spacing(12)
-            .align_y(Alignment::Center),
-        )
-        .padding(14)
-        .width(Length::Fill)
-        .style(style::card);
+        let add = items_header(
+            ItemKind::Macro,
+            button(text("+ New macro")).style(style::secondary).on_press(Message::NewMacro).into(),
+            "A macro plays a sequence of inputs.",
+            "A macro plays a sequence of inputs. Map it to any button, gesture, combo, trigger, \
+             zone or menu item with the \"Macro…\" action."
+                .into(),
+        );
         let mut col = column![add].spacing(16);
         if self.macros().is_empty() {
             col = col.push(text("This setup has no macros yet.").color(MUTED_COLOR));
@@ -753,13 +729,12 @@ impl App {
         let problem = self
             .name_problem(ItemKind::Macro, mi, &m.name)
             .or_else(|| m.steps.iter().filter_map(MacroStep::action).find_map(|a| action_problem(a, names)));
-        let chevron = if open { "▾" } else { "▸" };
-        let title = text(format!("{chevron}  {}", if m.name.is_empty() { "(unnamed)" } else { &m.name })).size(18);
+        let title = text(if m.name.is_empty() { "(unnamed)" } else { &m.name }).size(18);
         let title = if problem.is_some() { title.color(ERROR_COLOR) } else { title };
         let total: u64 = m.steps.iter().map(MacroStep::duration_ms).sum();
         let n = m.steps.len();
         let mut header = row![
-            button(title).style(button::text).padding(0).on_press(Message::ToggleMacro(mi)),
+            card_title(open, title).on_press(Message::ToggleMacro(mi)),
             text(format!("{n} step{} · {total} ms", if n == 1 { "" } else { "s" }))
             .size(13)
             .color(MUTED_COLOR),
@@ -770,7 +745,7 @@ impl App {
         if let Some(problem) = &problem {
             header = header.push(text(format!("⚠ {problem}")).size(12).color(ERROR_COLOR));
         }
-        header = header.push(button(text("✕").size(14)).style(style::quiet_danger).on_press(Message::DeleteMacro(mi)));
+        header = header.push(delete_item("Delete macro", Message::DeleteMacro(mi)));
         let mut col = column![header].spacing(12);
         if open {
             col = col.push(self.view_macro_editor(mi, m, names));
@@ -952,8 +927,7 @@ impl App {
     pub(super) fn view_info_card<'a>(&'a self, i: usize, o: &'a InfoOverlay) -> Element<'a, Message> {
         let open = self.open_infos.contains(&i);
         let problem = self.name_problem(ItemKind::Info, i, &o.name);
-        let chevron = if open { "▾" } else { "▸" };
-        let title = text(format!("{chevron}  {}", if o.name.is_empty() { "(unnamed)" } else { &o.name })).size(18);
+        let title = text(if o.name.is_empty() { "(unnamed)" } else { &o.name }).size(18);
         let title = if problem.is_some() { title.color(ERROR_COLOR) } else { title };
         let rows = o.rows.len();
         let shown = match (o.always, o.on_start) {
@@ -964,7 +938,7 @@ impl App {
         let lingers = o.linger.filter(|_| !o.always).map(|s| format!(" · lingers {s:.0} s")).unwrap_or_default();
         let summary = format!("{rows} row{} · {shown}{lingers}", if rows == 1 { "" } else { "s" });
         let mut header = row![
-            button(title).style(button::text).padding(0).on_press(Message::ToggleInfo(i)),
+            card_title(open, title).on_press(Message::ToggleInfo(i)),
             text(summary).size(13).color(MUTED_COLOR),
             space::horizontal(),
         ]
@@ -973,7 +947,7 @@ impl App {
         if let Some(problem) = problem {
             header = header.push(text(format!("⚠ {problem}")).size(12).color(ERROR_COLOR));
         }
-        header = header.push(button(text("✕").size(14)).style(style::quiet_danger).on_press(Message::DeleteInfo(i)));
+        header = header.push(delete_item("Delete info overlay", Message::DeleteInfo(i)));
         let mut col = column![header].spacing(12);
         if open {
             col = col.push(self.view_info_editor(i, o));
@@ -1008,7 +982,7 @@ impl App {
                     )
                 }))
                 .push(
-                    text(if o.always {
+                    note(if o.always {
                         "Stays on screen whenever the game is active, so actions can't show it. To show it only \
                          sometimes, untick this and map \"Toggle → Show info overlay…\" to a button (the Toggle \
                          can start on, to show the overlay at launch until dismissed)."
@@ -1016,9 +990,7 @@ impl App {
                         "Shown when the game is first focused after launching, then fades out. You can also map \
                          \"Show info overlay…\" to a button: it shows while the button is held, or until pressed \
                          again if wrapped in Toggle (which can start on, to keep it up until dismissed)."
-                    })
-                    .size(12)
-                    .color(MUTED_COLOR),
+                    }),
                 )
                 .spacing(4)
                 .into(),
@@ -1158,12 +1130,11 @@ impl App {
         let problem = self
             .name_problem(ItemKind::Menu, mi, &menu.name)
             .or_else(|| menu.items.iter().find_map(|item| item_problem(menu, &item.action, reachable, names)));
-        let chevron = if open { "▾" } else { "▸" };
-        let title = text(format!("{chevron}  {}", if menu.name.is_empty() { "(unnamed)" } else { &menu.name })).size(18);
+        let title = text(if menu.name.is_empty() { "(unnamed)" } else { &menu.name }).size(18);
         let title = if problem.is_some() { title.color(ERROR_COLOR) } else { title };
         let items = menu.items.iter().filter(|i| !i.label.is_empty() || !matches!(i.action, ButtonAction::Disabled)).count();
         let mut header = row![
-            button(title).style(button::text).padding(0).on_press(Message::ToggleMenu(mi)),
+            card_title(open, title).on_press(Message::ToggleMenu(mi)),
             text(format!("{} · {items} item{}", menu.kind.tag().short(), if items == 1 { "" } else { "s" }))
                 .size(13)
                 .color(MUTED_COLOR),
@@ -1174,7 +1145,7 @@ impl App {
         if let Some(problem) = &problem {
             header = header.push(text(format!("⚠ {problem}")).size(12).color(ERROR_COLOR));
         }
-        header = header.push(button(text("✕").size(14)).style(style::quiet_danger).on_press(Message::DeleteMenu(mi)));
+        header = header.push(delete_item("Delete menu", Message::DeleteMenu(mi)));
         let mut col = column![header].spacing(12);
         if open {
             col = col.push(self.view_menu_editor(mi, menu, names, reachable));
@@ -1197,11 +1168,16 @@ impl App {
         if appearance_open {
             rows.push(style_editor(&menu.style, Rc::new(move |s| Message::SetMenuStyle(mi, s))));
         }
-        if let Some(view) = MenuSession::open(std::slice::from_ref(menu), &menu.name, Opener { buttons: vec![Button::LeftBumper], ..Opener::default() })
+        // The preview sits under the Appearance editor while that's open, to show each change,
+        // and after the items otherwise, so a big menu doesn't push them out of sight.
+        let mut shown = MenuSession::open(std::slice::from_ref(menu), &menu.name, Opener { buttons: vec![Button::LeftBumper], ..Opener::default() })
             .and_then(|s| s.view(std::slice::from_ref(menu)))
-        {
-            let view = crate::menu::MenuView { style: preview_style(&menu.style), ..view };
-            rows.push(preview(crate::overlay::draw::menu_panel(&view, self.preview_font(), self.menu_look(), &crate::overlay::fit::Fit::contents())));
+            .map(|view| {
+                let view = crate::menu::MenuView { style: menu_preview_style(&menu.style), ..view };
+                preview(crate::overlay::draw::menu_panel(&view, self.preview_font(), self.menu_look(), &crate::overlay::fit::Fit::contents()))
+            });
+        if appearance_open && let Some(p) = shown.take() {
+            rows.push(p);
         }
 
         // Items.
@@ -1280,6 +1256,7 @@ impl App {
             );
         }
         rows.push(items.into());
+        rows.extend(shown);
         column(rows).spacing(10).into()
     }
 

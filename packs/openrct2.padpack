@@ -5,7 +5,7 @@ macros = []
 id = "231b759b-2fae-4bdc-95e3-a860b0de7529"
 name = "OpenRCT2"
 version = "1.0"
-author = "padwight"
+author = "Padwight"
 description = "OpenRCT2, the open-source rebuild of RollerCoaster Tycoon 2 (native Linux build, AppImage or Flatpak) on an Xbox-style pad. Left stick scrolls the map with the arrow keys, the right stick moves the cursor, A and RT left-click, LT right-click, B is Escape. Start pauses. Hold LB for a radial menu of Pause and Close window. This is a starting point: check the bindings against OpenRCT2's own keys."
 made_with = "Xbox controller"
 

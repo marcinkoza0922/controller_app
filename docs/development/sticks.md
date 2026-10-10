@@ -155,7 +155,7 @@ flick not yet sent.
 - **Mouse** keeps its speed and curve controls. A new "Response" section holds the acceleration
   slider, with ramp time and boost under **Advanced**, plus vertical scale and smoothing.
 - **Ring** ("Button ring" in the picker): a sector count picker, the first sector's angle, the
-  inner radius and hysteresis, and one action editor per sector, labelled with its direction.
+  inner radius and hysteresis, and one action editor per sector, labeled with its direction.
   A radial preview above them draws the sectors and inner radius and highlights the sector the
   live stick points into.
 - **Flick stick**: the settings above, with a short note on finding `full_turn_px` (see
@@ -189,7 +189,7 @@ Engine tests, driven by synthetic axis events as the existing stick tests are:
 
 - **Mouse**: acceleration ramps only at full deflection, resets on release, and `y_scale`
   scales only the vertical axis. Old config values give the same output as before.
-- **Ring**: each sector holds its action at its centre angle, boundaries switch with
+- **Ring**: each sector holds its action at its center angle, boundaries switch with
   hysteresis, going inside the inner radius releases, and a toggle-wrapped sector action
   stays held.
 - **Flick**: `vertical = look` moves the mouse vertically with up/down; a 90° push produces about a quarter of `full_turn_px` over `flick_time_ms`;

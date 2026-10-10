@@ -5,7 +5,7 @@ macros = []
 id = "5da0f454-aeee-4621-a8d6-504ceec68400"
 name = "Timberborn"
 version = "1.0"
-author = "padwight"
+author = "Padwight"
 description = "Timberborn (Steam, run natively or through Proton) on an Xbox-style pad. Left stick moves the camera with WASD, the right stick moves the cursor, A and RT left-click, LT right-click, B is Escape. Q and E rotate the camera. Start pauses. Hold LB for a radial menu of Pause, rotation and Close. This is a starting point: check the bindings against the game's own keys."
 made_with = "Xbox controller"
 

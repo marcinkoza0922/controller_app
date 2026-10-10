@@ -16,7 +16,7 @@ use iced::{
     Alignment, Color, Element, Length, Subscription, Task,
     widget::{
         button, center, checkbox, column, container, mouse_area, opaque, pick_list, row, rule,
-        scrollable, slider, space, stack, svg, text, text_input, toggler, tooltip,
+        rich_text, scrollable, slider, space, span, stack, svg, text, text_input, toggler, tooltip,
     },
 };
 
@@ -46,6 +46,7 @@ mod checks;
 mod games;
 mod guide_tab;
 mod items;
+mod keys;
 mod layers;
 mod logs;
 mod manual;
@@ -54,23 +55,34 @@ mod pieces;
 mod packs;
 mod profile;
 mod ring_preview;
+mod settings;
+mod sticks;
 mod tab_icons;
 mod tracking;
+mod triggers;
 mod widgets;
 
 use actions::*;
 use checks::*;
 use games::*;
 use items::*;
+use keys::*;
 use layers::IndicatorChoice;
 use packs::{BrowseSource, Dialog, PackField};
 use pieces::*;
 use profile::*;
+use settings::*;
+use sticks::*;
 use tracking::*;
+use triggers::*;
 use widgets::*;
 
 pub fn run() -> iced::Result {
-    if let Err(e) = crate::daemon::ensure_running() {
+    // scripts/headless.sh sets PADWIGHT_NO_DAEMON: a daemon started from there would outlive the
+    // virtual display and take the real controllers.
+    if std::env::var_os("PADWIGHT_NO_DAEMON").is_none()
+        && let Err(e) = crate::daemon::ensure_running()
+    {
         crate::monitor::log!("cannot start the daemon: {e:#}");
     }
     let app = iced::application(App::boot, App::update, App::view)
@@ -85,6 +97,10 @@ pub fn run() -> iced::Result {
         });
     crate::font::BUNDLED.iter().fold(app, |app, b| app.font(b.bytes)).run()
 }
+
+/// What every part of the window that needs the daemon says while it isn't running, in small
+/// gray text.
+const NEEDS_DAEMON: &str = "Needs the daemon.";
 
 /// How many edits Ctrl+Z can take back.
 const UNDO_STEPS: usize = 100;
@@ -161,6 +177,8 @@ struct App {
     profile_tab: ProfileTab,
     /// The Guide tab's notes editor, loaded from the profile when the tab is opened.
     guide_notes: iced::widget::text_editor::Content,
+    /// The Export dialog's description editor, loaded when the dialog opens.
+    export_description: iced::widget::text_editor::Content,
     /// The controller picture is folded away on the Profiles tab.
     picture_hidden: bool,
     /// Rows showing their full editor instead of a one-line summary.
@@ -176,6 +194,8 @@ struct App {
     open_appearance: HashSet<Option<usize>>,
     /// The numpad card's Appearance section is open.
     numpad_appearance: bool,
+    /// Overlays whose sound settings are open in the Overlay sounds cards.
+    open_sounds: HashSet<crate::sound::SoundOverlay>,
     /// The media controls' and the in-game menu's Appearance sections are open.
     media_appearance: bool,
     menu_appearance: bool,
@@ -348,6 +368,7 @@ enum Message {
     ToggleOverlay,
     ToggleNumpad,
     ToggleNumpadAppearance,
+    ToggleSoundCues(crate::sound::SoundOverlay),
     SetNumpadStyle(OverlayStyle),
     ToggleMediaAppearance,
     SetMediaStyle(OverlayStyle),
@@ -443,13 +464,14 @@ enum Message {
     SetKeyboardStyle(OverlayStyle),
     /// The font of all overlays (`None`: the system's), or the shown game's own.
     SetOverlayFont(Option<String>),
-    SetColourblindTones(bool),
+    SetColorblindTones(bool),
     /// A kind of overlay's motion, in the global set.
     SetMotion(OverlayKind, MotionStyle),
     /// A kind of overlay's motion in the shown game's own set, which starts as the global one.
     SetGameMotion(OverlayKind, MotionStyle),
-    /// The shown game goes back to the global motion.
-    ClearGameMotion,
+    /// The shown game gets its own motion, a copy of the global one, or (false) goes back to the
+    /// global motion.
+    OwnGameMotion(bool),
     SetGameOverlayFont(Option<String>),
     /// A game's own style for the keyboard or numpad, or back to the global one.
     SetGameOverlayStyle(crate::keyboard::Layout, Option<OverlayStyle>),
@@ -487,6 +509,7 @@ enum Message {
     ConfirmImport,
     OpenExport,
     SetPackField(PackField, String),
+    EditPackDescription(iced::widget::text_editor::Action),
     SetLibraryExport(bool),
     SaveExport,
     /// Where the pack was saved, or why not; `None` if the user cancelled.
@@ -563,6 +586,7 @@ impl App {
             dialog: None,
             profile_tab: ProfileTab::Buttons,
             guide_notes: iced::widget::text_editor::Content::new(),
+            export_description: iced::widget::text_editor::Content::new(),
             picture_hidden: false,
             expanded: HashSet::new(),
             finding: false,
@@ -571,6 +595,7 @@ impl App {
             open_menus: HashSet::new(),
             open_appearance: HashSet::new(),
             numpad_appearance: false,
+            open_sounds: HashSet::new(),
             media_appearance: false,
             menu_appearance: false,
             open_infos: HashSet::new(),
@@ -1040,7 +1065,14 @@ impl App {
             Page::Manual => self.view_manual(),
             Page::Game(_) => self.view_game(),
         };
-        let content = column![self.view_header(), rule::horizontal(1), page].spacing(16).padding(20);
+        // The Manual is for reading: the status header would only push it down.
+        let content = if self.page == Page::Manual {
+            column![page]
+        } else {
+            column![self.view_header(), rule::horizontal(1), page]
+        }
+        .spacing(16)
+        .padding(20);
         let main = column![scrollable(content).id("main").height(Length::Fill), self.view_footer()].width(Length::Fill);
         // Always a stack with the page first, popups or not: iced keeps widget state (such as
         // the page's scroll position) by place in the tree, so the shape must not change when
@@ -1065,32 +1097,39 @@ impl App {
             .flat_map(|(key, g)| g.profiles.iter().map(move |p| ProfileRef::new(key, &p.name)))
             .collect();
         let running = self.status.is_some();
+        let remapping = running && self.config.enabled;
 
-        let mut title = row![text("Padwight").size(26), space::horizontal()].align_y(Alignment::Center);
-        if !running {
-            title = title.push(text("○ Daemon not running").color(ERROR_COLOR));
-        }
-
-        let mut header = column![
-            title,
-            row![
-                toggler(self.config.enabled)
-                    .label("Remapping enabled")
-                    .on_toggle_maybe(running.then_some(Message::SetEnabled)),
-                space::horizontal(),
-                text("Active profile"),
-                dropdown(profiles, Some(self.saved.active.clone()), Message::ActivateProfile).width(280),
-            ]
-            .spacing(12)
-            .align_y(Alignment::Center),
+        // One row on every page: the window title already names the app. Daemon status sits
+        // beside the switch it explains, and the longer note only shows on the Overview.
+        let mut controls = row![
+            // Without the daemon nothing is remapped, so the switch reads off, whatever the
+            // config says, and can't be turned on.
+            toggler(remapping)
+                .label(if remapping { "Remapping on" } else { "Remapping off" })
+                .on_toggle_maybe(running.then_some(Message::SetEnabled)),
         ]
-        .spacing(12);
-
+        .spacing(16)
+        .align_y(Alignment::Center);
         if !running {
+            controls = controls.push(text("○ Daemon not running").color(ERROR_COLOR));
+        }
+        controls = controls.push(space::horizontal()).push(text("Active profile")).push(
+            dropdown(profiles, Some(self.saved.active.clone()), Message::ActivateProfile).width(SETTING_WIDTH),
+        );
+        let mut header = column![controls].spacing(8);
+
+        if !running && self.page == Page::Overview {
+            let code = |s: &'static str| -> text::Span<'static> { span(s).font(iced::Font::MONOSPACE) };
             header = header.push(
-                text("The background service isn't running. Start it with `systemctl --user start padwight` (or `padwight daemon`). You can still edit: your changes are saved and take effect once it starts.")
-                    .size(13)
-                    .color(MUTED_COLOR),
+                rich_text![
+                    "The background service isn't running. Start it with ",
+                    code("systemctl --user start padwight"),
+                    " or ",
+                    code("padwight daemon"),
+                    ". You can still edit: your changes are saved and take effect once it starts.",
+                ]
+                .size(13)
+                .color(MUTED_COLOR),
             );
         }
         header.into()
@@ -1109,7 +1148,7 @@ impl App {
         }
         actions = actions
             .push(button(text("Revert")).style(style::secondary).on_press_maybe(dirty.then_some(Message::Revert)))
-            .push(button(text("Save & apply")).on_press_maybe(dirty.then_some(Message::Save)));
+            .push(button(text("Save & apply")).style(style::primary).on_press_maybe(dirty.then_some(Message::Save)));
         // Only a rule on top: a box would add a second line beside the sidebar's divider.
         column![
             rule::horizontal(1),

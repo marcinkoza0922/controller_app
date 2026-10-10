@@ -1,5 +1,5 @@
 //! The glyph before each editor tab's name. They're drawn like the keyword icons, in a neutral
-//! grey, except the ones that show the controller in use: those take its family's colors, the
+//! gray, except the ones that show the controller in use: those take its family's colors, the
 //! way the overlays draw them.
 
 use super::*;
@@ -10,7 +10,7 @@ use crate::{
     overlay::draw::icon_svg,
 };
 
-/// The grey the neutral glyphs are drawn in: readable on both themes.
+/// The gray the neutral glyphs are drawn in: readable on both themes.
 const INK: [u8; 3] = [0x8a, 0x8f, 0x98];
 
 /// An icon's SVG, from its drawing on a 24-unit grid.
@@ -63,7 +63,7 @@ fn gyro() -> String {
     ))
 }
 
-/// The Guide button: a ring with a centre dot.
+/// The Guide button: a ring with a center dot.
 fn guide() -> String {
     let c = hex(INK);
     svg_of(&format!("<circle cx='12' cy='12' r='9' fill='none' stroke='{c}' stroke-width='2'/><circle cx='12' cy='12' r='3' fill='{c}'/>"))

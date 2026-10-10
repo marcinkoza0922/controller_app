@@ -196,15 +196,25 @@ pub(super) fn preview_style(style: &OverlayStyle) -> OverlayStyle {
     OverlayStyle { scale: style.scale.min(1.0), ..style.clone() }
 }
 
-/// A live preview on a dark "screen", so transparency shows.
+/// How much smaller than on screen a menu's preview is drawn: a full-size radial menu is about
+/// 800 px tall. Any smaller and its item labels can't be read.
+const MENU_PREVIEW_SCALE: f32 = 0.8;
+
+/// A menu's preview: smaller than on screen, keeping its real colors.
+pub(super) fn menu_preview_style(style: &OverlayStyle) -> OverlayStyle {
+    OverlayStyle { scale: style.scale.min(1.0) * MENU_PREVIEW_SCALE, ..style.clone() }
+}
+
+/// A live preview on a "screen" in the window's own tones, so transparency shows without a dark
+/// slab in light mode.
 pub(super) fn preview<'a>(panel: Element<'a, Message>) -> Element<'a, Message> {
     column![
         text("Preview").size(12).color(MUTED_COLOR),
         container(container(panel).center_x(Length::Fill))
             .padding(16)
             .width(Length::Fill)
-            .style(|_: &iced::Theme| container::Style {
-                background: Some(Color::from_rgb8(0x3a, 0x4a, 0x5c).into()),
+            .style(|theme: &iced::Theme| container::Style {
+                background: Some(theme.extended_palette().background.strong.color.into()),
                 border: iced::Border { radius: 8.0.into(), ..iced::Border::default() },
                 ..container::Style::default()
             }),
@@ -280,6 +290,16 @@ pub(super) fn ms_field<'a>(ms: u64, on_change: impl Fn(u64) -> Message + 'a) -> 
     .into()
 }
 
+/// The width of a setting's dropdown on the settings pages and the header, so the dropdowns
+/// on one page line up.
+pub(super) const SETTING_WIDTH: f32 = 260.0;
+
+/// A sentence or more explaining a setting, in the theme's text color softened rather than the
+/// faint grey of captions, and at a size that reads as prose.
+pub(super) fn note<'a>(s: impl text::IntoFragment<'a>) -> iced::widget::Text<'a> {
+    text(s).size(14).style(|theme: &iced::Theme| text::Style { color: Some(theme.extended_palette().background.base.text.scale_alpha(0.7)) })
+}
+
 /// A text input in the app's style.
 pub(super) fn field<'a>(placeholder: &str, value: &str) -> iced::widget::TextInput<'a, Message> {
     text_input(placeholder, value).style(style::text_field).padding([6, 10])
@@ -297,7 +317,50 @@ pub(super) fn section<'a>(title: &'a str, help_text: Option<String>, rows: Vec<E
         .into()
 }
 
-/// An ⓘ that explains a section on hover, instead of a paragraph of grey text.
+/// The card at the top of an items tab (layers, macros, menus, info and log overlays): the add
+/// buttons, a line on what the items are, the copy link and the tab's help. Every tab has this
+/// layout, so the controls sit in the same places.
+pub(super) fn items_header<'a>(kind: ItemKind, add: Element<'a, Message>, blurb: &'static str, explain: String) -> Element<'a, Message> {
+    container(
+        row![
+            add,
+            text(blurb).size(13).color(MUTED_COLOR),
+            space::horizontal(),
+            button(text("Copy from another setup…").size(13)).style(button::text).on_press(Message::OpenBrowse(kind)),
+            help(explain),
+        ]
+        .spacing(12)
+        .align_y(Alignment::Center),
+    )
+    .padding(14)
+    .width(Length::Fill)
+    .style(style::card)
+    .into()
+}
+
+/// The title of an item's card, with the chevron that opens it at the same size as a disclosure's.
+pub(super) fn card_title<'a>(open: bool, title: iced::widget::Text<'a>) -> iced::widget::Button<'a, Message> {
+    let chevron = text(if open { "▾" } else { "▸" }).size(14);
+    button(row![chevron, title].spacing(8).align_y(Alignment::Center)).style(button::text).padding(0)
+}
+
+/// The top of a Details card that a setup can override: a toggle for "Use its own `what` in this
+/// setup", and while it's off, a note that the card follows App settings. Every such card starts
+/// with this, and shows its editor only while the toggle is on.
+pub(super) fn own_rows<'a>(what: &str, own: bool, on_toggle: impl Fn(bool) -> Message + 'a) -> Vec<Element<'a, Message>> {
+    let mut rows = vec![toggler(own).label(format!("Use its own {what} in this setup")).on_toggle(on_toggle).into()];
+    if !own {
+        rows.push(text(format!("Following the {what} set on the App settings page.")).size(13).color(MUTED_COLOR).into());
+    }
+    rows
+}
+
+/// Deletes a whole item, from its card's header.
+pub(super) fn delete_item<'a>(label: &'static str, message: Message) -> Element<'a, Message> {
+    button(text(label).size(13)).style(style::quiet_danger).on_press(message).into()
+}
+
+/// An ⓘ that explains a section on hover, instead of a paragraph of gray text.
 pub(super) fn help<'a>(explanation: String) -> Element<'a, Message> {
     tooltip(
         text("ⓘ").size(16).color(style_accent()),
@@ -326,6 +389,13 @@ pub(super) fn fill_x<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a
     container(content).width(Length::Fill).into()
 }
 
+/// A slider's value and unit: "250 ms", but "45°" and "120°/s turning", since a degree sign
+/// goes against its number.
+fn slider_value(value: f32, step: f32, unit: &str) -> String {
+    let number = if step >= 1.0 { format!("{value:.0}") } else { format!("{value:.2}") };
+    if unit.is_empty() || unit.starts_with('°') { format!("{number}{unit}") } else { format!("{number} {unit}") }
+}
+
 #[expect(clippy::too_many_arguments, reason = "predates the size lints")]
 pub(super) fn value_slider<'a>(
     label: &'a str,
@@ -335,12 +405,25 @@ pub(super) fn value_slider<'a>(
     unit: &'a str,
     on_change: impl Fn(f32) -> Message + 'a,
 ) -> Element<'a, Message> {
-    let shown = if step >= 1.0 { format!("{value:.0} {unit}") } else { format!("{value:.2} {unit}") };
     labeled(
         label,
-        row![slider(range, value, on_change).step(step).width(300), text(shown).size(13)]
+        row![slider(range, value, on_change).step(step).width(300), text(slider_value(value, step, unit)).size(13)]
             .spacing(10)
             .align_y(Alignment::Center)
             .into(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::slider_value;
+
+    #[test]
+    fn units_are_spaced_but_degrees_are_not() {
+        assert_eq!(slider_value(250.0, 10.0, "ms"), "250 ms");
+        assert_eq!(slider_value(0.0, 15.0, "° from up"), "0° from up");
+        assert_eq!(slider_value(120.0, 10.0, "°/s turning"), "120°/s turning");
+        assert_eq!(slider_value(0.5, 0.1, "°/s"), "0.50°/s");
+        assert_eq!(slider_value(8.0, 1.0, ""), "8");
+    }
 }

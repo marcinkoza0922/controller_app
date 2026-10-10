@@ -13,7 +13,7 @@ The overlay has three parts:
 - **Mappings** on the right: what each button, trigger and stick does in the current profile. Its text can be changed, and rows can be hidden or merged by the author on the profile's **Guide** tab.
 - **Shortcuts** in the bottom left corner: the Guide shortcuts listed below.
 
-Move the menu with the D-pad or the left stick (hold it to repeat), choose with A, and close it with B.
+Move the menu with the D-pad or the Left Stick (hold it to repeat), choose with A, and close it with B.
 
 ## Shortcuts
 
@@ -32,10 +32,10 @@ Anything else pressed with Guide held does nothing, so it never reaches the game
 
 ## Mouse mode
 
-Hold Guide and press right stick (or press right stick with the overlay open) to turn on mouse mode. The overlay closes, and the bottom left corner lists the controls:
+Hold Guide and press Right Stick (or press Right Stick with the overlay open) to turn on mouse mode. The overlay closes, and the bottom left corner lists the controls:
 
-- **Right stick**: moves the mouse.
-- **Left stick**: scrolls. Pressing it clicks the middle button.
+- **Right Stick**: moves the mouse.
+- **Left Stick**: scrolls. Pressing it clicks the middle button.
 - **RT / LT**: left click / right click.
 - **LB / RB**: back / forward.
 - **D-pad Right, Down, Left**: Enter, Tab and Escape.
@@ -46,11 +46,11 @@ Press Guide again to leave mouse mode. Your profile is still the one you chose. 
 
 ## Force quit
 
-Holding Select for 2 seconds closes the program in the focused window. It asks the program to close, and if it doesn't, stops it after 3 seconds. Letting go early cancels it. The desktop and padwight itself are never closed.
+Holding Select for 2 seconds closes the program in the focused window. It asks the program to close, and if it doesn't, stops it after 3 seconds. Letting go early cancels it. The desktop and Padwight itself are never closed.
 
 ## Screenshots and recordings
 
-Screenshots are saved to `Pictures/Screenshots`, in a folder for the game. Recordings are made with gpu-screen-recorder and saved to `Videos/Recordings`, in a folder for the game. If gpu-screen-recorder isn't installed, padwight shows a message saying so.
+Screenshots are saved to `Pictures/Screenshots`, in a folder for the game. Recordings are made with gpu-screen-recorder and saved to `Videos/Recordings`, in a folder for the game. If gpu-screen-recorder isn't installed, Padwight shows a message saying so.
 
 ## Steam
 

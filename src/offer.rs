@@ -158,7 +158,7 @@ impl OfferSession {
             choices: Vec::new(),
             selected: 0,
             answers: answers.iter().map(|(b, t)| ((*b).into(), (*t).into())).collect(),
-            hint: "To be asked again, tap Guide in a game padwight doesn't know yet".into(),
+            hint: "To be asked again, tap Guide in a game Padwight doesn't know yet".into(),
             style,
         }
     }

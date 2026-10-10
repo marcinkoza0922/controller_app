@@ -21,7 +21,7 @@ Toggle and Turbo change how an action behaves. Wrap an action in one or both.
 
 ## Combos
 
-Buttons pressed together can make an input of their own, such as LB + RB. After the first button goes down, padwight waits a moment (60 ms by default) for the others before it decides the button was pressed alone.
+Buttons pressed together can make an input of their own, such as LB + RB. After the first button goes down, Padwight waits a moment (60 ms by default) for the others before it decides the button was pressed alone.
 
 A button set to *Disabled* works as a modifier and has no time limit.
 
@@ -33,8 +33,8 @@ A profile that can't be played without a paddle says so with *Can't be played wi
 
 ## Gestures
 
-A button can do something different on a double tap, a triple tap, or a long press. A single tap on a button with gestures fires once padwight is sure there's no second tap. If you hold the button past that moment, its normal action starts at once and continues until you let go.
+A button can do something different on a double tap, a triple tap, or a long press. A single tap on a button with gestures fires once Padwight is sure there's no second tap. If you hold the button past that moment, its normal action starts at once and continues until you let go.
 
-> **Tip:** because padwight waits to see if another tap follows, a button with gestures responds a little later.
+> **Tip:** because Padwight waits to see if another tap follows, a button with gestures responds a little later.
 
 See also [Sticks and triggers](sticks.md) for zones, and [Layers](layers.md) for changing many buttons at once.

@@ -105,7 +105,7 @@ To run the daemon at login, copy `dist/padwight-flatpak.service` to `~/.config/s
 
 A profile is the heart of a setup: the mappings you use while playing. Each profile maps:
 
-- **buttons**: to a gamepad button, a key or key combo (`LEFTCTRL+C`), a mouse button, the scroll wheel (one notch per press, continuous while held), or **several of these at once**.
+- **buttons**: to a gamepad button, a key or key combo (`Left Ctrl+C`), a mouse button, the scroll wheel (one notch per press, continuous while held), or **several of these at once**.
 - **back paddles**: on controllers that have them (Xbox Elite, DualSense Edge, Steam Deck), the paddles get their own section under the buttons and map like any other button. Each profile says whether it needs them, just like gyro.
 - **sticks**: to a gamepad stick, the mouse pointer, the scroll wheel, a flick stick, or a button ring (its sectors can press keys, e.g. WASD or the arrows). Each has a deadzone, a response curve and an adjustable press threshold. Mouse sticks also get **acceleration** (speed grows while held at full push), **Invert Y**, and under *Advanced response*, a ramp time, an outer-edge boost, a vertical speed ratio and smoothing. Scroll sticks get **Invert Y** too. Each stick's **directions also act as buttons** of their own (Left Stick Up, …): they can have any action or gesture, and can be part of combos, e.g. LB + Right Stick Right. Gamepad outputs include stick directions too, so a button (or the D-pad) can push the virtual stick, and two directions make a diagonal.
 - **button rings**: a stick can instead act as a ring of 4, 8 or 12 sectors. Pointing it into a sector holds that sector's action (any action a button can have). You can adjust the angle of the first sector, how far out the stick must go, and how sticky the sector boundaries are.
@@ -252,9 +252,9 @@ GNOME can't show the on-screen keyboard, menus or overlays, because Mutter has n
 
 ## GUI
 
-- **Overview**: a live controller drawing labelled with the active profile's mappings, *What's happening* (the latest presses as the controller labels them, the buttons padwight exported for them, and what each press did, plus each profile switch and the rule or action behind it), and the controller list (Manage, Test rumble, Calibrate gyro).
-- **Settings**: automatic switching and its default profile, the on-screen keyboard and numpad, fallback glyphs, and colour-blind mode for menu colours.
-- **A setup's Profiles tab**: the profile you're editing, with its own labelled drawing and sub-tabs for Buttons, Sticks & triggers, Combos and Gyro. Mappings collapse to one-line summaries ("A ▸ Left click"). Click a name to edit it. **Find by pressing** jumps to whatever you press or push on the controller.
+- **Overview**: a live controller drawing labeled with the active profile's mappings, *What's happening* (the latest presses as the controller labels them, the buttons padwight exported for them, and what each press did, plus each profile switch and the rule or action behind it), and the controller list (Manage, Test rumble, Calibrate gyro).
+- **Settings**: automatic switching and its default profile, the on-screen keyboard and numpad, fallback glyphs, and color-blind mode for menu colors.
+- **A setup's Profiles tab**: the profile you're editing, with its own labeled drawing and sub-tabs for Buttons, Sticks & triggers, Combos and Gyro. Mappings collapse to one-line summaries ("A ▸ Left click"). Click a name to edit it. **Find by pressing** jumps to whatever you press or push on the controller.
 - **A setup's Layers tab**: the setup's layers, edited like a profile (see Layers).
 - **A setup's Macros tab**: a step editor with exact millisecond fields.
 

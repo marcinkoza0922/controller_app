@@ -1,4 +1,4 @@
-//! Actions drawn from their pieces: keywords in their own colour, and controller buttons as the
+//! Actions drawn from their pieces: keywords in their own color, and controller buttons as the
 //! glyphs the overlays draw, for the controller in use.
 
 use iced::{
@@ -13,11 +13,11 @@ use crate::{
     keyword_icon,
 };
 
-/// A keyword in its colour: its icon, then its word.
+/// A keyword: its icon in its color, then its word in the text color. The color is only on the
+/// icon, so the word doesn't look like an error or a link.
 fn keyword<'a>(k: Keyword) -> Element<'a, Message> {
-    let [r, g, b] = keyword_icon::colour(k);
     let icon = svg(svg::Handle::from_memory(keyword_icon::svg(k).into_bytes())).width(14).height(14);
-    row![icon, text(k.word()).color(Color::from_rgb8(r, g, b))].spacing(4).align_y(Alignment::Center).into()
+    row![icon, text(k.word())].spacing(4).align_y(Alignment::Center).into()
 }
 
 /// The swap icon drawn after a face button whose glyph is swapped: two opposed arrows.
@@ -51,7 +51,7 @@ impl Swap {
     }
 }
 
-/// A summary on one line. `muted` greys the words, for rows that aren't changed. `swap` draws
+/// A summary on one line. `muted` grays the words, for rows that aren't changed. `swap` draws
 /// the Nintendo layout's face-button labels, each with a swap icon that explains them.
 pub(super) fn piece_line<'a>(pieces: Vec<Piece>, family: PadFamily, swap: Swap, muted: bool) -> Element<'a, Message> {
     let items: Vec<Element<'a, Message>> = pieces
@@ -62,7 +62,12 @@ pub(super) fn piece_line<'a>(pieces: Vec<Piece>, family: PadFamily, swap: Swap, 
             Piece::Pad(b) if swap.marked() && is_face(b) => row![chip(pad_glyph(b, family, true)), swap_marker(swap)].spacing(2).align_y(Alignment::Center).into(),
             Piece::Pad(b) => chip(pad_glyph(b, family, swap.labels())),
             Piece::Key(code) => chip(key_glyph(&code)),
-            Piece::Mouse(m) => chip(mouse_glyph(m)),
+            Piece::Mouse(m) => tooltip(
+                chip(mouse_glyph(m)),
+                container(text("A mouse button: teal, as the overlays draw it.").size(13)).padding(8).style(style::tooltip),
+                tooltip::Position::Top,
+            )
+            .into(),
         })
         .collect();
     row(items).align_y(Alignment::Center).into()
@@ -156,7 +161,7 @@ fn dpad_chip<'a>([up, down, left, right]: [bool; 4]) -> Element<'a, Message> {
     svg(svg::Handle::from_memory(svg_text.into_bytes())).width(22).height(22).into()
 }
 
-/// A glyph drawn the way the overlays draw it: round for face buttons, in its colour when it has one.
+/// A glyph drawn the way the overlays draw it: round for face buttons, in its color when it has one.
 fn chip<'a>(segment: Segment) -> Element<'a, Message> {
     let (label, fill, round) = match segment {
         Segment::Dpad(lit) => return dpad_chip(lit),

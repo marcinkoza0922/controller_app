@@ -129,7 +129,7 @@ pub struct Status {
 pub struct Feeds {
     /// The presses as the controller labels them, with what each did.
     pub presses: LogView,
-    /// The buttons padwight exported for those presses, labelled as the controller in use labels them.
+    /// The buttons padwight exported for those presses, labeled as the controller in use labels them.
     pub exports: LogView,
 }
 

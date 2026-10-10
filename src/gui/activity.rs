@@ -31,14 +31,15 @@ impl App {
     }
 
     pub(super) fn view_activity(&self) -> Element<'_, Message> {
-        let hint = if self.status.is_some() { "Press a button on a managed controller." } else { "Needs the daemon." };
+        let hint = if self.status.is_some() { "Press a button on a managed controller." } else { NEEDS_DAEMON };
         let presses = self.feed_box(self.feeds.as_ref().map(|f| &f.presses), hint);
         let exports = self.feed_box(self.feeds.as_ref().map(|f| &f.exports), hint);
 
         let switches = self.status.as_ref().map(|s| s.switches.as_slice()).unwrap_or_default();
         let mut list = column![].spacing(10);
         if switches.is_empty() {
-            list = list.push(text("No profile has switched since the daemon started.").size(13).color(MUTED_COLOR));
+            let none = if self.status.is_some() { "No profile has switched since the daemon started." } else { hint };
+            list = list.push(text(none).size(13).color(MUTED_COLOR));
         }
         for s in switches.iter().take(SHOWN_SWITCHES) {
             let setup = s.game.as_deref().unwrap_or("General");
@@ -59,7 +60,7 @@ impl App {
                 help(
                     "The latest presses on the controller in use, one line per burst, as the controller labels them, \
                      with what each did when it's mapped to something else. Beside them, the buttons padwight \
-                     exported for those presses, labelled as the game's controller would be. Below, each profile \
+                     exported for those presses, labeled as the game's controller would be. Below, each profile \
                      switch and the rule or action that made it."
                         .into(),
                 ),
@@ -68,7 +69,7 @@ impl App {
             .align_y(Alignment::Center),
             row![
                 column![text("Pressed on the controller").size(14), presses].spacing(6).width(Length::Fill),
-                column![text("Exported by padwight").size(14), exports].spacing(6).width(Length::Fill),
+                column![text("Exported by Padwight").size(14), exports].spacing(6).width(Length::Fill),
             ]
             .spacing(16),
             text("Profile switches").size(14),

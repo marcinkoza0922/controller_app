@@ -6,7 +6,7 @@ overlay_font = "Rajdhani"
 id = "440bc3de-a490-4318-b4d5-b11e53597dfe"
 name = "F.E.A.R."
 version = "1.2"
-author = "padwight"
+author = "Padwight"
 description = "F.E.A.R. (2005) and its expansions on an Xbox-style pad, for the game's default keys. Hold LB for a radial menu of weapons, grenade types, holster and drop (aim with the right stick); RB triggers slow-mo, LT zooms, R3 is melee, L3 toggles crouch. Hold Guide to see every control and the system shortcuts."
 made_with = "Xbox controller"
 

@@ -50,7 +50,7 @@ Open the game's **Profiles** tab.
 
 ## Step 3: Face buttons and the D-pad
 
-![The Buttons sub-tab of the Deus Ex profile, with the controller drawing labelling each input](images/profile-buttons.png)
+![The Buttons sub-tab of the Deus Ex profile, with the controller drawing labeling each input](images/profile-buttons.png)
 
 *The drawing labels each input with its action: for example "Space" on A, "Right click" on B, and `Menu "Belt" +` on LB.*
 
@@ -87,8 +87,8 @@ Bumpers hold a menu open, and the right stick chooses an item. Both menus have t
 
 1. **LB → Open menu "Belt"**, **RB → Open menu "Augmentations"** (on the Buttons tab, pick "Open menu…").
 2. On the **Menus** tab, click **Add a menu** for each one:
-   - **Belt**: kind **Radial**, stick **Right**. Ten items labelled `Belt 1` through `Belt 9` and `Belt 0`, with keys `1` to `9` and `0`.
-   - **Augmentations**: kind **Radial**, stick **Right**. Ten items labelled `Aug F3` through `Aug F12`, with keys `F3` to `F12`.
+   - **Belt**: kind **Radial**, stick **Right**. Ten items labeled `Belt 1` through `Belt 9` and `Belt 0`, with keys `1` to `9` and `0`.
+   - **Augmentations**: kind **Radial**, stick **Right**. Ten items labeled `Aug F3` through `Aug F12`, with keys `F3` to `F12`.
    - Both use the default style, centered, scale 1.0.
 
 **Why this design:**
@@ -258,7 +258,7 @@ A flick stick turns the camera by flicking the right stick, instead of holding i
 
 The library is the set of packs that ship with the app, in `packs/`.
 
-1. In a debug build, tick **Library pack** on export, so the game keeps its library ID and installed copies get it as an update.
+1. In a debug build, tick **Release it as the built-in …** on export, so the game keeps its library ID and installed copies get it as an update.
 2. Copy the file into `packs/`, and run `cargo test`. The tests check the format, IDs, names, references, that a rule points at an existing profile, and that at least one profile works on a plain pad.
 3. Rebuild. The build embeds every `.padpack` in `packs/` into the binary. Developers can find the details in the [architecture notes](https://github.com/marcinkoza0922/padwight/blob/main/docs/development/architecture.md).
 

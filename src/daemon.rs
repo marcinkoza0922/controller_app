@@ -1252,7 +1252,7 @@ impl Daemon {
             logs,
             active: self.overlay_view(),
             font: self.config.active_font().map(str::to_string),
-            colourblind: self.config.colourblind_tones,
+            colorblind: self.config.colorblind_tones,
             family: values.family,
             nintendo_layout: values.nintendo_layout,
             motion: self.config.active_motion(),

@@ -9,8 +9,8 @@ use crate::{
     info::PadModel,
 };
 
-/// Margin on each side of the controller for mapping labels.
-pub const MARGIN: f32 = 110.0;
+/// Margin on each side of the controller for mapping labels: room for a menu's name.
+pub const MARGIN: f32 = 140.0;
 /// Size of the whole drawing, in SVG units (shown 1:1 in logical pixels).
 pub const WIDTH: f32 = 420.0 + 2.0 * MARGIN;
 pub const HEIGHT: f32 = 275.0;
@@ -68,22 +68,84 @@ fn anchors(l: &Layout) -> Vec<(Spot, (f32, f32), bool)> {
     ]
 }
 
-/// Lays out mapping labels top to bottom in each margin column, ordered by where their lines
-/// meet the drawing so the lines don't cross.
+/// Lays out mapping labels in each margin column: each as near the height of its part as the
+/// rows allow, ordered so that no two leader lines cross.
 pub fn place_labels(labels: &[(Spot, String)], model: Option<PadModel>) -> Vec<PlacedLabel> {
     let text_for = |b: Spot| labels.iter().find(|(l, _)| *l == b).map(|(_, t)| t.as_str());
     let mut anchors = anchors(Layout::of(model));
     anchors.sort_by(|a, b| a.1.1.total_cmp(&b.1.1).then(a.1.0.total_cmp(&b.1.0)));
     let mut placed = Vec::new();
     for right in [false, true] {
-        let mut row = 0.0;
-        for (spot, (ax, ay), _) in anchors.iter().filter(|a| a.2 == right) {
-            let Some(label) = text_for(*spot) else { continue };
-            placed.push(PlacedLabel { text: fit_label(label), y: 10.0 + row * LABEL_SPACING, right, anchor: (ax + MARGIN, *ay) });
-            row += 1.0;
+        let mut column: Vec<PlacedLabel> = anchors
+            .iter()
+            .filter(|a| a.2 == right)
+            .filter_map(|(spot, (ax, ay), _)| {
+                let label = text_for(*spot)?;
+                Some(PlacedLabel { text: fit_label(label), y: 0.0, right, anchor: (ax + MARGIN, *ay) })
+            })
+            .collect();
+        let rows = column_rows(&column.iter().map(|l| l.anchor.1 - LABEL_HALF).collect::<Vec<_>>());
+        for (label, y) in column.iter_mut().zip(rows) {
+            label.y = y;
         }
+        uncross(&mut column);
+        placed.extend(column);
     }
     placed
+}
+
+/// Half a label's height: a label is centered on its line's end.
+const LABEL_HALF: f32 = 10.0;
+/// Where the first and last label rows may sit.
+const FIRST_ROW: f32 = 4.0;
+const LAST_ROW: f32 = HEIGHT - 2.0 * LABEL_HALF - 4.0;
+
+/// Rows for labels that want to sit at `wanted` (sorted), at least a row apart and inside the
+/// picture: pushed down past the one above, then back up from the bottom if they overflow.
+fn column_rows(wanted: &[f32]) -> Vec<f32> {
+    let mut rows: Vec<f32> = Vec::with_capacity(wanted.len());
+    for &w in wanted {
+        let below = rows.last().map_or(FIRST_ROW, |r| r + LABEL_SPACING);
+        rows.push(w.max(below).max(FIRST_ROW));
+    }
+    let mut limit = LAST_ROW;
+    for r in rows.iter_mut().rev() {
+        *r = r.min(limit);
+        limit = *r - LABEL_SPACING;
+    }
+    rows
+}
+
+/// Swaps the texts and anchors of labels whose leader lines cross, until none do. Each swap
+/// shortens the lines in total, so it ends.
+fn uncross(column: &mut [PlacedLabel]) {
+    let start = |l: &PlacedLabel| (if l.right { RIGHT_COLUMN_X } else { LABEL_COLUMN }, l.y + LABEL_HALF);
+    for _ in 0..column.len() * column.len() {
+        let mut swapped = false;
+        for i in 0..column.len() {
+            for j in i + 1..column.len() {
+                if crosses((start(&column[i]), column[i].anchor), (start(&column[j]), column[j].anchor)) {
+                    let (a, b) = column.split_at_mut(j);
+                    std::mem::swap(&mut a[i].text, &mut b[0].text);
+                    std::mem::swap(&mut a[i].anchor, &mut b[0].anchor);
+                    swapped = true;
+                }
+            }
+        }
+        if !swapped {
+            break;
+        }
+    }
+}
+
+type Point = (f32, f32);
+
+/// True if the segments properly cross (touching ends don't count).
+fn crosses((p1, p2): (Point, Point), (q1, q2): (Point, Point)) -> bool {
+    let side = |a: Point, b: Point, c: Point| (b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0);
+    let (d1, d2) = (side(q1, q2, p1), side(q1, q2, p2));
+    let (d3, d4) = (side(p1, p2, q1), side(p1, p2, q2));
+    d1 * d2 < 0.0 && d3 * d4 < 0.0
 }
 
 /// Leader lines from each label's column edge to its part.
@@ -93,28 +155,40 @@ pub fn draw_labels(s: &mut String, labels: &[(Spot, String)], model: Option<PadM
         let (ax, ay) = l.anchor;
         let _ = write!(
             s,
-            r#"<line x1="{line_x}" y1="{}" x2="{ax}" y2="{ay}" stroke="{ACTIVE}" stroke-width="1" stroke-opacity="0.55"/><circle cx="{ax}" cy="{ay}" r="2.5" fill="{ACTIVE}"/>"#,
-            l.y + 10.0
+            r#"<line x1="{line_x}" y1="{}" x2="{ax}" y2="{ay}" stroke="{ACTIVE}" stroke-width="1.5" stroke-opacity="0.85"/><circle cx="{ax}" cy="{ay}" r="2.5" fill="{ACTIVE}"/>"#,
+            l.y + LABEL_HALF
         );
     }
 }
 
-/// Shortens `label` with an ellipsis so it fits on one line of its column.
+/// The leader lines alone, as a drawing the size of the whole picture: laid over the controller
+/// so they keep full strength while the controller is dimmed.
+pub fn leaders(labels: &[(Spot, String)], model: Option<PadModel>) -> String {
+    let mut s = format!(r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {WIDTH} {HEIGHT}">"#);
+    draw_labels(&mut s, labels, model);
+    s.push_str("</svg>");
+    s
+}
+
+/// Shortens `label` with an ellipsis so it fits on one line of its column. A quoted name that
+/// is cut keeps its closing quote: “Menu “Augmentat…””.
 fn fit_label(label: &str) -> String {
     let budget = LABEL_TEXT_WIDTH / LABEL_TEXT_SIZE;
     if label.chars().map(glyph_width).sum::<f32>() <= budget {
         return label.to_string();
     }
-    let mut used = glyph_width('…');
+    // What follows the cut: the ellipsis, and the closing quote when the cut falls inside quotes.
+    let tail = label.find('“').filter(|_| label.contains('”')).map_or("…", |_| "…”");
+    let mut used: f32 = tail.chars().map(glyph_width).sum();
     let mut text: String = label
         .chars()
         .take_while(|&c| {
             used += glyph_width(c);
-            used <= budget
+            used <= budget && c != '”'
         })
         .collect();
     text.truncate(text.trim_end().len());
-    text.push('…');
+    text.push_str(tail);
     text
 }
 
@@ -144,18 +218,34 @@ mod tests {
         let placed = place_labels(&labels, None);
         let left: Vec<&str> = placed.iter().filter(|l| !l.right).map(|l| l.text.as_str()).collect();
         let right: Vec<&str> = placed.iter().filter(|l| l.right).map(|l| l.text.as_str()).collect();
-        assert_eq!(left, ["A very long m…", "Up"]);
+        assert_eq!(left, ["A very long mappi…", "Up"]);
         assert_eq!(right, ["Left click"]);
-        // Rows are packed: the second label in a column sits one row below the first.
+        // Rows never overlap: the second label in a column sits at least a row below the first.
         let ys: Vec<f32> = placed.iter().filter(|l| !l.right).map(|l| l.y).collect();
-        assert_eq!(ys[1] - ys[0], LABEL_SPACING);
+        assert!(ys[1] - ys[0] >= LABEL_SPACING);
     }
 
     #[test]
     fn wide_letters_are_cut_sooner_than_narrow_ones() {
-        assert_eq!(fit_label("Menu “Augmentations”"), "Menu “Augme…");
+        assert_eq!(fit_label("Menu “Augmentations”"), "Menu “Augmentat…”", "a cut name keeps its closing quote");
+        assert_eq!(fit_label("Menu “Belt” +"), "Menu “Belt” +");
         assert_eq!(fit_label("Hold: fill all"), "Hold: fill all");
         assert_eq!(fit_label("Keypad PLUS"), "Keypad PLUS");
+    }
+
+    #[test]
+    fn leader_lines_never_cross() {
+        let every: Vec<(Spot, String)> = anchors(Layout::of(None)).into_iter().map(|(spot, ..)| (spot, "Mapped".to_string())).collect();
+        for model in [None, Some(PadModel::ProController)] {
+            let placed = place_labels(&every, model);
+            let line = |l: &PlacedLabel| ((if l.right { RIGHT_COLUMN_X } else { LABEL_COLUMN }, l.y + LABEL_HALF), l.anchor);
+            for (i, a) in placed.iter().enumerate() {
+                for b in &placed[i + 1..] {
+                    assert!(!crosses(line(a), line(b)), "{:?} crosses {:?}", a.anchor, b.anchor);
+                }
+                assert!((FIRST_ROW..=LAST_ROW).contains(&a.y), "row {} is outside the picture", a.y);
+            }
+        }
     }
 
     #[test]

@@ -48,7 +48,6 @@ impl fmt::Display for BrowseSource {
 pub(super) enum PackField {
     Version,
     Author,
-    Description,
     MadeWith,
 }
 
@@ -137,6 +136,7 @@ impl App {
                 if let Some(name) = self.game_key().map(str::to_string) {
                     let info = pack::draft(self.game(), false);
                     let preview = Box::new(pack::export(self.game(), &self.config.shared, &info));
+                    self.export_description = iced::widget::text_editor::Content::with_text(&info.description);
                     self.dialog = Some(Dialog::Export { game: name, info, library: false, preview });
                 }
             }
@@ -145,9 +145,16 @@ impl App {
                     *match field {
                         PackField::Version => &mut info.version,
                         PackField::Author => &mut info.author,
-                        PackField::Description => &mut info.description,
                         PackField::MadeWith => &mut info.made_with,
                     } = value;
+                }
+                self.refresh_export();
+            }
+            Message::EditPackDescription(action) => {
+                self.export_description.perform(action);
+                let text = self.export_description.text();
+                if let Some(Dialog::Export { info, .. }) = &mut self.dialog {
+                    info.description = text.strip_suffix('\n').unwrap_or(&text).to_string();
                 }
                 self.refresh_export();
             }
@@ -359,6 +366,8 @@ impl App {
             .collect();
         // The user's own games first.
         order.sort_by_key(|i| !installed(*i).unwrap_or(false));
+        // The first entry is shown until another is picked, so the details pane is never blank.
+        let selected = selected.filter(|i| order.contains(i)).or_else(|| order.first().copied());
 
         let mut list = column![
             row![
@@ -395,7 +404,8 @@ impl App {
         } else if order.is_empty() {
             entries = entries.push(text("No built-in game matches.").size(13).color(MUTED_COLOR));
         }
-        list = list.push(scrollable(entries).height(LIBRARY_LIST_HEIGHT));
+        // A gap on the right keeps the tags clear of the scrollbar.
+        list = list.push(scrollable(entries.padding(iced::Padding::ZERO.right(14))).height(LIBRARY_LIST_HEIGHT));
 
         let mut details = column![].spacing(8).width(320);
         match selected.and_then(|i| self.library.get(i).map(|e| (i, e))) {
@@ -407,7 +417,7 @@ impl App {
                     None => button(text("Preview & add…")).on_press(Message::PreviewLibrary(i)),
                 });
             }
-            None => details = details.push(text("Pick a setup to see what's in it.").size(13).color(MUTED_COLOR)),
+            None => details = details.push(note("Pick a setup to see what's in it.")),
         }
 
         column![
@@ -502,34 +512,37 @@ impl App {
         .spacing(10);
         if !out.pulled_in.is_empty() {
             let names: Vec<String> = out.pulled_in.iter().map(|(k, n)| format!("{} “{n}”", k.noun())).collect();
-            col = col.push(text(format!("Shared items it uses are copied in: {}.", names.join(", "))).size(13).color(MUTED_COLOR));
+            col = col.push(note(format!("Shared items it uses are copied in: {}.", names.join(", "))));
         }
         if !out.dangling.is_empty() {
             col = col.push(text(format!("It refers to things that don't exist: {}.", out.dangling.join(", "))).size(13).color(ERROR_COLOR));
         }
         col = feature_notes(col, out);
         if g.rules.is_empty() {
-            col = col.push(text("It has no auto-switch rules, so it won't be selected automatically for anyone who imports it.").size(13).color(MUTED_COLOR));
+            col = col.push(note("It has no auto-switch rules, so it won't be selected automatically for anyone who imports it."));
         }
         if let Some(b) = info.based_on.as_ref().filter(|_| !library) {
             col = col.push(
-                text(format!("Based on {} {} by {}: it's exported as your own pack, crediting the original.", b.name, b.version, b.author))
-                    .size(13)
-                    .color(MUTED_COLOR),
+                note(format!("Based on {} {} by {}: it's exported as your own pack, crediting the original.", b.name, b.version, b.author)),
             );
         }
-        let input = |label: &'static str, value: &'a str, field_kind: PackField, width: f32| {
-            labeled(label, field(label, value).on_input(move |v| Message::SetPackField(field_kind, v)).width(width).into())
+        let input = |label: &'static str, placeholder: &'static str, value: &'a str, field_kind: PackField, width: f32| {
+            labeled(label, field(placeholder, value).on_input(move |v| Message::SetPackField(field_kind, v)).width(width).into())
         };
+        // The description is a paragraph or two, so it gets a box that wraps rather than a line.
+        let description = iced::widget::text_editor(&self.export_description)
+            .placeholder("What the setup does and how it plays")
+            .on_action(Message::EditPackDescription)
+            .height(Length::Fixed(110.0));
         col = col
-            .push(input("Version", &info.version, PackField::Version, 120.0))
-            .push(input("Author", &info.author, PackField::Author, 260.0))
-            .push(input("Made with", &info.made_with, PackField::MadeWith, 260.0))
-            .push(input("Description", &info.description, PackField::Description, 420.0));
+            .push(input("Version", "1.0", &info.version, PackField::Version, 120.0))
+            .push(input("Author", "Your name", &info.author, PackField::Author, 260.0))
+            .push(input("Made with", "The controller you tried it on", &info.made_with, PackField::MadeWith, 260.0))
+            .push(labeled("Description", description.into()));
         if cfg!(debug_assertions) || g.origin.as_ref().is_some_and(|o| o.library) {
             col = col.push(
                 checkbox(library)
-                    .label("Library pack: keep the library's ID, so users get it as an update")
+                    .label(format!("Release it as the built-in {game}: people who added the built-in one get it as an update"))
                     .on_toggle(Message::SetLibraryExport),
             );
         }
@@ -701,18 +714,17 @@ impl App {
 fn feature_notes<'a>(mut col: Column<'a, Message>, out: &pack::Export) -> Column<'a, Message> {
     for f in &out.features {
         let line = if f.required {
-            text(format!("The {} needs {}: players without it aren't offered it.", f.place, f.feature.label())).color(MUTED_COLOR)
+            note(format!("The {} needs {}: players without it aren't offered it.", f.place, f.feature.label()))
         } else {
-            text(format!(
+            note(format!(
                 "The {} uses {} as an extra: it is marked as playable without it. If it isn't, tick \
                  “Can't be played without {}” on its Gyro tab.",
                 f.place,
                 f.feature.label(),
                 f.feature.label(),
             ))
-            .color(MUTED_COLOR)
         };
-        col = col.push(line.size(13));
+        col = col.push(line);
     }
     if !out.pack.profiles.iter().any(|p| p.usable_with(&[])) {
         col = col.push(text("Every profile needs a feature beyond a plain controller, so players without it get nothing. Consider adding a profile that works without it.").size(13).color(ERROR_COLOR));
@@ -769,17 +781,17 @@ fn pack_summary<'a>(p: &pack::Pack, pad_has: impl Fn(pack::Feature) -> Option<bo
 
 /// "2 profiles (Play, Menus) · 3 macros · 1 menu · 1 info overlay".
 fn contents_line(p: &pack::Pack) -> String {
-    let count = |n: usize, what: &str| format!("{n} {what}{}", if n == 1 { "" } else { "s" });
+    // Each count is held together with no-break spaces, so a wrap never leaves "overlays"
+    // alone on a line; kinds the pack has none of are left out.
+    let count = |n: usize, what: &str| format!("{n}\u{a0}{}{}", what.replace(' ', "\u{a0}"), if n == 1 { "" } else { "s" });
     let profiles: Vec<&str> = p.profiles.iter().map(|x| x.name.as_str()).collect();
-    format!(
-        "{} ({}) · {} · {} · {} · {}",
-        count(p.profiles.len(), "profile"),
-        profiles.join(", "),
-        count(p.layers.len(), "layer"),
-        count(p.macros.len(), "macro"),
-        count(p.menus.len(), "menu"),
-        count(p.info_overlays.len(), "info overlay"),
-    )
+    let mut parts = vec![format!("{} ({})", count(p.profiles.len(), "profile"), profiles.join(", "))];
+    for (n, what) in [(p.layers.len(), "layer"), (p.macros.len(), "macro"), (p.menus.len(), "menu"), (p.info_overlays.len(), "info overlay")] {
+        if n > 0 {
+            parts.push(count(n, what));
+        }
+    }
+    parts.join(" · ")
 }
 
 /// What a layer changes, one line each: "A → F1", "Right Stick → scroll, 15 notches/s".
