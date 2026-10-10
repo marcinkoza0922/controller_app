@@ -70,7 +70,11 @@ use tracking::*;
 use widgets::*;
 
 pub fn run() -> iced::Result {
-    if let Err(e) = crate::daemon::ensure_running() {
+    // scripts/headless.sh sets PADWIGHT_NO_DAEMON: a daemon started from there would outlive the
+    // virtual display and take the real controllers.
+    if std::env::var_os("PADWIGHT_NO_DAEMON").is_none()
+        && let Err(e) = crate::daemon::ensure_running()
+    {
         crate::monitor::log!("cannot start the daemon: {e:#}");
     }
     let app = iced::application(App::boot, App::update, App::view)

@@ -15,8 +15,9 @@
 # xvfb: an X server, for the settings window only. Xvfb has no layer-shell, so the overlays
 #   can't show. Needs xvfb-run (xvfb and xauth).
 #
-# Neither backend starts a daemon. For the window to talk to one, start a daemon with its own
-# XDG_RUNTIME_DIR, as tests/gui_smoke.rs does.
+# Neither backend starts a daemon, and PADWIGHT_NO_DAEMON stops the window starting one as it
+# usually does: that daemon would outlive the virtual display and take the real controllers. For
+# the window to talk to a daemon, start one with its own XDG_RUNTIME_DIR, as tests/gui_smoke.rs does.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -51,7 +52,7 @@ mkdir -p "$home/config" "$home/state" "$home/run" "$home/tmp"
 chmod 700 "$home/run"
 
 # The app's own folders. Both backends run it with these.
-app_env=(XDG_CONFIG_HOME="$home/config" XDG_STATE_HOME="$home/state" XDG_RUNTIME_DIR="$home/run" TMPDIR="$home/tmp")
+app_env=(PADWIGHT_NO_DAEMON=1 XDG_CONFIG_HOME="$home/config" XDG_STATE_HOME="$home/state" XDG_RUNTIME_DIR="$home/run" TMPDIR="$home/tmp")
 
 run_kwin() {
     local socket="padwight-$$"
