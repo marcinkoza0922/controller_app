@@ -1,9 +1,11 @@
 //! The Overview's "What's happening": the latest presses of the controller in use with what each
-//! did, and the profile switches the daemon made, each with the reason for it.
+//! did, beside the buttons padwight exported for them, and the profile switches the daemon made,
+//! each with the reason for it.
 
 use iced::widget::{column, row};
 
 use super::*;
+use crate::inputlog::LogView;
 
 /// Switches listed; the daemon keeps more.
 const SHOWN_SWITCHES: usize = 8;
@@ -20,14 +22,18 @@ fn ago(ms: u64) -> String {
 }
 
 impl App {
-    pub(super) fn view_activity(&self) -> Element<'_, Message> {
-        let presses: Element<'_, Message> = match &self.feed {
+    /// One feed as a box: its lines, or a hint while there are none.
+    fn feed_box<'a>(&self, feed: Option<&LogView>, hint: &'static str) -> Element<'a, Message> {
+        match feed {
             Some(feed) if !feed.lines.is_empty() => crate::overlay::draw::log_panel(feed, self.preview_font(), &crate::motion::Anim::still()),
-            _ => {
-                let hint = if self.status.is_some() { "Press a button on a managed controller." } else { "Needs the daemon." };
-                text(hint).size(13).color(MUTED_COLOR).into()
-            }
-        };
+            _ => text(hint).size(13).color(MUTED_COLOR).into(),
+        }
+    }
+
+    pub(super) fn view_activity(&self) -> Element<'_, Message> {
+        let hint = if self.status.is_some() { "Press a button on a managed controller." } else { "Needs the daemon." };
+        let presses = self.feed_box(self.feeds.as_ref().map(|f| &f.presses), hint);
+        let exports = self.feed_box(self.feeds.as_ref().map(|f| &f.exports), hint);
 
         let switches = self.status.as_ref().map(|s| s.switches.as_slice()).unwrap_or_default();
         let mut list = column![].spacing(10);
@@ -51,15 +57,20 @@ impl App {
             row![
                 text("What's happening").size(20),
                 help(
-                    "The latest presses on the controller in use, one line per burst, with what each did when it's \
-                     mapped to something else. Below, each profile switch and the rule or action that made it."
+                    "The latest presses on the controller in use, one line per burst, as the controller labels them, \
+                     with what each did when it's mapped to something else. Beside them, the buttons padwight \
+                     exported for those presses, labelled as the game's controller would be. Below, each profile \
+                     switch and the rule or action that made it."
                         .into(),
                 ),
             ]
             .spacing(8)
             .align_y(Alignment::Center),
-            text("Last presses").size(14),
-            presses,
+            row![
+                column![text("Pressed on the controller").size(14), presses].spacing(6).width(Length::Fill),
+                column![text("Exported by padwight").size(14), exports].spacing(6).width(Length::Fill),
+            ]
+            .spacing(16),
             text("Profile switches").size(14),
             list,
         ]
@@ -74,7 +85,7 @@ mod tests {
     use crate::{
         gui::tests::*,
         inputlog::{LogCell, LogLine},
-        ipc::SwitchEvent,
+        ipc::{Feeds, SwitchEvent},
     };
 
     #[test]
@@ -106,12 +117,13 @@ mod tests {
             show_labels: true,
             show_holds: true,
         };
-        let _ = app.update(Message::LiveFeed(Some(feed.clone())));
-        assert_eq!(app.feed, Some(feed));
+        let feeds = Feeds { presses: feed.clone(), exports: feed.clone() };
+        let _ = app.update(Message::LiveFeed(Some(feeds.clone())));
+        assert_eq!(app.feeds, Some(feeds));
         let _ = app.view();
 
         let _ = app.update(Message::LiveFeed(None));
-        assert_eq!(app.feed, None);
+        assert_eq!(app.feeds, None);
         let _ = app.view();
     }
 }

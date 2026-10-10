@@ -7,7 +7,7 @@ use iced::{
     widget::{button, checkbox, container, row, text, text_editor},
 };
 
-use super::{App, Message, pieces, widgets::{dropdown, field, section}};
+use super::{App, Message, pieces::{self, Swap}, widgets::{dropdown, field, section}};
 use crate::config::{Button, GuideInput, Profile, RowId, RowKey, Stick, Trigger, default_text, editable_rows};
 use crate::info::PadFamily;
 
@@ -15,9 +15,9 @@ use crate::info::PadFamily;
 #[derive(Clone, Copy)]
 pub(super) struct GuideView<'a> {
     pub(super) notes: &'a text_editor::Content,
-    /// Whose glyphs the rows are drawn with, and whether the face buttons are swapped.
+    /// Whose glyphs the rows are drawn with, and how the Nintendo layout shows on the face buttons.
     pub(super) family: PadFamily,
-    pub(super) nintendo_layout: bool,
+    pub(super) swap: Swap,
 }
 
 #[derive(Debug, Clone)]
@@ -124,7 +124,7 @@ pub(super) fn sections<'a>(p: &'a Profile, guide: GuideView<'a>, in_layer: bool)
         .on_action(|action| Message::Guide(GuideMsg::Notes(action)))
         .height(Length::Fixed(140.0));
     let rows = editable_rows(p);
-    let label = |input: GuideInput| pieces::input_text(input, guide.family, guide.nintendo_layout);
+    let label = |input: GuideInput| pieces::input_text(input, guide.family, guide.swap);
     // Inputs with a row of their own, which another row can share.
     let free: Vec<Choice> = rows
         .iter()
@@ -161,7 +161,7 @@ pub(super) fn sections<'a>(p: &'a Profile, guide: GuideView<'a>, in_layer: bool)
 
 /// One row of the list: its glyphs, its text, and its controls.
 fn mapping_row<'a>(r: &crate::config::EditableRow, others: &[Choice], guide: GuideView<'_>) -> iced::Element<'a, Message> {
-    let glyphs = pieces::row_glyphs(&r.inputs, r.shape, guide.family, guide.nintendo_layout);
+    let glyphs = pieces::row_glyphs(&r.inputs, r.shape, guide.family, guide.swap);
     let key = r.key.clone();
     let placeholder = if r.default_text.is_empty() { "Text" } else { r.default_text.as_str() };
     let edit = field(placeholder, &r.text).on_input({

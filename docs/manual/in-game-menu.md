@@ -8,7 +8,7 @@ Press Guide and Start together to open the in-game menu over the game you're pla
 - gyro sensitivity, when gyro moves the mouse
 - Invert Y, which flips every up-and-down setting in the profile at once
 - profile, to change to another profile of the setup
-- Nintendo button layout, which swaps the A/B and X/Y labels in the glyphs (for this setup)
+- Nintendo button layout, which swaps the A/B and X/Y labels (and, on a Nintendo pad, what the face buttons send) for this setup
 
 Left and right change a number by about 10%. A flips a switch or picks the next profile.
 

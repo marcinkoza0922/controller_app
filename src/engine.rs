@@ -171,6 +171,9 @@ pub struct Engine {
     /// Toggles that are on, keyed by input and position in the action tree.
     toggled: HashMap<StateId, ButtonAction>,
     turbo: HashMap<StateId, TurboState>,
+    /// Whether the face buttons send the letters on their Nintendo labels (see
+    /// [`set_face_swap`](Self::set_face_swap)).
+    face_swap: bool,
     /// Physically held buttons, for gyro activation.
     raw_buttons: HashSet<Button>,
     gyro: GyroState,
@@ -362,6 +365,21 @@ impl Engine {
     /// Which on-screen keyboard (or numpad) a toggle action asked for since the last call.
     pub fn take_overlay_toggle(&mut self) -> Option<crate::keyboard::Layout> {
         self.overlay_toggled.take()
+    }
+
+    /// Whether a face button's plain press sends the letter on its Nintendo label rather than its
+    /// position, for the pad now sending input. Set by the daemon before each batch of events.
+    pub fn set_face_swap(&mut self, on: bool) {
+        self.face_swap = on;
+    }
+
+    /// What a plain press of `b` does: the profile's action, except that with the face swap on,
+    /// a face button that sends itself sends its Nintendo counterpart instead.
+    fn plain_action(&self, profile: &Profile, b: Button) -> ButtonAction {
+        match profile.button(b) {
+            ButtonAction::Gamepad(out) if self.face_swap && *out == b => ButtonAction::Gamepad(crate::info::nintendo_face(b)),
+            action => action.clone(),
+        }
     }
 
     /// Replaces the macro definitions `ButtonAction::Macro` refers to (from the config).
@@ -772,7 +790,7 @@ impl Engine {
                     _ => {}
                 }
             }
-            self.digital(&Source::Button(b), profile.button(b), pressed, out);
+            self.digital(&Source::Button(b), &self.plain_action(profile, b), pressed, out);
             return;
         };
         let max_taps = gestures.max_taps();
@@ -784,8 +802,8 @@ impl Engine {
             if taps > 1 && taps == max_taps {
                 // Final tap of the longest sequence: fire now and hold until release.
                 self.gestures.insert(b, GestureState::Holding);
-                let action = gestures.for_taps(taps).unwrap_or(profile.button(b));
-                self.digital(&Source::Gesture(b), action, true, out);
+                let action = gestures.for_taps(taps).cloned().unwrap_or_else(|| self.plain_action(profile, b));
+                self.digital(&Source::Gesture(b), &action, true, out);
                 return;
             }
             let long_deadline = (taps == 1 && gestures.long_press.is_some())
@@ -820,7 +838,7 @@ impl Engine {
             // e.g. a double tap when only a triple tap is set: that many normal taps.
             None => {
                 for _ in 0..taps {
-                    self.tap(&Source::Button(b), profile.button(b), out);
+                    self.tap(&Source::Button(b), &self.plain_action(profile, b), out);
                 }
             }
         }
@@ -1521,6 +1539,29 @@ fn take_whole(acc: &mut (f32, f32), dx: f32, dy: f32) -> (i32, i32) {
 mod tests {
     use super::*;
     use crate::config::{Combo, MouseButton, StickConfig, Zone};
+    use crate::pad_identity::PadIdentity;
+
+    #[test]
+    fn the_face_swap_sends_the_letter_on_each_nintendo_label() {
+        let p = Profile::passthrough("swap");
+        let mut e = Engine::default();
+        assert_eq!(run(&mut e, &p, InputEvent::Button(Button::South, true)), [OutEvent::PadButton(Button::South, true)]);
+        assert_eq!(run(&mut e, &p, InputEvent::Button(Button::South, false)), [OutEvent::PadButton(Button::South, false)]);
+        e.set_face_swap(true);
+        assert_eq!(run(&mut e, &p, InputEvent::Button(Button::South, true)), [OutEvent::PadButton(Button::East, true)]);
+        assert_eq!(run(&mut e, &p, InputEvent::Button(Button::South, false)), [OutEvent::PadButton(Button::East, false)]);
+        assert_eq!(run(&mut e, &p, InputEvent::Button(Button::North, true)), [OutEvent::PadButton(Button::West, true)]);
+        assert_eq!(run(&mut e, &p, InputEvent::Button(Button::North, false)), [OutEvent::PadButton(Button::West, false)]);
+        assert_eq!(run(&mut e, &p, InputEvent::Button(Button::LeftBumper, true)), [OutEvent::PadButton(Button::LeftBumper, true)]);
+    }
+
+    #[test]
+    fn a_reassigned_face_button_turns_the_swap_off() {
+        let mut p = Profile::passthrough("swap");
+        p.set_button(Button::South, ButtonAction::Mouse(MouseButton::Left));
+        assert!(!p.faces_default());
+        assert!(!PadIdentity::Xbox360.swaps_face_output(true, true, p.faces_default()));
+    }
 
     fn run(engine: &mut Engine, profile: &Profile, ev: InputEvent) -> Vec<OutEvent> {
         let mut out = Vec::new();

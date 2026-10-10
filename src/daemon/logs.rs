@@ -13,6 +13,7 @@ use crate::{
     info::Glyphs,
     input::InputEvent,
     inputlog::{self, Entry, FiredFrom, Inputs, LogView, Thresholds},
+    ipc::Feeds,
     overlay::OverlayAction,
     pad_identity::PadIdentity,
 };
@@ -92,18 +93,24 @@ impl Daemon {
         self.broadcast_feed();
     }
 
-    /// The latest presses of the controller in use, drawn as the log overlays draw them.
-    pub(super) fn feed_view(&self, now: Instant) -> Option<LogView> {
+    /// The latest presses of the controller in use, drawn as the log overlays draw them. The
+    /// presses are drawn with the controller's own labels, and the exports with the labels of the
+    /// controller the game sees, so each reads as the controller it's drawn for.
+    pub(super) fn feeds(&self, now: Instant) -> Option<Feeds> {
         let dev = self.devices.get(&self.last_active?)?;
         let identity = PadIdentity::resolve(self.identity_override, dev.model, self.active_support());
-        let glyphs = Glyphs { family: dev.family.unwrap_or(self.config.info_glyphs), nintendo_layout: identity.applies_nintendo_layout(self.config.active_nintendo_layout()) };
-        let view = inputlog::log_view(dev.log.entries(), &feed_settings(), &OverlayStyle::default(), glyphs, now);
-        Some(LogView { name: "feed".into(), opacity: 1.0, ..view })
+        let pressed = Glyphs { family: dev.family.unwrap_or(self.config.info_glyphs), nintendo_layout: false };
+        let exported = Glyphs { family: identity.family(), nintendo_layout: false };
+        let feed = |entries: &[Entry], glyphs| {
+            let view = inputlog::log_view(entries, &feed_settings(), &OverlayStyle::default(), glyphs, now);
+            LogView { name: "feed".into(), opacity: 1.0, ..view }
+        };
+        Some(Feeds { presses: feed(dev.log.entries(), pressed), exports: feed(dev.exports.entries(), exported) })
     }
 
-    /// Adds a watcher of the feed, sending it the current one first.
-    pub(super) fn watch_feed(&mut self, watcher: Sender<Option<LogView>>) {
-        if watcher.send(self.feed_view(Instant::now())).is_ok() {
+    /// Adds a watcher of the feeds, sending it the current ones first.
+    pub(super) fn watch_feed(&mut self, watcher: Sender<Option<Feeds>>) {
+        if watcher.send(self.feeds(Instant::now())).is_ok() {
             self.feed_watchers.push(watcher);
         }
     }
@@ -113,8 +120,8 @@ impl Daemon {
         if self.feed_watchers.is_empty() {
             return;
         }
-        let feed = self.feed_view(Instant::now());
-        self.feed_watchers.retain(|w| w.send(feed.clone()).is_ok());
+        let feeds = self.feeds(Instant::now());
+        self.feed_watchers.retain(|w| w.send(feeds.clone()).is_ok());
     }
 
     /// One controller's entries by its number, or every controller's merged.

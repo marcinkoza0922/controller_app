@@ -33,8 +33,8 @@ pub(super) struct Ui<'a> {
     pub(super) family: PadFamily,
     /// Whose button names the controller in use has (see `App::shown_pad`).
     pub(super) in_use: PadFamily,
-    /// Whether face buttons are drawn with the Nintendo layout's labels (see `App::nintendo_layout`).
-    pub(super) nintendo_layout: bool,
+    /// How the Nintendo layout shows on this profile's face buttons (see `App::swap_for`).
+    pub(super) swap: Swap,
     /// Set while editing a layer: the profile shown is the layer over `base`.
     pub(super) layer: Option<LayerMarks<'a>>,
 }
@@ -709,7 +709,7 @@ pub(super) fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<
     if !open {
         let disabled = matches!(p.button(b), ButtonAction::Disabled) && set_gestures.is_empty();
         let passthrough = *p.button(b) == ButtonAction::Gamepad(b) && set_gestures.is_empty();
-        let summary = piece_line(p.button(b).pieces(), ui.family, ui.nintendo_layout, disabled || passthrough);
+        let summary = piece_line(p.button(b).pieces(), ui.family, ui.swap, disabled || passthrough);
         let mut line = row![row_toggle(&button_name(b, ui.in_use), target, false, problem.is_some()), summary]
             .spacing(10)
             .align_y(Alignment::Center);
@@ -718,7 +718,7 @@ pub(super) fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<
             line = line
                 .push(text("│").color(MUTED_COLOR))
                 .push(text(format!("{k}:")).color(MUTED_COLOR))
-                .push(piece_line(a.pieces(), ui.family, ui.nintendo_layout, false));
+                .push(piece_line(a.pieces(), ui.family, ui.swap, false));
         }
         if let Some(problem) = problem {
             line = line.push(space::horizontal()).push(text(format!("⚠ {problem}")).size(12).color(ERROR_COLOR));
@@ -1661,10 +1661,10 @@ impl App {
             live_sticks: self.shown_input().map(|l| [l.left_stick, l.right_stick]),
             family: self.glyph_family(),
             in_use: self.shown_pad().family,
-            nintendo_layout: self.nintendo_layout(),
+            swap: self.swap_for(p),
             layer,
         };
-        let guide = GuideView { notes: &self.guide_notes, family: ui.family, nintendo_layout: ui.nintendo_layout };
+        let guide = GuideView { notes: &self.guide_notes, family: ui.family, swap: ui.swap };
         col.push(view_profile(p, &ui, self.profile_tab, guide)).into()
     }
 
@@ -1704,7 +1704,8 @@ impl App {
             container(controller_drawing(
                     self.shown_input(),
                     pad.model,
-                    Glyphs { family: pad.family, nintendo_layout: self.nintendo_layout() },
+                    // The picture is the controller itself, so it keeps the controller's own labels.
+                    Glyphs { family: pad.family, nintendo_layout: false },
                     &labels_from.map(drawing_labels).unwrap_or_default(),
                     self.status.is_none(),
                 )).center_x(Length::Fill),
@@ -1847,7 +1848,7 @@ mod tests {
         assert!(!app.finding, "one press ends find mode");
         assert_eq!((app.game_tab, app.profile_tab, app.found), (GameTab::Profiles, ProfileTab::Buttons, Some(Button::West)));
         let names = Names::default();
-        let ui = Ui { names: &names, expanded: &app.expanded, found: app.found, analog_triggers: true, any_gyro: false, any_paddles: false, live_sticks: None, family: PadFamily::default(), in_use: PadFamily::default(), nintendo_layout: false, layer: None };
+        let ui = Ui { names: &names, expanded: &app.expanded, found: app.found, analog_triggers: true, any_gyro: false, any_paddles: false, live_sticks: None, family: PadFamily::default(), in_use: PadFamily::default(), swap: Swap::Off, layer: None };
         assert!(ui.is_open(Target::Button(Button::West)));
         // Presses while not finding don't move the editor.
         let _ = app.update(Message::LiveInput(Some(snapshot(&[Button::West, Button::North], (0.0, 0.0)))));
