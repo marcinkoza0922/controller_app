@@ -4,7 +4,7 @@ use iced::widget::{Column, column, rich_text, row, span};
 
 use super::*;
 use crate::config::{FlickVertical, MouseResponse};
-use crate::info::Glyphs;
+use crate::info::{Glyphs, button_name};
 use super::guide_tab::{self, GuideView};
 use crate::pad_widget::controller_drawing;
 
@@ -31,6 +31,8 @@ pub(super) struct Ui<'a> {
     pub(super) live_sticks: Option<[(f32, f32); 2]>,
     /// Whose button glyphs to draw (see `App::glyph_family`).
     pub(super) family: PadFamily,
+    /// Whose button names the controller in use has (see `App::shown_pad`).
+    pub(super) in_use: PadFamily,
     /// Whether face buttons are drawn with the Nintendo layout's labels (see `App::nintendo_layout`).
     pub(super) nintendo_layout: bool,
     /// Set while editing a layer: the profile shown is the layer over `base`.
@@ -692,7 +694,7 @@ pub(super) fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<
         if marks.base.gestures(b).is_some() {
             summary.push_str(" +");
         }
-        return layer_part(ui, LayerPart::Button(b), b.to_string(), summary, Vec::new);
+        return layer_part(ui, LayerPart::Button(b), button_name(b, ui.in_use), summary, Vec::new);
     }
     let target = Target::Button(b);
     let open = ui.is_open(target);
@@ -708,7 +710,7 @@ pub(super) fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<
         let disabled = matches!(p.button(b), ButtonAction::Disabled) && set_gestures.is_empty();
         let passthrough = *p.button(b) == ButtonAction::Gamepad(b) && set_gestures.is_empty();
         let summary = piece_line(p.button(b).pieces(), ui.family, ui.nintendo_layout, disabled || passthrough);
-        let mut line = row![row_toggle(&b.to_string(), target, false, problem.is_some()), summary]
+        let mut line = row![row_toggle(&button_name(b, ui.in_use), target, false, problem.is_some()), summary]
             .spacing(10)
             .align_y(Alignment::Center);
         // Each gesture is its own segment, set off by a muted bar and its name in muted text.
@@ -735,7 +737,7 @@ pub(super) fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<
         .filter(|k| gestures.and_then(|g| g.get(*k)).is_none())
         .collect();
     // The name gets a line of its own so the open editor reads as sitting under it.
-    let mut header = row![row_toggle(&b.to_string(), target, true, problem.is_some()), space::horizontal()]
+    let mut header = row![row_toggle(&button_name(b, ui.in_use), target, true, problem.is_some()), space::horizontal()]
         .spacing(10)
         .align_y(Alignment::Center);
     if ui.layer.is_some() {
@@ -1658,6 +1660,7 @@ impl App {
             any_paddles: self.any_paddles(),
             live_sticks: self.shown_input().map(|l| [l.left_stick, l.right_stick]),
             family: self.glyph_family(),
+            in_use: self.shown_pad().family,
             nintendo_layout: self.nintendo_layout(),
             layer,
         };
@@ -1844,7 +1847,7 @@ mod tests {
         assert!(!app.finding, "one press ends find mode");
         assert_eq!((app.game_tab, app.profile_tab, app.found), (GameTab::Profiles, ProfileTab::Buttons, Some(Button::West)));
         let names = Names::default();
-        let ui = Ui { names: &names, expanded: &app.expanded, found: app.found, analog_triggers: true, any_gyro: false, any_paddles: false, live_sticks: None, family: PadFamily::default(), nintendo_layout: false, layer: None };
+        let ui = Ui { names: &names, expanded: &app.expanded, found: app.found, analog_triggers: true, any_gyro: false, any_paddles: false, live_sticks: None, family: PadFamily::default(), in_use: PadFamily::default(), nintendo_layout: false, layer: None };
         assert!(ui.is_open(Target::Button(Button::West)));
         // Presses while not finding don't move the editor.
         let _ = app.update(Message::LiveInput(Some(snapshot(&[Button::West, Button::North], (0.0, 0.0)))));

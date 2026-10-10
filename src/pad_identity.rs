@@ -92,6 +92,13 @@ impl PadIdentity {
     pub fn xpad_labels(self) -> bool {
         self == Self::Xbox360
     }
+
+    /// Whether the Nintendo button layout's swapped labels apply while presenting as this kind,
+    /// given the `setting`. A Switch Pro presented as itself already shows its own labels, so the
+    /// setting is ignored for it.
+    pub fn applies_nintendo_layout(self, setting: bool) -> bool {
+        setting && self != Self::SwitchPro
+    }
 }
 
 #[cfg(test)]
@@ -131,6 +138,14 @@ mod tests {
         assert_eq!(PadIdentity::choose(Some(PadModel::XboxSeries), ALL), PadIdentity::Xbox360);
         assert_eq!(PadIdentity::choose(None, ALL), PadIdentity::Xbox360);
         assert_eq!(PadIdentity::choose(Some(PadModel::DualSense), ControllerSupport::default()), PadIdentity::Xbox360);
+    }
+
+    #[test]
+    fn the_nintendo_layout_is_ignored_only_for_a_switch_pro() {
+        assert!(PadIdentity::Xbox360.applies_nintendo_layout(true));
+        assert!(PadIdentity::DualSense.applies_nintendo_layout(true));
+        assert!(!PadIdentity::SwitchPro.applies_nintendo_layout(true));
+        assert!(!PadIdentity::Xbox360.applies_nintendo_layout(false));
     }
 
     #[test]

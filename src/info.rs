@@ -758,6 +758,31 @@ pub fn button_glyph(b: Button, family: PadFamily, swapped: bool) -> Segment {
     }
 }
 
+/// A button's name as the family's controller prints it, with its position or generic name kept
+/// where that helps. Buttons without a family-specific name keep their generic one.
+pub fn button_name(b: Button, family: PadFamily) -> String {
+    use PadFamily::*;
+    let named = |xbox: &'static str, ps: &'static str, nintendo: &'static str| -> String {
+        match family {
+            Xbox => xbox,
+            PlayStation => ps,
+            Nintendo => nintendo,
+        }
+        .into()
+    };
+    match b {
+        Button::South => named("A (South)", "Cross (South)", "B (South)"),
+        Button::East => named("B (East)", "Circle (East)", "A (East)"),
+        Button::West => named("X (West)", "Square (West)", "Y (West)"),
+        Button::North => named("Y (North)", "Triangle (North)", "X (North)"),
+        Button::LeftBumper => named("Left Bumper (LB)", "Left Bumper (L1)", "Left Bumper (L)"),
+        Button::RightBumper => named("Right Bumper (RB)", "Right Bumper (R1)", "Right Bumper (R)"),
+        Button::Select => named("Back (View)", "Share", "Minus (−)"),
+        Button::Start => named("Start (Menu)", "Options", "Plus (+)"),
+        other => other.to_string(),
+    }
+}
+
 pub fn trigger_glyph(t: Trigger, family: PadFamily) -> Segment {
     let label = match (t, family) {
         (Trigger::Left, PadFamily::Xbox) => "LT",
@@ -1193,6 +1218,14 @@ mod tests {
         let mut live = Live::sample(PadFamily::Xbox);
         live.pad_family = PadFamily::Nintendo;
         assert_eq!(resolve(&o, &live).rows[0][0], vec![button_glyph(Button::South, PadFamily::Xbox, false)]);
+    }
+
+    #[test]
+    fn button_names_follow_the_controller_in_use() {
+        assert_eq!(button_name(Button::South, PadFamily::Xbox), "A (South)");
+        assert_eq!(button_name(Button::South, PadFamily::PlayStation), "Cross (South)");
+        assert_eq!(button_name(Button::Select, PadFamily::PlayStation), "Share");
+        assert_eq!(button_name(Button::DpadUp, PadFamily::Nintendo), "D-pad Up");
     }
 
     #[test]

@@ -14,6 +14,7 @@ use crate::{
     input::InputEvent,
     inputlog::{self, Entry, FiredFrom, Inputs, LogView, Thresholds},
     overlay::OverlayAction,
+    pad_identity::PadIdentity,
 };
 
 /// The GUI's feed shows the log's default line count, one line per burst of presses, with no
@@ -94,7 +95,8 @@ impl Daemon {
     /// The latest presses of the controller in use, drawn as the log overlays draw them.
     pub(super) fn feed_view(&self, now: Instant) -> Option<LogView> {
         let dev = self.devices.get(&self.last_active?)?;
-        let glyphs = Glyphs { family: dev.family.unwrap_or(self.config.info_glyphs), nintendo_layout: self.config.active_nintendo_layout() };
+        let identity = PadIdentity::resolve(self.identity_override, dev.model, self.active_support());
+        let glyphs = Glyphs { family: dev.family.unwrap_or(self.config.info_glyphs), nintendo_layout: identity.applies_nintendo_layout(self.config.active_nintendo_layout()) };
         let view = inputlog::log_view(dev.log.entries(), &feed_settings(), &OverlayStyle::default(), glyphs, now);
         Some(LogView { name: "feed".into(), opacity: 1.0, ..view })
     }

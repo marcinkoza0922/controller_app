@@ -31,6 +31,7 @@ use crate::{
     motion::{MotionStyle, OverlayKind},
     info::{PadFamily, PadModel},
     inputlog::LogView,
+    pad_identity::PadIdentity,
     ipc::{self, InputSnapshot, Request, Response, Status, WindowInfo},
     keyboard::{self, Layout},
     launchers, library,
@@ -594,10 +595,15 @@ impl App {
         (app, Task::batch([load_config(), Task::done(Message::Poll), iced::system::theme().map(Message::SystemMode)]))
     }
 
-    /// The button glyphs to draw: the family of the controller on the editor (see `shown_pad`), else
-    /// the one set in Settings.
+    /// The controller the daemon presents the editor's controller as, under the game on screen's support.
+    fn presented_identity(&self) -> PadIdentity {
+        PadIdentity::choose(self.shown_pad().model, self.game().controllers.unwrap_or_default())
+    }
+
+    /// The button glyphs to draw: the family of the controller the daemon presents as, so they match
+    /// what the game will see.
     fn glyph_family(&self) -> PadFamily {
-        self.shown_pad().family
+        self.presented_identity().family()
     }
 
     /// The controller to show: the one used most recently, or the first managed one before any
@@ -630,9 +636,10 @@ impl App {
     }
 
     /// Whether button glyphs use the Nintendo layout here: the game on screen's own choice, else
-    /// the one set in Settings.
+    /// the one set in Settings, unless the controller is presented as a Switch Pro.
     fn nintendo_layout(&self) -> bool {
-        self.game().nintendo_layout.unwrap_or(self.config.nintendo_layout)
+        let setting = self.game().nintendo_layout.unwrap_or(self.config.nintendo_layout);
+        self.presented_identity().applies_nintendo_layout(setting)
     }
 
     fn theme(&self) -> iced::Theme {
