@@ -56,24 +56,4 @@ Press Guide and Start together to open the [in-game menu](In-Game-Menu). **Edit 
 
 ## The Guide button
 
-Guide is special because Steam uses it. By default, Guide holds the **Guide layer**, so a plain press doesn't reach Steam or switch profiles. While it's held, the other buttons do system shortcuts:
-
-| With Guide held | Action |
-|---|---|
-| Double tap Guide | Sends Guide on to Steam (opens the Steam overlay) |
-| X | On-screen keyboard |
-| Y | On-screen numpad |
-| LB | Media controls |
-| RB | Screenshot |
-| L3 | Start or stop screen recording |
-| RT | Left click |
-| LT | Right click |
-| Right stick | Mouse |
-| B (held about 2 seconds) | Force quit the focused window |
-| D-pad Right / Down / Left | Enter / Tab / Escape |
-
-Anything else pressed with Guide held does nothing, so it never reaches the game underneath. You can edit the Guide layer per game on its Layers tab.
-
-Force quit ends the focused window's process tree (SIGTERM, then SIGKILL after 3 seconds). It never touches the desktop, the compositor or the display server. A toast and rumble show while the 2-second hold counts, and letting go early cancels it.
-
-The Screenshot action saves to `~/Pictures/Screenshots/<game>/`. Recording uses gpu-screen-recorder, saving to `~/Videos/Recordings/<game>/`. If gpu-screen-recorder isn't installed, the action shows a toast saying so.
+Guide isn't mapped like the other buttons. It opens the Guide overlay, with its shortcuts (keyboard, numpad, media, screenshot, recording and force quit) and mouse mode, the same in every game. See [The Guide button](Guide-Button).

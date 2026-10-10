@@ -54,12 +54,6 @@ keys = ["KEY_F2"]
 [profiles.buttons.Start]
 keys = ["KEY_ESC"]
 
-[profiles.buttons.Guide]
-multi = [
-    { layer = "Guide" },
-    { show_info = "Controls" },
-]
-
 [profiles.buttons.LeftStick.toggle]
 keys = ["KEY_X"]
 
@@ -85,6 +79,31 @@ up = "KEY_W"
 down = "KEY_S"
 left = "KEY_A"
 right = "KEY_D"
+[profiles.guide.edits]
+"stick:Left" = { text = "Move (half push: walk)" }
+"stick:Right" = { text = "Look" }
+"trigger:Right" = { text = "Fire" }
+"trigger:Left" = { text = "Scope" }
+"button:South" = { text = "Jump" }
+"button:East" = { text = "Use" }
+"button:West" = { text = "Reload · hold: change ammo" }
+"button:North" = { text = "Inventory" }
+"button:LeftBumper" = { text = "Hold: belt" }
+"gesture:button:LeftBumper:double_tap" = { text = "holster" }
+"button:RightBumper" = { text = "Hold: augmentations" }
+"button:LeftStick" = { text = "Click: crouch (toggle)" }
+"button:RightStick" = { text = "Click: laser sight" }
+"button:DpadDown" = { text = "Drop / throw" }
+"button:Select" = { text = "Goals" }
+"button:Start" = { text = "Menu" }
+"gesture:button:Start:double_tap" = { text = "quick save" }
+"gesture:button:Start:long_press" = { text = "Quick load" }
+
+[[profiles.guide.merged]]
+inputs = ["button:DpadLeft", "button:DpadRight"]
+text = "Lean"
+
+
 
 [[profiles.left_stick.zones]]
 min = 0.0
@@ -172,12 +191,6 @@ keys = ["KEY_F2"]
 [profiles.buttons.Start]
 keys = ["KEY_ESC"]
 
-[profiles.buttons.Guide]
-multi = [
-    { layer = "Guide" },
-    { show_info = "Controls" },
-]
-
 [profiles.buttons.LeftStick.toggle]
 keys = ["KEY_X"]
 
@@ -203,6 +216,31 @@ up = "KEY_W"
 down = "KEY_S"
 left = "KEY_A"
 right = "KEY_D"
+[profiles.guide.edits]
+"stick:Left" = { text = "Move (half push: walk)" }
+"stick:Right" = { text = "Look" }
+"trigger:Right" = { text = "Fire" }
+"trigger:Left" = { text = "Scope" }
+"button:South" = { text = "Jump" }
+"button:East" = { text = "Use" }
+"button:West" = { text = "Reload · hold: change ammo" }
+"button:North" = { text = "Inventory" }
+"button:LeftBumper" = { text = "Hold: belt" }
+"gesture:button:LeftBumper:double_tap" = { text = "holster" }
+"button:RightBumper" = { text = "Hold: augmentations" }
+"button:LeftStick" = { text = "Click: crouch (toggle)" }
+"button:RightStick" = { text = "Click: laser sight" }
+"button:DpadDown" = { text = "Drop / throw" }
+"button:Select" = { text = "Goals" }
+"button:Start" = { text = "Menu" }
+"gesture:button:Start:double_tap" = { text = "quick save" }
+"gesture:button:Start:long_press" = { text = "Quick load" }
+
+[[profiles.guide.merged]]
+inputs = ["button:DpadLeft", "button:DpadRight"]
+text = "Lean"
+
+
 
 [[profiles.left_stick.zones]]
 min = 0.0
@@ -294,12 +332,6 @@ keys = ["KEY_F2"]
 [profiles.buttons.Start]
 keys = ["KEY_ESC"]
 
-[profiles.buttons.Guide]
-multi = [
-    { layer = "Guide" },
-    { show_info = "Controls" },
-]
-
 [profiles.buttons.LeftStick.toggle]
 keys = ["KEY_X"]
 
@@ -325,6 +357,31 @@ up = "KEY_W"
 down = "KEY_S"
 left = "KEY_A"
 right = "KEY_D"
+[profiles.guide.edits]
+"stick:Left" = { text = "Move (half push: walk)" }
+"stick:Right" = { text = "Look" }
+"trigger:Right" = { text = "Fire" }
+"trigger:Left" = { text = "Scope" }
+"button:South" = { text = "Jump" }
+"button:East" = { text = "Use" }
+"button:West" = { text = "Reload · hold: change ammo" }
+"button:North" = { text = "Inventory" }
+"button:LeftBumper" = { text = "Hold: belt" }
+"gesture:button:LeftBumper:double_tap" = { text = "holster" }
+"button:RightBumper" = { text = "Hold: augmentations" }
+"button:LeftStick" = { text = "Click: crouch (toggle)" }
+"button:RightStick" = { text = "Click: laser sight" }
+"button:DpadDown" = { text = "Drop / throw" }
+"button:Select" = { text = "Goals" }
+"button:Start" = { text = "Menu" }
+"gesture:button:Start:double_tap" = { text = "quick save" }
+"gesture:button:Start:long_press" = { text = "Quick load" }
+
+[[profiles.guide.merged]]
+inputs = ["button:DpadLeft", "button:DpadRight"]
+text = "Lean"
+
+
 
 [[profiles.left_stick.zones]]
 min = 0.0
@@ -550,81 +607,3 @@ opacity = 0.95
 [menus.style.selected]
 color = "#3d8bff"
 opacity = 1.0
-
-[[info_overlays]]
-name = "Controls"
-title = "This game's controls"
-always = false
-rows = [
-    [
-    "{ls}",
-    "Move (half push: walk)",
-    "{rs}",
-    "Look",
-],
-    [
-    "{rt}",
-    "Fire",
-    "{lt}",
-    "Scope",
-],
-    [
-    "{south}",
-    "Jump",
-    "{east}",
-    "Use",
-],
-    [
-    "{west}",
-    "Reload · hold: change ammo",
-    "{north}",
-    "Inventory",
-],
-    [
-    "{lb}",
-    "Hold: belt · double tap: holster",
-    "{rb}",
-    "Hold: augmentations",
-],
-    [
-    "{l3}",
-    "Click: crouch (toggle)",
-    "{r3}",
-    "Click: laser sight",
-],
-    [
-    "{left} {right}",
-    "Lean",
-    "{down}",
-    "Drop / throw",
-],
-    [
-    "{guide}",
-    "Hold: system shortcuts",
-    "{select}",
-    "Goals",
-],
-    [
-    "{start}",
-    "Menu · double tap: quick save",
-    "hold {start}",
-    "Quick load",
-],
-]
-
-[info_overlays.style]
-position = "center"
-scale = 0.9
-
-[info_overlays.style.background]
-color = "#07142b"
-opacity = 0.88
-
-[info_overlays.style.items]
-color = "#17375f"
-opacity = 0.95
-
-[info_overlays.style.selected]
-color = "#3d8bff"
-opacity = 1.0
-

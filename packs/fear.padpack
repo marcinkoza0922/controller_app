@@ -61,12 +61,6 @@ keys = ["KEY_TAB"]
 [profiles.buttons.Start]
 keys = ["KEY_ESC"]
 
-[profiles.buttons.Guide]
-multi = [
-    { layer = "Guide" },
-    { show_info = "Controls" },
-]
-
 [profiles.buttons.LeftStick.toggle]
 keys = ["KEY_C"]
 
@@ -136,6 +130,31 @@ invert_x = false
 invert_y = false
 activation = "always"
 noise_threshold = 1.0
+[profiles.guide.edits]
+"stick:Left" = { text = "Move" }
+"stick:Right" = { text = "Look" }
+"trigger:Right" = { text = "Fire" }
+"trigger:Left" = { text = "Zoom" }
+"button:South" = { text = "Jump" }
+"button:East" = { text = "Use" }
+"button:West" = { text = "Reload" }
+"button:North" = { text = "Throw grenade" }
+"button:LeftBumper" = { text = "Hold: weapons, grenades" }
+"button:RightBumper" = { text = "Slow-mo" }
+"button:LeftStick" = { text = "Click: crouch (toggle)" }
+"button:RightStick" = { text = "Click: melee" }
+"button:DpadUp" = { text = "Flashlight" }
+"button:DpadDown" = { text = "Med kit" }
+"button:Select" = { text = "Status · hold: mission" }
+"button:Start" = { text = "Menu" }
+"gesture:button:Start:double_tap" = { text = "quick save" }
+"gesture:button:Start:long_press" = { text = "Quick load" }
+
+[[profiles.guide.merged]]
+inputs = ["button:DpadLeft", "button:DpadRight"]
+text = "Lean"
+
+
 
 
 [[profiles]]
@@ -168,12 +187,6 @@ keys = ["KEY_TAB"]
 
 [profiles.buttons.Start]
 keys = ["KEY_ESC"]
-
-[profiles.buttons.Guide]
-multi = [
-    { layer = "Guide" },
-    { show_info = "Controls" },
-]
 
 [profiles.buttons.LeftStick.toggle]
 keys = ["KEY_C"]
@@ -246,6 +259,31 @@ noise_threshold = 1.0
 
 [profiles.gyro.mode.mouse]
 sensitivity = 15.0
+[profiles.guide.edits]
+"stick:Left" = { text = "Move" }
+"stick:Right" = { text = "Look" }
+"trigger:Right" = { text = "Fire" }
+"trigger:Left" = { text = "Zoom" }
+"button:South" = { text = "Jump" }
+"button:East" = { text = "Use" }
+"button:West" = { text = "Reload" }
+"button:North" = { text = "Throw grenade" }
+"button:LeftBumper" = { text = "Hold: weapons, grenades" }
+"button:RightBumper" = { text = "Slow-mo" }
+"button:LeftStick" = { text = "Click: crouch (toggle)" }
+"button:RightStick" = { text = "Click: melee" }
+"button:DpadUp" = { text = "Flashlight" }
+"button:DpadDown" = { text = "Med kit" }
+"button:Select" = { text = "Status · hold: mission" }
+"button:Start" = { text = "Menu" }
+"gesture:button:Start:double_tap" = { text = "quick save" }
+"gesture:button:Start:long_press" = { text = "Quick load" }
+
+[[profiles.guide.merged]]
+inputs = ["button:DpadLeft", "button:DpadRight"]
+text = "Lean"
+
+
 
 [[profiles]]
 name = "F.E.A.R. + Flick stick"
@@ -278,12 +316,6 @@ keys = ["KEY_TAB"]
 
 [profiles.buttons.Start]
 keys = ["KEY_ESC"]
-
-[profiles.buttons.Guide]
-multi = [
-    { layer = "Guide" },
-    { show_info = "Controls" },
-]
 
 [profiles.buttons.LeftStick.toggle]
 keys = ["KEY_C"]
@@ -361,6 +393,31 @@ noise_threshold = 1.0
 
 [profiles.gyro.mode.mouse]
 sensitivity = 22.0
+[profiles.guide.edits]
+"stick:Left" = { text = "Move" }
+"stick:Right" = { text = "Look" }
+"trigger:Right" = { text = "Fire" }
+"trigger:Left" = { text = "Zoom" }
+"button:South" = { text = "Jump" }
+"button:East" = { text = "Use" }
+"button:West" = { text = "Reload" }
+"button:North" = { text = "Throw grenade" }
+"button:LeftBumper" = { text = "Hold: weapons, grenades" }
+"button:RightBumper" = { text = "Slow-mo" }
+"button:LeftStick" = { text = "Click: crouch (toggle)" }
+"button:RightStick" = { text = "Click: melee" }
+"button:DpadUp" = { text = "Flashlight" }
+"button:DpadDown" = { text = "Med kit" }
+"button:Select" = { text = "Status · hold: mission" }
+"button:Start" = { text = "Menu" }
+"gesture:button:Start:double_tap" = { text = "quick save" }
+"gesture:button:Start:long_press" = { text = "Quick load" }
+
+[[profiles.guide.merged]]
+inputs = ["button:DpadLeft", "button:DpadRight"]
+text = "Lean"
+
+
 [[menus]]
 name = "Weapons"
 
@@ -431,81 +488,3 @@ opacity = 0.95
 [menus.style.selected]
 color = "#7d9a72"
 opacity = 1.0
-
-[[info_overlays]]
-name = "Controls"
-title = "This game's controls"
-always = false
-rows = [
-    [
-    "{ls}",
-    "Move",
-    "{rs}",
-    "Look",
-],
-    [
-    "{rt}",
-    "Fire",
-    "{lt}",
-    "Zoom",
-],
-    [
-    "{south}",
-    "Jump",
-    "{east}",
-    "Use",
-],
-    [
-    "{west}",
-    "Reload",
-    "{north}",
-    "Throw grenade",
-],
-    [
-    "{lb}",
-    "Hold: weapons, grenades",
-    "{rb}",
-    "Slow-mo",
-],
-    [
-    "{l3}",
-    "Click: crouch (toggle)",
-    "{r3}",
-    "Click: melee",
-],
-    [
-    "{left} {right}",
-    "Lean",
-    "{up}",
-    "Flashlight",
-],
-    [
-    "{down}",
-    "Med kit",
-    "{select}",
-    "Status · hold: mission",
-],
-    [
-    "{start}",
-    "Menu · double tap: quick save",
-    "hold {start}",
-    "Quick load",
-],
-]
-
-[info_overlays.style]
-position = "center"
-scale = 0.9
-
-[info_overlays.style.background]
-color = "#111a14"
-opacity = 0.88
-
-[info_overlays.style.items]
-color = "#25332a"
-opacity = 0.95
-
-[info_overlays.style.selected]
-color = "#7d9a72"
-opacity = 1.0
-

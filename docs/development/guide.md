@@ -13,6 +13,8 @@ Stage 3 is implemented:
 - The built-in Guide and Mouse layers are static definitions (`built_in_layer`). They're never stored in a game, so they're fixed and they don't appear on the Layers tab. Packs carry no Guide layer, and references to the built-ins are never reported as missing.
 - The Guide button's own mapping is ignored by the engine. Templates no longer add a Guide double-tap gesture, and the Buttons tab has no Guide row.
 - The manual page and README describe the new behaviour.
+- Packs no longer have Controls info overlays. Each pack's controls text moved into its profiles' Mapping guide (text edits, gesture texts and the Lean merge). The older sections below that mention the Controls overlay are history.
+- The Mapping guide draws each input with its controller glyph (the overlay's glyphs, via `pieces::row_glyphs`), and its share and choice menus use the same labels as text.
 - Not verified on a real controller, or visually in the overlay window. The Steam overlay sends press and release in one batch; check that Steam reacts to it.
 
 - **Tap Guide** toggles the Guide overlay when Guide is let go, not when it goes down. It has to wait for release, because a chord must not open the overlay. Pressing Guide again closes it. Guide never reaches the game or Steam, whatever the profile maps it to. Hold-to-open is gone, so power buttons are safe.

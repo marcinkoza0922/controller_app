@@ -46,12 +46,6 @@ keys = ["KEY_SPACE"]
 [profiles.buttons.Start]
 keys = ["KEY_F10"]
 
-[profiles.buttons.Guide]
-multi = [
-    { layer = "Guide" },
-    { show_info = "Controls" },
-]
-
 [profiles.buttons.LeftStick]
 multi = [
     { keys = ["KEY_LEFTCTRL"] },
@@ -118,6 +112,28 @@ invert_x = false
 invert_y = false
 activation = "always"
 noise_threshold = 1.0
+[profiles.guide.edits]
+"stick:Left" = { text = "Cursor" }
+"stick:Right" = { text = "Scroll map" }
+"trigger:Right" = { text = "Left click (select)" }
+"trigger:Left" = { text = "Right click (move / target)" }
+"button:South" = { text = "Attack" }
+"button:East" = { text = "Cancel" }
+"button:West" = { text = "Stop" }
+"button:North" = { text = "Hold position" }
+"button:DpadUp" = { text = "Move" }
+"button:DpadRight" = { text = "Patrol" }
+"button:DpadLeft" = { text = "Basic structures" }
+"button:DpadDown" = { text = "Advanced structures" }
+"button:RightBumper" = { text = "Shift (queue)" }
+"button:LeftStick" = { text = "Click: ctrl-click (select same type)" }
+"button:LeftBumper" = { text = "Hold: control groups 1-8" }
+"button:RightStick" = { text = "Worker / unit commands" }
+"button:Select" = { text = "Jump to last alert" }
+"button:Start" = { text = "Game menu" }
+"gesture:button:Select:long_press" = { text = "Menus layer on / off" }
+
+
 
 [[profiles]]
 name = "Gameplay + Gyro"
@@ -149,12 +165,6 @@ keys = ["KEY_SPACE"]
 
 [profiles.buttons.Start]
 keys = ["KEY_F10"]
-
-[profiles.buttons.Guide]
-multi = [
-    { layer = "Guide" },
-    { show_info = "Controls" },
-]
 
 [profiles.buttons.LeftStick]
 multi = [
@@ -224,6 +234,28 @@ noise_threshold = 1.0
 
 [profiles.gyro.mode.mouse]
 sensitivity = 20.0
+[profiles.guide.edits]
+"stick:Left" = { text = "Cursor" }
+"stick:Right" = { text = "Scroll map" }
+"trigger:Right" = { text = "Left click (select)" }
+"trigger:Left" = { text = "Right click (move / target)" }
+"button:South" = { text = "Attack" }
+"button:East" = { text = "Cancel" }
+"button:West" = { text = "Stop" }
+"button:North" = { text = "Hold position" }
+"button:DpadUp" = { text = "Move" }
+"button:DpadRight" = { text = "Patrol" }
+"button:DpadLeft" = { text = "Basic structures" }
+"button:DpadDown" = { text = "Advanced structures" }
+"button:RightBumper" = { text = "Shift (queue)" }
+"button:LeftStick" = { text = "Click: ctrl-click (select same type)" }
+"button:LeftBumper" = { text = "Hold: control groups 1-8" }
+"button:RightStick" = { text = "Worker / unit commands" }
+"button:Select" = { text = "Jump to last alert" }
+"button:Start" = { text = "Game menu" }
+"gesture:button:Select:long_press" = { text = "Menus layer on / off" }
+
+
 
 [[menus]]
 name = "Commands"
@@ -281,89 +313,6 @@ color = "#163238"
 opacity = 0.95
 
 [menus.style.selected]
-color = "#3fc1b4"
-opacity = 1.0
-
-[[info_overlays]]
-name = "Controls"
-title = "This game's controls"
-always = false
-rows = [
-    [
-    "{ls}",
-    "Cursor",
-    "{rs}",
-    "Scroll map",
-],
-    [
-    "{rt}",
-    "Left click (select)",
-    "{lt}",
-    "Right click (move / target)",
-],
-    [
-    "{south}",
-    "Attack",
-    "{east}",
-    "Cancel",
-],
-    [
-    "{west}",
-    "Stop",
-    "{north}",
-    "Hold position",
-],
-    [
-    "{up}",
-    "Move",
-    "{right}",
-    "Patrol",
-],
-    [
-    "{left}",
-    "Basic structures",
-    "{down}",
-    "Advanced structures",
-],
-    [
-    "{rb}",
-    "Shift (queue)",
-    "{l3}",
-    "Click: ctrl-click (select same type)",
-],
-    [
-    "{lb}",
-    "Hold: control groups 1-8",
-    "{lb} + {rb}",
-    "Assign group instead",
-],
-    [
-    "{r3}",
-    "Worker / unit commands",
-    "{select}",
-    "Jump to last alert",
-],
-    [
-    "{start}",
-    "Game menu",
-    "Hold {select}",
-    "Menus layer on / off",
-],
-]
-
-[info_overlays.style]
-position = "center"
-scale = 0.9
-
-[info_overlays.style.background]
-color = "#0a171b"
-opacity = 0.9
-
-[info_overlays.style.items]
-color = "#163238"
-opacity = 0.95
-
-[info_overlays.style.selected]
 color = "#3fc1b4"
 opacity = 1.0
 

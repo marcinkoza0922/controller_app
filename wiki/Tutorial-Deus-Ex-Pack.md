@@ -18,7 +18,7 @@ One game, **Deus Ex**, with three profiles:
 | **Deus Ex + Gyro** | The same, plus gyro mouse aiming while you hold nothing | No (gyro is an extra) |
 | **Deus Ex + Flick stick** | Right stick turns the camera in flicks; gyro aims up and down | Yes |
 
-The game also gets two radial menus (belt and augmentations), a Controls overlay, and a Guide layer for system shortcuts.
+The game also gets two radial menus (belt and augmentations). The Guide button needs no setup: it opens the Guide overlay in every game, and the pack's Mapping guide describes the controls there.
 
 ## Before you start
 
@@ -37,8 +37,6 @@ The game also gets two radial menus (belt and augmentations), a Controls overlay
 
 *The picker. The dropdown at the top left holds the blank template. The list below it is the library, which is where the finished pack comes from in these screenshots.*
 
-A new game has a **Guide** layer only if one of its profiles holds Guide down, so the layer will appear as you build it (Step 8).
-
 ## Step 2: Set up the profile
 
 Open the game's **Profiles** tab.
@@ -48,7 +46,7 @@ Open the game's **Profiles** tab.
 
 *Why these timings (inferred):* the tap window is how long padwight waits after a tap to see whether a second tap follows. A button with a double-tap gesture holds its tap for that window, so a shorter window is snappier but makes double taps harder to land. The long press at 500 ms is long enough that a normal tap never counts as one.
 
-**Combo window** is set to 120 ms but the pack has **no combos**. A combo makes each of its buttons wait for the rest of the combo, which delays every press. The pack avoids combos on purpose and uses the Guide layer instead (Step 8). The window does nothing here.
+**Combo window** is set to 120 ms but the pack has **no combos**. A combo makes each of its buttons wait for the rest of the combo, which delays every press. The pack avoids combos on purpose. The window does nothing here.
 
 ## Step 3: Face buttons and the D-pad
 
@@ -61,7 +59,7 @@ On the profile's **Buttons** sub-tab, set each button:
 | Button | Action | Notes |
 |---|---|---|
 | **A** (South) | Keyboard **Space** | Jump. |
-| **B** (East) | **Mouse Right** | "Use" on the Controls overlay. |
+| **B** (East) | **Mouse Right** | "Use" in the Mapping guide. |
 | **Y** (North) | Keyboard **F1** | Inventory. |
 | **X** (West) | Keyboard **`;`** (`KEY_SEMICOLON`) | Reload. Gets a long-press gesture in Step 7. |
 | **Select** | Keyboard **F2** | Goals. |
@@ -75,9 +73,9 @@ On the profile's **Buttons** sub-tab, set each button:
 
 - **B = Mouse Right, not a key.** The overlay labels B as "Use," and the pack maps it to the right mouse button. The pack's description says it targets the game's default keys, so confirm in game that Use really is on the right mouse button by default.
 - **D-pad Up is Disabled, on purpose.** Writing it out, instead of leaving it unset, documents the choice. D-pad Up has a job elsewhere: in the gyro profiles it's the **gyro clutch** (Step 10). Leaving it unbound in the base profile keeps it free for that.
-- **Lean on Q and E.** The pack's choice. The Controls overlay labels them "Lean," so they're the keys to check first in game.
+- **Lean on Q and E.** The pack's choice. The Mapping guide labels them "Lean," so they're the keys to check first in game.
 
-> **Known mismatch to check in game.** The Controls overlay (Step 8) shows the D-pad as "Lean" on left and right, and as "Drop / throw" on **down**. But D-pad Down is mapped to **Tab**, not a drop or throw key. Either the overlay row is wrong or the mapping is. The pack ships as is, so verify in game and fix whichever is wrong. Don't assume either.
+> **Known mismatch to check in game.** The Mapping guide (Step 8) shows the D-pad as "Lean" on left and right, and as "Drop / throw" on **down**. But D-pad Down is mapped to **Tab**, not a drop or throw key. Either the overlay row is wrong or the mapping is. The pack ships as is, so verify in game and fix whichever is wrong. Don't assume either.
 
 ## Step 4: The bumpers open radial menus
 
@@ -158,55 +156,22 @@ Gestures are per-button extra actions: double tap, triple tap and long press. Us
 | **LB** | Double tap | Keyboard **Backspace** | "double tap: holster" |
 | **Start** | Double tap | Numpad **+** (`KEY_KPPLUS`) | "double tap: quick save" |
 | **Start** | Long press | Numpad **/** (`KEY_KPSLASH`) | "hold Start: quick load" |
-| **Guide** | Double tap | Gamepad **Guide** | (not on the overlay) |
 
 **Why these:**
 
 - **X's long press for ammo.** Reload is the common tap, and changing ammo is the rarer one. It's a long press so it can't happen by accident. *(Inferred.)*
 - **LB's double tap for holster.** LB already holds the belt menu open, so a double tap is the one quick gesture that won't open the menu. Holster is a quick, deliberate action, which fits a double tap.
 - **Start: save on double tap, load on long press.** Loading overwrites your current progress, so it takes the most deliberate gesture (a hold). Saving is harmless, so it gets the quick one. Both use numpad keys, which the game is unlikely to use for anything else. *(Inferred from the choice of actions.)*
-- **Guide double tap sends the real Guide button.** This is the one place the Guide button reaches Steam. The Guide button belongs to the Guide layer (Step 8), so without this, Steam's overlay would be unreachable while the pack is active. A double tap is the escape hatch. *(Described in the [Guide design notes](https://github.com/marcinkoza0922/padwight/blob/main/docs/development/guide.md).)*
 
 > **Latency cost.** A tap on a button with a gesture waits for the tap window (250 ms) before it fires, to see whether a second tap follows. That's why reload on X feels a fraction later than a plain key would. If it bothers you, remove the long-press gesture from X, or accept the delay for the gesture.
 
-## Step 8: The Guide button: a layer for system shortcuts
+## Step 8: The Guide button and the Mapping guide
 
-Guide is the shift key. Holding it changes what the other buttons do, so you can reach the keyboard, the numpad, screenshots and recording without leaving the game.
+Nothing to set up for the Guide button itself. It works the same in every game: tap it for the Guide overlay, hold it with another button for a shortcut (keyboard on X, numpad on Y, and so on). See [The Guide button](Guide-Button).
 
-1. On the **Buttons** tab, set **Guide** to **Multiple outputs**: a **Layer** action set to **Guide**, plus a **Show info overlay** action set to **Controls**. Holding Guide shows the controls and holds the layer on.
-2. On the **Layers** tab, check the **Guide** layer. Padwight creates one when a profile holds Guide down. Its settings in the pack are:
-   - **Indicator**: bindings, at the bottom left, after 250 ms (so a quick tap doesn't flash it).
-   - **Swallow unbound**: on.
-   - **Bindings**: East (B) = force quit, North (Y) = numpad, West (X) = keyboard, RB = screenshot, L3 = start/stop recording, D-pad Down = Tab, D-pad Left = Esc, D-pad Right = Enter, RT = left click, LT = right click, right stick = mouse at 1600.
+The pack describes its controls in the **Mapping guide**, on the profile's **Guide** tab, which is what the overlay's Mappings box shows. The pack's texts for each input are there, with the Lean row shared by both D-pad sides, and the gesture texts (holster, quick save, quick load) under their gestures. Check them in game like everything else. The Mapping guide follows the profile's mappings, so a row whose text you haven't written still shows what its action does.
 
-![The Guide layer on the Layers tab: name, the bindings indicator, and the controller drawing with the layer's bindings](https://raw.githubusercontent.com/marcinkoza0922/padwight/main/docs/images/layers-guide.png)
-
-*The Guide layer. "On screen while on" is set to show its bindings, and "Do nothing while the layer is on" is ticked, which is the swallow-unbound option.*
-
-**Why the Guide design is this way:**
-
-- **Swallow unbound.** While Guide is held, a button the layer doesn't set does nothing. Without this, Guide + A would still press Space and make you jump while you're in the keyboard. *(This is the layer option's stated purpose in the [Guide design notes](https://github.com/marcinkoza0922/padwight/blob/main/docs/development/guide.md).)*
-- **Guide holds a layer instead of cycling profiles.** Plain Guide used to switch profiles, but Steam also uses Guide. Holding Guide for shortcuts keeps the button useful without taking it from Steam, and a double tap still reaches Steam (Step 7).
-- **No profile switching from the controller.** Profiles switch in Quick Settings (Guide + Start) or in the app, so the Guide layer leaves D-pad Up unbound.
-- **One layer.** The pack has a single layer, so all the system shortcuts live in one place.
-
-**Pack check:** the library check requires every profile's Guide button to hold a layer named Guide, and requires the pack to contain that layer. The Deus Ex pack contains its own copy.
-
-### The Controls overlay
-
-![The Controls info overlay, expanded: its heading, the Shown options, and a preview of the nine-row grid](https://raw.githubusercontent.com/marcinkoza0922/padwight/main/docs/images/info-overlays.png)
-
-*The Controls overlay as it appears while Guide is held. The D-pad Down row reads "Drop / throw", the mismatch Step 3 asks you to check in game.*
-
-On the **Info overlays** tab, create one named **Controls**:
-
-- **Title**: "This game's controls". The title is shown above the grid, to say the centre panel is the game's own mapping, not the Guide shortcuts.
-- **Always shown**: off. It appears only while Guide is held.
-- **Rows**: a grid of cells in pairs: `{ls}` "Move (half push: walk)", `{rs}` "Look"; `{rt}` "Fire", `{lt}` "Scope"; `{south}` "Jump", `{east}` "Use"; `{west}` "Reload · hold: change ammo", `{north}` "Inventory"; `{lb}` "Hold: belt · double tap: holster", `{rb}` "Hold: augmentations"; `{l3}` "Click: crouch (toggle)", `{r3}` "Click: laser sight"; `{left} {right}` "Lean", `{down}` "Drop / throw"; `{guide}` "Hold: system shortcuts", `{select}` "Goals"; `{start}` "Menu · double tap: quick save", "hold {start}" "Quick load".
-
-The glyph tokens draw the buttons for the controller in use, so an Xbox pad shows A/B/X/Y, and a PlayStation pad shows its own symbols.
-
-The **{down} "Drop / throw"** row is the mismatch noted in Step 3. Check it in game.
+The pack used to have a separate Controls info overlay that Guide opened. It's gone, and the Mapping guide replaces it.
 
 ## Step 9: Check every input in the game
 
@@ -218,7 +183,7 @@ Before you go further, test the mapping in the game:
 4. Fire and scope: RT fires, LT scopes.
 5. Menus: hold LB and RB, aim, and release. Check the slice you pick.
 6. Gestures: double tap LB, double tap Start, long press Start, and long press X.
-7. Guide: hold it (the Controls overlay should appear), press Y for the numpad, double tap it for Steam.
+7. Guide: tap it to open the Guide overlay and check its mappings. Then hold Guide and press Y for the numpad, and tap Guide and open the Steam overlay from its menu, if Steam is running.
 
 If something doesn't work, check the rule first (is the executable right?), then the profile is active (the Overview shows which), and then the mapping.
 
@@ -294,14 +259,14 @@ A flick stick turns the camera by flicking the right stick, instead of holding i
 The library is the set of packs that ship with the app, in `packs/`.
 
 1. In a debug build, tick **Library pack** on export, so the game keeps its library ID and installed copies get it as an update.
-2. Copy the file into `packs/`, and run `cargo test`. The tests check the format, IDs, names, references, that a rule points at an existing profile, that a Guide layer exists, and that at least one profile works on a plain pad.
+2. Copy the file into `packs/`, and run `cargo test`. The tests check the format, IDs, names, references, that a rule points at an existing profile, and that at least one profile works on a plain pad.
 3. Rebuild. The build embeds every `.padpack` in `packs/` into the binary. Developers can find the details in the [architecture notes](https://github.com/marcinkoza0922/padwight/blob/main/docs/development/architecture.md).
 
 ## Summary: the less obvious choices
 
 | Choice | Why |
 |---|---|
-| Tap window 250 ms, no combos | Combos delay every member press. The Guide layer does the job without them. |
+| Tap window 250 ms, no combos | Combos delay every member press. The Guide shortcuts don't need them. |
 | D-pad Up disabled | Reserved for the gyro clutch in the gyro profiles. |
 | Lean on Q / E | Keeps the left thumb on the stick; the overlay names them "Lean." *(Inferred.)* |
 | Mouse right for Use | Overlay says Use; the pack maps it to the right mouse button. Confirm in game. |
@@ -311,8 +276,7 @@ The library is the set of packs that ship with the app, in `packs/`.
 | RT at 0.30, LT at 0.40 | Firing responds early; scope needs a deliberate pull. *(Inferred.)* |
 | X long press for ammo | The rarer action takes the deliberate gesture. *(Inferred.)* |
 | Start: Esc, double tap save, long press load | Loading overwrites progress, so it takes the hardest gesture. *(Inferred.)* |
-| Guide double tap sends Guide | Steam still gets Guide on purpose; the Guide layer doesn't block it. |
-| Guide layer swallows unbound buttons | Guide + A doesn't jump while you're in the keyboard. |
+| Guide opens the overlay, not the game | Guide + A doesn't jump while you're in the keyboard. Steam's overlay is in the Guide menu. |
 | Gyro as an extra, not required | The profile works without gyro; only the flick profile needs it. |
 | Flick profile requires gyro | Flick turns horizontally only, and in this profile gyro does the up-and-down aim. |
 
@@ -321,5 +285,6 @@ The library is the set of packs that ship with the app, in `packs/`.
 - **The rule doesn't switch to the profile.** Check the executable name (for Proton games, the Windows `.exe`, e.g. `DeusEx.exe`) and the Steam App ID. The **Details** tab's recently focused windows show what padwight saw.
 - **The game sees two controllers.** Turn off Steam Input for the pad, or set `SDL_JOYSTICK_HIDAPI=0` (see [Troubleshooting](Troubleshooting)).
 - **A button feels late.** It has a gesture, so it waits for the tap window. See the latency note in Step 7.
-- **Guide's shortcuts don't work.** They need Guide held down, not tapped.
+- **Guide's shortcuts don't work.** Hold Guide and press the shortcut, or tap Guide to open the overlay and then press it. See [The Guide button](Guide-Button).
+- **A row in the Mapping guide reads wrong.** The pack's texts are copies of the old Controls overlay. Fix the text on the **Guide** tab.
 - **The flick profile is missing.** It needs gyro, so with a plain pad it isn't offered. The import preview lists profiles it won't offer.

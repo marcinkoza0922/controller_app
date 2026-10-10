@@ -1655,7 +1655,6 @@ impl App {
         }
         col = col.push(row![find].align_y(Alignment::Center)).push(tabs);
 
-        let guide = GuideView { notes: &self.guide_notes };
         let ui = Ui {
             names,
             expanded: &self.expanded,
@@ -1668,6 +1667,7 @@ impl App {
             nintendo_layout: self.nintendo_layout(),
             layer,
         };
+        let guide = GuideView { notes: &self.guide_notes, family: ui.family, nintendo_layout: ui.nintendo_layout };
         col.push(view_profile(p, &ui, self.profile_tab, guide)).into()
     }
 
