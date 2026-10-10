@@ -173,7 +173,7 @@ impl Window {
         .spacing(12)
         .align_y(Alignment::Center);
 
-        let virtual_pad = mouse_area(controller_drawing(Some(&snapshot), pad.model, glyphs, &[], false))
+        let virtual_pad = mouse_area(controller_drawing(Some(&snapshot), pad.model, glyphs, &[], 1.0))
             .on_move(Message::Moved)
             .on_press(Message::Down)
             .on_release(Message::Up)
@@ -228,7 +228,7 @@ fn gallery<'a>(input: &InputSnapshot) -> Element<'a, Message> {
         let family = model.map_or(PadFamily::Xbox, PadModel::family);
         let shown = InputSnapshot { model, family: Some(family), ..input.clone() };
         let pick = button(text(ModelChoice(model).to_string()).size(13)).style(button::text).on_press(Message::Model(ModelChoice(model)));
-        container(column![pick, controller_drawing(Some(&shown), model, Glyphs { family, nintendo_layout: false }, &[], false)].spacing(2))
+        container(column![pick, controller_drawing(Some(&shown), model, Glyphs { family, nintendo_layout: false }, &[], 1.0)].spacing(2))
             .into()
     });
     row(cards).spacing(12).wrap().vertical_spacing(12).into()

@@ -78,63 +78,82 @@ Tick an item when it's done and merged.
 
 ## Controls that look or behave differently for the same job
 
-- [ ] 20. "Use its own appearance in this setup" is a checkbox on four cards on the Details tab,
+- [x] 20. "Use its own appearance in this setup" is a checkbox on four cards on the Details tab,
   while Button layout is a segmented control, Overlay font a dropdown, and Overlay sounds a full
   editor.
-- [ ] 21. Toggles and checkboxes are mixed for on/off settings: toggles for "Controllers this
+- [x] 21. Toggles and checkboxes are mixed for on/off settings: toggles for "Controllers this
   setup supports" and Overlay sounds, checkboxes for "Can't be played without…" and rule enables.
-- [ ] 22. Button sizes vary: "Make active", "Hide", "Expand all" and "Collapse all" are small or
+- [x] 22. Button sizes vary: "Make active", "Hide", "Expand all" and "Collapse all" are small or
   unstyled, while "Duplicate", "Find by pressing" and "+ New macro" are full size.
-- [ ] 23. The top of each items tab differs: Layers has a bare "+ New layer" button, Macros, Info
+- [x] 23. The top of each items tab differs: Layers has a bare "+ New layer" button, Macros, Info
   and Log overlays have a card with a description, and Menus has an "Add a menu:" row. The
   "Copy from another setup…" link sits in a different place on each.
-- [ ] 24. Disclosure triangles come in two sizes: a large ▾ on item cards and a small ▸ on
+- [x] 24. Disclosure triangles come in two sizes: a large ▾ on item cards and a small ▸ on
   "Appearance" and "Shared … usable here (0)".
-- [ ] 25. "Remove" is shown three ways: a small red underlined link under a gesture label, "×"
+- [x] 25. "Remove" is shown three ways: a small red underlined link under a gesture label, "×"
   buttons on rules, cells and macros, and "×" on the card corner to delete a whole item.
-- [ ] 26. Some cards lack the ⓘ icon. "Controller requirements" and the four appearance cards on
+- [x] 26. Some cards lack the ⓘ icon. "Controller requirements" and the four appearance cards on
   Details have none, and every other card has one.
-- [ ] 27. "Expand all" and "Collapse all" appear on tabs with nothing to expand (Combos, Guide)
+- [x] 27. "Expand all" and "Collapse all" appear on tabs with nothing to expand (Combos, Guide)
   but are hidden on Gyro.
-- [ ] 28. On the Details tab, "Name" sits outside any card, while everything else is in one.
-- [ ] 29. The profile dropdown and the rename field next to it are both unlabelled and both
+- [x] 28. On the Details tab, "Name" sits outside any card, while everything else is in one.
+- [x] 29. The profile dropdown and the rename field next to it are both unlabelled and both
   read "Deus Ex".
-- [ ] 30. Mapping summaries use colours that look like errors or links with no legend: "Menu" in
+- [x] 30. Mapping summaries use colours that look like errors or links with no legend: "Menu" in
   red, "Toggle" in green, "Right click" in teal.
 
 ## Spacing and density
 
-- [ ] 31. The header (title, remapping toggle, active profile, daemon note) repeats on every page,
-  including the Manual. With the daemon down it pushes content about 230 px down.
-- [ ] 32. The radial menu preview is about 750 × 800 px and pushes the item list well below the
-  fold.
-- [ ] 33. Overlay sounds is a long wall of small sliders: four sounds with three sliders each, for
-  every overlay type, repeated on App settings and on every setup's Details tab.
-- [ ] 34. Sound labels mix case ("Step", "Pick" against "volume", "pitch", "length") and use a
-  smaller font.
-- [ ] 35. Long explanations are in very small grey text: the controller-requirements note, the
-  "Shown" note on info overlays, and the export notes.
-- [ ] 36. Dropdowns have different widths on the same page: 280, 200 and 160 px on App settings.
-- [ ] 37. In the Add a setup dialog the "installed" tags touch the scrollbar, and the right pane
-  is mostly empty.
-- [ ] 38. In the Add and Export dialogs the item counts include zeros ("0 layers · 0 macros …")
-  and wrap so that "overlays" sits alone on a line.
-- [ ] 39. In the Export dialog the Description field is one line and cuts off its text, the
+- [x] 31. The header (title, remapping toggle, active profile, daemon note) repeats on every page,
+  including the Manual. With the daemon down it pushes content about 230 px down. The header is
+  now one row (the window title already names the app), with "○ Daemon not running" beside the
+  switch it explains. The note on starting the daemon shows on the Overview only, and the Manual
+  has no header.
+- [x] 32. The radial menu preview is about 750 × 800 px and pushes the item list well below the
+  fold. Menu previews are drawn at 80%, and sit after the items, or under the Appearance editor
+  while it's open, so each change shows.
+- [x] 33. Overlay sounds is a long wall of small sliders: four sounds with three sliders each, for
+  every overlay type, repeated on App settings and on every setup's Details tab. Each overlay is
+  a switch with an "Adjust" disclosure, closed at first, and each sound is one line: kind, Play,
+  volume, pitch and length.
+- [x] 34. Sound labels mix case ("Step", "Pick" against "volume", "pitch", "length") and use a
+  smaller font. They're all capitalized and at the body size; only the percentages are small.
+- [x] 35. Long explanations are in very small grey text: the controller-requirements note, the
+  "Shown" note on info overlays, and the export notes. They use a new `note` style: 14 px, in the
+  theme's text color softened, rather than the faint caption grey.
+- [x] 36. Dropdowns have different widths on the same page: 280, 200 and 160 px on App settings.
+  Settings dropdowns and the header's share one width (`SETTING_WIDTH`, 260 px).
+- [x] 37. In the Add a setup dialog the "installed" tags touch the scrollbar, and the right pane
+  is mostly empty. The list leaves a gap for the scrollbar, and the first entry is shown until
+  another is picked.
+- [x] 38. In the Add and Export dialogs the item counts include zeros ("0 layers · 0 macros …")
+  and wrap so that "overlays" sits alone on a line. Kinds with none are left out, and each count
+  is held together by no-break spaces.
+- [x] 39. In the Export dialog the Description field is one line and cuts off its text, the
   Author placeholder repeats its label, and "Library pack: keep the library's ID" uses an
-  internal concept.
+  internal concept. The description is a box that wraps, the placeholders are examples ("Your
+  name"), and the box reads "Release it as the built-in Deus Ex: people who added the built-in
+  one get it as an update".
 
 ## Dark mode
 
-- [ ] 40. With the daemon down, the controller picture is barely visible against the background,
-  and its callout lines disappear.
-- [ ] 41. The selected tab is only slightly darker than the tab bar, so it is hard to see which
-  tab is active.
-- [ ] 42. The menu and overlay previews are always dark navy: fine in dark mode, but a heavy slab
-  in light mode.
+- [x] 40. With the daemon down, the controller picture is barely visible against the background,
+  and its callout lines disappear. The leader lines are a layer of their own, never dimmed, and
+  a little stronger. The controller is dimmed less in dark mode, since it's drawn dark.
+- [x] 41. The selected tab is only slightly darker than the tab bar, so it is hard to see which
+  tab is active. The selected segment is lighter than the bar in both themes, with an accent
+  edge.
+- [x] 42. The menu and overlay previews are always dark navy: fine in dark mode, but a heavy slab
+  in light mode. The "screen" behind a preview follows the theme; the overlay itself keeps its
+  real colors.
 
 ## Picture callouts
 
-- [ ] 43. Leader lines cross each other around the face buttons and the right stick.
-- [ ] 44. Long labels are cut on the right ("Menu "Augme…") but not on the left
-  ("Menu "Belt" +").
-- [ ] 45. A trailing "+" ("Esc +", "(nothing) +") means there is more, but nothing explains it.
+- [x] 43. Leader lines cross each other around the face buttons and the right stick. Each label
+  sits as near its part's height as the rows allow, and labels whose lines cross swap places
+  until none do (a test checks every input on each layout).
+- [x] 44. Long labels are cut on the right ("Menu "Augme…") but not on the left
+  ("Menu "Belt" +"). The label columns are wider, so most names fit, and a name that's still
+  cut keeps its closing quote ("Menu “Augmentat…”").
+- [x] 45. A trailing "+" ("Esc +", "(nothing) +") means there is more, but nothing explains it.
+  When a callout has one, a line under the picture says what it means.

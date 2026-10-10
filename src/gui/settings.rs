@@ -74,7 +74,7 @@ impl App {
     /// The App settings page's sounds: the set every setup without its own set uses.
     fn view_default_sounds(&self) -> Element<'_, Message> {
         let set = self.config.sounds;
-        let mut rows: Vec<Element<'_, Message>> = SoundOverlay::ALL.iter().map(|&overlay| overlay_sounds(set, overlay, Message::SetSounds)).collect();
+        let mut rows: Vec<Element<'_, Message>> = SoundOverlay::ALL.iter().map(|&overlay| overlay_sounds(set, overlay, self.open_sounds.contains(&overlay), Message::SetSounds)).collect();
         rows.push(button(text("Turn every sound off").size(13)).style(style::secondary).on_press(Message::SetSounds(set.silenced())).into());
         section(
             "Overlay sounds",
@@ -90,7 +90,7 @@ impl App {
             vec![labeled(
                 "Fallback glyphs",
                 row![
-                    dropdown(PadFamily::ALL, Some(self.config.info_glyphs), Message::SetInfoGlyphs).width(170),
+                    dropdown(PadFamily::ALL, Some(self.config.info_glyphs), Message::SetInfoGlyphs).width(SETTING_WIDTH),
                     help(
                         "Glyphs follow the controller in use: Xbox, PlayStation or Nintendo labels. For a \
                          controller that can't be recognized, they're drawn like this kind instead. Also \
@@ -226,7 +226,7 @@ impl App {
                     toggler(auto.enabled).label("Switch profiles automatically").on_toggle(Message::SetAutoSwitch),
                     space::horizontal(),
                     text("When no setup matches, use"),
-                    dropdown(defaults, Some(default), Message::SetDefaultProfile).width(280),
+                    dropdown(defaults, Some(default), Message::SetDefaultProfile).width(SETTING_WIDTH),
                 ]
                 .spacing(12)
                 .align_y(Alignment::Center)

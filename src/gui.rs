@@ -177,6 +177,8 @@ struct App {
     profile_tab: ProfileTab,
     /// The Guide tab's notes editor, loaded from the profile when the tab is opened.
     guide_notes: iced::widget::text_editor::Content,
+    /// The Export dialog's description editor, loaded when the dialog opens.
+    export_description: iced::widget::text_editor::Content,
     /// The controller picture is folded away on the Profiles tab.
     picture_hidden: bool,
     /// Rows showing their full editor instead of a one-line summary.
@@ -192,6 +194,8 @@ struct App {
     open_appearance: HashSet<Option<usize>>,
     /// The numpad card's Appearance section is open.
     numpad_appearance: bool,
+    /// Overlays whose sound settings are open in the Overlay sounds cards.
+    open_sounds: HashSet<crate::sound::SoundOverlay>,
     /// The media controls' and the in-game menu's Appearance sections are open.
     media_appearance: bool,
     menu_appearance: bool,
@@ -364,6 +368,7 @@ enum Message {
     ToggleOverlay,
     ToggleNumpad,
     ToggleNumpadAppearance,
+    ToggleSoundCues(crate::sound::SoundOverlay),
     SetNumpadStyle(OverlayStyle),
     ToggleMediaAppearance,
     SetMediaStyle(OverlayStyle),
@@ -504,6 +509,7 @@ enum Message {
     ConfirmImport,
     OpenExport,
     SetPackField(PackField, String),
+    EditPackDescription(iced::widget::text_editor::Action),
     SetLibraryExport(bool),
     SaveExport,
     /// Where the pack was saved, or why not; `None` if the user cancelled.
@@ -580,6 +586,7 @@ impl App {
             dialog: None,
             profile_tab: ProfileTab::Buttons,
             guide_notes: iced::widget::text_editor::Content::new(),
+            export_description: iced::widget::text_editor::Content::new(),
             picture_hidden: false,
             expanded: HashSet::new(),
             finding: false,
@@ -588,6 +595,7 @@ impl App {
             open_menus: HashSet::new(),
             open_appearance: HashSet::new(),
             numpad_appearance: false,
+            open_sounds: HashSet::new(),
             media_appearance: false,
             menu_appearance: false,
             open_infos: HashSet::new(),
@@ -1057,7 +1065,14 @@ impl App {
             Page::Manual => self.view_manual(),
             Page::Game(_) => self.view_game(),
         };
-        let content = column![self.view_header(), rule::horizontal(1), page].spacing(16).padding(20);
+        // The Manual is for reading: the status header would only push it down.
+        let content = if self.page == Page::Manual {
+            column![page]
+        } else {
+            column![self.view_header(), rule::horizontal(1), page]
+        }
+        .spacing(16)
+        .padding(20);
         let main = column![scrollable(content).id("main").height(Length::Fill), self.view_footer()].width(Length::Fill);
         // Always a stack with the page first, popups or not: iced keeps widget state (such as
         // the page's scroll position) by place in the tree, so the shape must not change when
@@ -1084,29 +1099,26 @@ impl App {
         let running = self.status.is_some();
         let remapping = running && self.config.enabled;
 
-        let mut title = row![text("Padwight").size(26), space::horizontal()].align_y(Alignment::Center);
-        if !running {
-            title = title.push(text("○ Daemon not running").color(ERROR_COLOR));
-        }
-
-        let mut header = column![
-            title,
-            row![
-                // Without the daemon nothing is remapped, so the switch reads off, whatever the
-                // config says, and can't be turned on.
-                toggler(remapping)
-                    .label(if remapping { "Remapping on" } else { "Remapping off" })
-                    .on_toggle_maybe(running.then_some(Message::SetEnabled)),
-                space::horizontal(),
-                text("Active profile"),
-                dropdown(profiles, Some(self.saved.active.clone()), Message::ActivateProfile).width(280),
-            ]
-            .spacing(12)
-            .align_y(Alignment::Center),
+        // One row on every page: the window title already names the app. Daemon status sits
+        // beside the switch it explains, and the longer note only shows on the Overview.
+        let mut controls = row![
+            // Without the daemon nothing is remapped, so the switch reads off, whatever the
+            // config says, and can't be turned on.
+            toggler(remapping)
+                .label(if remapping { "Remapping on" } else { "Remapping off" })
+                .on_toggle_maybe(running.then_some(Message::SetEnabled)),
         ]
-        .spacing(12);
-
+        .spacing(16)
+        .align_y(Alignment::Center);
         if !running {
+            controls = controls.push(text("○ Daemon not running").color(ERROR_COLOR));
+        }
+        controls = controls.push(space::horizontal()).push(text("Active profile")).push(
+            dropdown(profiles, Some(self.saved.active.clone()), Message::ActivateProfile).width(SETTING_WIDTH),
+        );
+        let mut header = column![controls].spacing(8);
+
+        if !running && self.page == Page::Overview {
             let code = |s: &'static str| -> text::Span<'static> { span(s).font(iced::Font::MONOSPACE) };
             header = header.push(
                 rich_text![

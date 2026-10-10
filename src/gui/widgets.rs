@@ -196,15 +196,25 @@ pub(super) fn preview_style(style: &OverlayStyle) -> OverlayStyle {
     OverlayStyle { scale: style.scale.min(1.0), ..style.clone() }
 }
 
-/// A live preview on a dark "screen", so transparency shows.
+/// How much smaller than on screen a menu's preview is drawn: a full-size radial menu is about
+/// 800 px tall. Any smaller and its item labels can't be read.
+const MENU_PREVIEW_SCALE: f32 = 0.8;
+
+/// A menu's preview: smaller than on screen, keeping its real colors.
+pub(super) fn menu_preview_style(style: &OverlayStyle) -> OverlayStyle {
+    OverlayStyle { scale: style.scale.min(1.0) * MENU_PREVIEW_SCALE, ..style.clone() }
+}
+
+/// A live preview on a "screen" in the window's own tones, so transparency shows without a dark
+/// slab in light mode.
 pub(super) fn preview<'a>(panel: Element<'a, Message>) -> Element<'a, Message> {
     column![
         text("Preview").size(12).color(MUTED_COLOR),
         container(container(panel).center_x(Length::Fill))
             .padding(16)
             .width(Length::Fill)
-            .style(|_: &iced::Theme| container::Style {
-                background: Some(Color::from_rgb8(0x3a, 0x4a, 0x5c).into()),
+            .style(|theme: &iced::Theme| container::Style {
+                background: Some(theme.extended_palette().background.strong.color.into()),
                 border: iced::Border { radius: 8.0.into(), ..iced::Border::default() },
                 ..container::Style::default()
             }),
@@ -278,6 +288,16 @@ pub(super) fn ms_field<'a>(ms: u64, on_change: impl Fn(u64) -> Message + 'a) -> 
     .spacing(4)
     .align_y(Alignment::Center)
     .into()
+}
+
+/// The width of a setting's dropdown on the settings pages and the header, so the dropdowns
+/// on one page line up.
+pub(super) const SETTING_WIDTH: f32 = 260.0;
+
+/// A sentence or more explaining a setting, in the theme's text color softened rather than the
+/// faint grey of captions, and at a size that reads as prose.
+pub(super) fn note<'a>(s: impl text::IntoFragment<'a>) -> iced::widget::Text<'a> {
+    text(s).size(14).style(|theme: &iced::Theme| text::Style { color: Some(theme.extended_palette().background.base.text.scale_alpha(0.7)) })
 }
 
 /// A text input in the app's style.

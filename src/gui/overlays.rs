@@ -49,7 +49,7 @@ fn font_picker<'a>(
             FontChoice::Named(name) => Some(name),
         })
     })
-    .width(200)
+    .width(SETTING_WIDTH)
     .into()
 }
 
@@ -223,7 +223,7 @@ pub(super) fn motion_rows<'a>(set: MotionSet, change: fn(OverlayKind, MotionStyl
             let style = set.get(kind);
             labeled(
                 kind.label(),
-                dropdown(MotionStyle::ALL, Some(style), move |style| change(kind, style)).width(160).into(),
+                dropdown(MotionStyle::ALL, Some(style), move |style| change(kind, style)).width(SETTING_WIDTH).into(),
             )
         })
         .collect()

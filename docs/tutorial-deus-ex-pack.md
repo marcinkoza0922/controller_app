@@ -258,7 +258,7 @@ A flick stick turns the camera by flicking the right stick, instead of holding i
 
 The library is the set of packs that ship with the app, in `packs/`.
 
-1. In a debug build, tick **Library pack** on export, so the game keeps its library ID and installed copies get it as an update.
+1. In a debug build, tick **Release it as the built-in …** on export, so the game keeps its library ID and installed copies get it as an update.
 2. Copy the file into `packs/`, and run `cargo test`. The tests check the format, IDs, names, references, that a rule points at an existing profile, and that at least one profile works on a plain pad.
 3. Rebuild. The build embeds every `.padpack` in `packs/` into the binary. Developers can find the details in the [architecture notes](https://github.com/marcinkoza0922/padwight/blob/main/docs/development/architecture.md).
 

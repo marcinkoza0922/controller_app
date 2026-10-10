@@ -85,22 +85,28 @@ pub fn segments(theme: &Theme) -> container::Style {
     }
 }
 
-/// One segment: the chosen one is a raised chip on the track.
+/// One segment: the chosen one is a raised chip on the track, lighter than the track in either
+/// theme (the page color would be darker than the track in dark mode), with an accent edge.
 pub fn segment(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |theme, status| {
         let p = theme.extended_palette();
         let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+        let chip = if p.is_dark { p.background.strong.color } else { p.background.base.color };
         let background = if selected {
-            Some(p.background.base.color.into())
+            Some(chip.into())
         } else if hovered {
-            Some(p.background.strong.color.into())
+            Some(Color { a: 0.5, ..p.background.strong.color }.into())
         } else {
             None
         };
         button::Style {
             background,
             text_color: if selected { p.primary.base.color } else { p.background.weak.text },
-            border: Border { radius: 6.0.into(), ..Border::default() },
+            border: Border {
+                width: if selected { 1.0 } else { 0.0 },
+                radius: 6.0.into(),
+                color: Color { a: 0.6, ..p.primary.base.color },
+            },
             shadow: if selected {
                 Shadow { color: Color { a: 0.25, ..Color::BLACK }, offset: Vector::new(0.0, 1.0), blur_radius: 3.0 }
             } else {

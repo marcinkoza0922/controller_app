@@ -13,17 +13,21 @@ use crate::{
 
 /// The controller SVG with button letters and mapping-label pills placed over it. (iced's
 /// SVG renderer may not draw SVG text, so text is real widgets pinned at drawing
-/// coordinates; the drawing is shown at 1:1.)
+/// coordinates; the drawing is shown at 1:1.) `opacity` dims the controller alone: the leader
+/// lines and labels stay at full strength.
 pub fn controller_drawing<'a, M: 'a>(
     input: Option<&InputSnapshot>,
     model: Option<PadModel>,
     glyphs: Glyphs,
     labels: &[(Spot, String)],
-    grayed: bool,
+    opacity: f32,
 ) -> Element<'a, M> {
-    let handle = svg::Handle::from_memory(pad_svg::render(input, model, glyphs, labels).into_bytes());
-    let mut layers: Vec<Element<'a, M>> =
-        vec![svg(handle).width(pad_svg::WIDTH).height(pad_svg::HEIGHT).opacity(if grayed { 0.3_f32 } else { 1.0 }).into()];
+    let body = svg::Handle::from_memory(pad_svg::render(input, model, glyphs, &[]).into_bytes());
+    let lines = svg::Handle::from_memory(pad_svg::leaders(labels, model).into_bytes());
+    let mut layers: Vec<Element<'a, M>> = vec![
+        svg(body).width(pad_svg::WIDTH).height(pad_svg::HEIGHT).opacity(opacity).into(),
+        svg(lines).width(pad_svg::WIDTH).height(pad_svg::HEIGHT).into(),
+    ];
 
     for o in pad_svg::overlays(input, model, glyphs) {
         let [r, g, b] = o.color;

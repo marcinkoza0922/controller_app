@@ -982,7 +982,7 @@ impl App {
                     )
                 }))
                 .push(
-                    text(if o.always {
+                    note(if o.always {
                         "Stays on screen whenever the game is active, so actions can't show it. To show it only \
                          sometimes, untick this and map \"Toggle → Show info overlay…\" to a button (the Toggle \
                          can start on, to show the overlay at launch until dismissed)."
@@ -990,9 +990,7 @@ impl App {
                         "Shown when the game is first focused after launching, then fades out. You can also map \
                          \"Show info overlay…\" to a button: it shows while the button is held, or until pressed \
                          again if wrapped in Toggle (which can start on, to keep it up until dismissed)."
-                    })
-                    .size(12)
-                    .color(MUTED_COLOR),
+                    }),
                 )
                 .spacing(4)
                 .into(),
@@ -1170,11 +1168,16 @@ impl App {
         if appearance_open {
             rows.push(style_editor(&menu.style, Rc::new(move |s| Message::SetMenuStyle(mi, s))));
         }
-        if let Some(view) = MenuSession::open(std::slice::from_ref(menu), &menu.name, Opener { buttons: vec![Button::LeftBumper], ..Opener::default() })
+        // The preview sits under the Appearance editor while that's open, to show each change,
+        // and after the items otherwise, so a big menu doesn't push them out of sight.
+        let mut shown = MenuSession::open(std::slice::from_ref(menu), &menu.name, Opener { buttons: vec![Button::LeftBumper], ..Opener::default() })
             .and_then(|s| s.view(std::slice::from_ref(menu)))
-        {
-            let view = crate::menu::MenuView { style: preview_style(&menu.style), ..view };
-            rows.push(preview(crate::overlay::draw::menu_panel(&view, self.preview_font(), self.menu_look(), &crate::overlay::fit::Fit::contents())));
+            .map(|view| {
+                let view = crate::menu::MenuView { style: menu_preview_style(&menu.style), ..view };
+                preview(crate::overlay::draw::menu_panel(&view, self.preview_font(), self.menu_look(), &crate::overlay::fit::Fit::contents()))
+            });
+        if appearance_open && let Some(p) = shown.take() {
+            rows.push(p);
         }
 
         // Items.
@@ -1253,6 +1256,7 @@ impl App {
             );
         }
         rows.push(items.into());
+        rows.extend(shown);
         column(rows).spacing(10).into()
     }
 

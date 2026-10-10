@@ -440,7 +440,7 @@ fn requirement_rows(p: &Profile, f: Feature) -> Vec<Element<'_, Message>> {
     };
     vec![
         checkbox(has).label(format!("Can't be played without {}", f.label())).on_toggle(toggled).into(),
-        text(hint).size(12).color(MUTED_COLOR).into(),
+        note(hint).into(),
     ]
 }
 
@@ -1167,6 +1167,16 @@ impl App {
     }
 
     /// The live controller drawing, labeled with `labels_from`'s mappings.
+    /// Without the daemon the picture is dimmed, as it shows no input. The controller is drawn
+    /// dark, so on a dark window it's dimmed less or it would vanish.
+    fn picture_opacity(&self) -> f32 {
+        match (self.status.is_some(), self.theme().extended_palette().is_dark) {
+            (true, _) => 1.0,
+            (false, true) => 0.65,
+            (false, false) => 0.3,
+        }
+    }
+
     pub(super) fn view_live(&self, labels_from: Option<&Profile>, foldable: bool) -> Element<'_, Message> {
         let caption = match (&self.live, &self.status) {
             (Some(live), _) => match live.gyro {
@@ -1200,6 +1210,12 @@ impl App {
         let labels = labels_from.map(drawing_labels).unwrap_or_default();
         // Without callouts the picture alone doesn't say whether anything is mapped.
         let caption = if labels_from.is_some() && labels.is_empty() { format!("Every input passes through unchanged · {caption}") } else { caption };
+        // A trailing "+" on a callout is too short to explain itself.
+        let caption = if labels.iter().any(|(_, l)| l.ends_with(" +")) {
+            format!("{caption}\n“+”: also does something on a double tap, triple tap or long press")
+        } else {
+            caption
+        };
         column![
             title,
             container(controller_drawing(
@@ -1208,9 +1224,9 @@ impl App {
                     // The picture is the controller itself, so it keeps the controller's own labels.
                     Glyphs { family: pad.family, nintendo_layout: false },
                     &labels,
-                    self.status.is_none(),
+                    self.picture_opacity(),
                 )).center_x(Length::Fill),
-            container(text(caption).size(13).color(MUTED_COLOR)).center_x(Length::Fill),
+            container(text(caption).size(13).color(MUTED_COLOR).align_x(iced::alignment::Horizontal::Center)).center_x(Length::Fill),
         ]
         .spacing(8)
         .into()
