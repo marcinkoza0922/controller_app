@@ -174,7 +174,6 @@ pub(super) fn section_has_problem(p: &Profile, tab: ProfileTab, names: &Names) -
     match tab {
         ProfileTab::Buttons => Button::ALL.into_iter().chain(Button::PADDLES).any(button_bad),
         ProfileTab::Sticks => {
-            let dirs = [Stick::Left, Stick::Right].into_iter().flat_map(Button::stick_directions).any(button_bad);
             let zones = [Analog::Stick(Stick::Left), Analog::Stick(Stick::Right), Analog::Trigger(Trigger::Left), Analog::Trigger(Trigger::Right)]
                 .into_iter()
                 .any(|a| p.zones(a).iter().any(|z| z.min >= z.max || bad(&z.action)));
@@ -183,7 +182,7 @@ pub(super) fn section_has_problem(p: &Profile, tab: ProfileTab, names: &Names) -
                 .any(|t| matches!(p.trigger(t), TriggerAction::Button { action, .. } if bad(action)));
             let rings = [Stick::Left, Stick::Right].into_iter().any(|s| p.stick(s).action.ring_actions().iter().any(bad));
             let two_flicks = [Stick::Left, Stick::Right].into_iter().all(|s| matches!(p.stick(s).action, StickAction::Flick { .. }));
-            dirs || zones || triggers || rings || two_flicks
+            zones || triggers || rings || two_flicks
         }
         ProfileTab::Combos => p.combos.iter().any(|c| c.buttons.len() < 2 || bad(&c.action)),
         ProfileTab::Gyro | ProfileTab::Guide => false,
@@ -492,9 +491,14 @@ mod tests {
 
         let mut p = Profile::passthrough("p");
         assert!(ProfileTab::ALL.iter().all(|t| !section_has_problem(&p, *t, &names)));
-        p.set_button(Button::RightStickUp, missing);
-        assert!(section_has_problem(&p, ProfileTab::Sticks, &names), "stick directions live on the Sticks tab");
+        p.set_button(Button::RightStickUp, missing.clone());
+        assert!(!section_has_problem(&p, ProfileTab::Sticks, &names), "stick directions have no actions to check");
         assert!(!section_has_problem(&p, ProfileTab::Buttons, &names));
+        // A button ring's sector does, and flags the Sticks tab.
+        p.stick_mut(Stick::Right).action = StickAction::ring(8);
+        let StickAction::Ring { actions, .. } = &mut p.stick_mut(Stick::Right).action else { unreachable!() };
+        actions[0] = missing;
+        assert!(section_has_problem(&p, ProfileTab::Sticks, &names), "ring sectors live on the Sticks tab");
         p.combos.push(Combo { buttons: vec![Button::South], action: ButtonAction::Disabled });
         assert!(section_has_problem(&p, ProfileTab::Combos, &names));
     }

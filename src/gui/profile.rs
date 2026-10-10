@@ -277,9 +277,6 @@ pub(super) fn view_profile<'a>(p: &'a Profile, ui: &Ui, tab: ProfileTab, guide: 
             for s in [Stick::Left, Stick::Right] {
                 let base = ui.layer.map_or(p.stick(s), |m| m.base.stick(s));
                 sticks.extend(layer_part(ui, LayerPart::Stick(s), s.to_string(), stick_summary(base), || vec![stick_editor(s, p.stick(s), names, ui.expanded, ui.live_sticks.map(|l| l[usize::from(s == Stick::Right)]))]));
-                for b in Button::stick_directions(s) {
-                    sticks.extend(button_row(p, b, ui));
-                }
             }
             let mut triggers = Vec::new();
             for t in [Trigger::Left, Trigger::Right] {
@@ -293,10 +290,11 @@ pub(super) fn view_profile<'a>(p: &'a Profile, ui: &Ui, tab: ProfileTab, guide: 
                 section(
                     "Sticks",
                     Some(
-                        "Each stick's directions (Left Stick Up, …) also act as buttons on top of the \
-                         stick's mode: give them actions or gestures, or use them in combos \
-                         (e.g. LB + Right Stick Right). They press at the stick's \"Directions press at\" \
-                         threshold."
+                        "A stick's directions (Left Stick Up, …) act as buttons on top of the stick's mode. \
+                         They can't have actions of their own, but they can be used in combos \
+                         (e.g. LB + Right Stick Right), in macros, and as the output of other buttons. \
+                         They press at the stick's \"Directions press at\" threshold. For per-direction \
+                         actions, use a button ring."
                             .into(),
                     ),
                     sticks,
@@ -1496,11 +1494,7 @@ impl App {
             Message::ExpandAll(open) => {
                 let targets: Vec<Target> = match self.profile_tab {
                     ProfileTab::Buttons => Button::ALL.into_iter().chain(Button::PADDLES).map(Target::Button).collect(),
-                    ProfileTab::Sticks => [Stick::Left, Stick::Right]
-                        .into_iter()
-                        .flat_map(Button::stick_directions)
-                        .map(Target::Button)
-                        .collect(),
+                    ProfileTab::Sticks => Vec::new(),
                     ProfileTab::Combos => {
                         (0..self.profile().map_or(0, |p| p.combos.len())).map(Target::Combo).collect()
                     }
@@ -1811,32 +1805,21 @@ mod tests {
     }
 
     #[test]
-    fn stick_direction_buttons_are_editable_validated_and_usable_in_combos() {
+    fn stick_directions_are_combo_members_and_outputs_not_action_holders() {
         let mut app = app();
-        let _ = app.update(Message::NewMacro);
-        let up = Target::Button(Button::RightStickUp);
-        let _ = app.update(Message::SetAction(up, ButtonAction::Macro { name: "Macro".into(), repeat: false }));
-        let _ = app.update(Message::RenameMacro(0, "Hadouken".into()));
-        assert_eq!(
-            app.config.general.profiles[0].button(Button::RightStickUp),
-            &ButtonAction::Macro { name: "Hadouken".into(), repeat: false }
-        );
-        // The key picker writes into a direction, and validation sees direction keys.
-        let down = Target::Button(Button::RightStickDown);
-        let _ = app.update(Message::SetAction(down, ButtonAction::Keys(vec![])));
-        pick(&mut app, KeyField::root(down), false, &["KEY_C"]);
-        assert_eq!(app.config.general.profiles[0].button(Button::RightStickDown), &ButtonAction::Keys(vec!["KEY_C".into()]));
         // Combos accept stick directions as members.
         let _ = app.update(Message::AddCombo);
         let _ = app.update(Message::RemoveComboButton(0, Button::RightBumper));
         let _ = app.update(Message::AddComboButton(0, Button::RightStickRight));
         assert_eq!(app.config.general.profiles[0].combos[0].buttons, [Button::LeftBumper, Button::RightStickRight]);
-
+        // Any button can output a stick direction.
+        let _ = app.update(Message::SetAction(Target::Button(Button::South), ButtonAction::Gamepad(Button::RightStickUp)));
+        assert_eq!(app.config.general.profiles[0].button(Button::South), &ButtonAction::Gamepad(Button::RightStickUp));
+        // Validation still checks the actions that are editable.
         let _ = app.update(Message::SetAction(
-            Target::Button(Button::RightStickLeft),
+            Target::Button(Button::South),
             ButtonAction::Keys(vec!["KEY_NOPE".into()]),
         ));
-        app.config.general.macros[0].steps = vec![MacroStep::Wait(10)];
         assert!(app.validate().unwrap().contains("NOPE"), "{:?}", app.validate());
     }
 
@@ -1883,9 +1866,13 @@ mod tests {
         let _ = app.update(Message::ExpandAll(true));
         assert_eq!(app.expanded.len(), Button::ALL.len() + Button::PADDLES.len());
         let _ = app.update(Message::SelectProfileTab(ProfileTab::Sticks));
+        // The Sticks tab has no button rows to open, so expanding it changes nothing.
         let _ = app.update(Message::ExpandAll(true));
-        assert_eq!(app.expanded.len(), Button::ALL.len() + Button::PADDLES.len() + 8);
+        assert_eq!(app.expanded.len(), Button::ALL.len() + Button::PADDLES.len());
         let _ = app.update(Message::ExpandAll(false));
-        assert_eq!(app.expanded.len(), Button::ALL.len() + Button::PADDLES.len(), "collapse all only touches the current section");
+        assert_eq!(app.expanded.len(), Button::ALL.len() + Button::PADDLES.len());
+        let _ = app.update(Message::SelectProfileTab(ProfileTab::Buttons));
+        let _ = app.update(Message::ExpandAll(false));
+        assert_eq!(app.expanded.len(), 0, "collapse all only touches the current section");
     }
 }
