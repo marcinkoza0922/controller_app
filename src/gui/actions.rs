@@ -271,7 +271,8 @@ pub(super) fn action_editor<'a>(
         dropdown(kinds, Some(kind), move |k| on_change(new_action(k, default_button, &current, &names))).width(200)
     };
     let value = action_value(action, default_button, on_change, field, names);
-    row![kind_picker, value].spacing(8).align_y(Alignment::Start).into()
+    // Where there isn't room beside the kind, the value goes below it.
+    row![kind_picker, value].spacing(8).align_y(Alignment::Start).wrap().vertical_spacing(6).into()
 }
 
 pub(super) fn action_kind(action: &ButtonAction) -> ActionKind {
@@ -385,12 +386,21 @@ fn turbo_editor<'a>(
     };
     let inside = Names { in_turbo: true, ..names.clone() };
     column![
-        text("Repeats while held:").size(12).color(MUTED_COLOR),
-        action_editor(inner, default_button, TURBO_INNER_KINDS, wrap, field.child(0), &inside),
+        wrapped("Repeats while held:", action_editor(inner, default_button, TURBO_INNER_KINDS, wrap, field.child(0), &inside)),
         pace,
     ]
-    .spacing(4)
+    .spacing(6)
     .into()
+}
+
+/// The action a Toggle or Turbo wraps, boxed like a "Several at once" list so it reads as sitting
+/// inside the outer action rather than beside it.
+fn wrapped<'a>(caption: &'a str, inner: Element<'a, Message>) -> Element<'a, Message> {
+    container(column![text(caption).size(12).color(MUTED_COLOR), inner].spacing(4))
+        .padding(8)
+        .width(Length::Fill)
+        .style(style::output_list)
+        .into()
 }
 
 /// An empty picker's note, with a link to the tab that makes what it would pick. `after` is any
@@ -450,27 +460,26 @@ pub(super) fn action_value<'a>(
                 move |on: bool| on_change(ButtonAction::Toggle(Toggled { action: inner.clone(), start_on: on }))
             };
             column![
-                column![
-                    text("Each press turns this on or off:").size(12).color(MUTED_COLOR),
-                    tooltip(
-                        checkbox(start_on).label("On when the game starts").size(14).text_size(12).on_toggle(starting),
-                        container(
-                            text(
-                                "Switched on by itself the first time the game is focused after it starts, \
-                                 e.g. a controls overlay that stays up until this is pressed."
-                            )
-                            .size(13)
+                wrapped(
+                    "Each press turns this on or off:",
+                    action_editor(inner, default_button, TOGGLE_INNER_KINDS, wrap, field.child(0), names),
+                ),
+                tooltip(
+                    checkbox(start_on).label("On when the game starts").size(14).text_size(12).on_toggle(starting),
+                    container(
+                        text(
+                            "Switched on by itself the first time the game is focused after it starts, \
+                             e.g. a controls overlay that stays up until this is pressed."
                         )
-                        .padding(8)
-                        .max_width(320.0)
-                        .style(style::tooltip),
-                        tooltip::Position::Top,
-                    ),
-                ]
-                .spacing(4),
-                action_editor(inner, default_button, TOGGLE_INNER_KINDS, wrap, field.child(0), names),
+                        .size(13)
+                    )
+                    .padding(8)
+                    .max_width(320.0)
+                    .style(style::tooltip),
+                    tooltip::Position::Top,
+                ),
             ]
-            .spacing(4)
+            .spacing(6)
             .into()
         }
         ButtonAction::Turbo { action: inner, rate, every_ms } => {
