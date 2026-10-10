@@ -137,7 +137,7 @@ impl App {
         let now = sample.now.unwrap_or_else(std::time::Instant::now);
         let glyphs = Glyphs { family: self.config.info_glyphs, nintendo_layout: self.nintendo_layout() };
         let view = crate::inputlog::log_view(&sample.entries(None), s, &preview_style(&o.style), glyphs, now);
-        rows.push(preview(crate::overlay::draw::log_panel(&view, self.preview_font(), &crate::motion::Anim::still())));
+        rows.push(preview(crate::overlay::draw::log_panel(&view, self.preview_font(), &crate::overlay::fit::Fit::contents(), &crate::motion::Anim::still())));
         column(rows).spacing(12).into()
     }
 

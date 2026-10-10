@@ -45,6 +45,9 @@ Each menu is a collapsible card on the Menus tab, with a live preview. Under **A
 
 - position: a 3×3 grid of corners, edges and centre, so it fits any screen,
 - size: 50% to 200%,
+- width and height, as percentages of the screen (unset, the overlay fits its contents),
+- x and y offset, as percentages of the screen, to nudge it from its position,
+- max width and max height, as percentages of the screen: past the max width, contents wrap onto the next line and the overlay grows taller; past the max height, contents scroll rather than spill out,
 - colours and opacity for the background, the items and the selected item.
 
 Text switches between light and dark to stay readable against the background.

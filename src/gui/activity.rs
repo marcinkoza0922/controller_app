@@ -25,7 +25,7 @@ impl App {
     /// One feed as a box: its lines, or a hint while there are none.
     fn feed_box<'a>(&self, feed: Option<&LogView>, hint: &'static str) -> Element<'a, Message> {
         match feed {
-            Some(feed) if !feed.lines.is_empty() => crate::overlay::draw::log_panel(feed, self.preview_font(), &crate::motion::Anim::still()),
+            Some(feed) if !feed.lines.is_empty() => crate::overlay::draw::log_panel(feed, self.preview_font(), &crate::overlay::fit::Fit::contents(), &crate::motion::Anim::still()),
             _ => text(hint).size(13).color(MUTED_COLOR).into(),
         }
     }
