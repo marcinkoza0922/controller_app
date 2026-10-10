@@ -44,6 +44,7 @@ mod actions;
 mod activity;
 mod checks;
 mod games;
+mod guide_tab;
 mod items;
 mod layers;
 mod logs;
@@ -158,6 +159,8 @@ struct App {
     picker: Option<KeyPicker>,
     dialog: Option<Dialog>,
     profile_tab: ProfileTab,
+    /// The Guide tab's notes editor, loaded from the profile when the tab is opened.
+    guide_notes: iced::widget::text_editor::Content,
     /// The controller picture is folded away on the Profiles tab.
     picture_hidden: bool,
     /// Rows showing their full editor instead of a one-line summary.
@@ -353,6 +356,7 @@ enum Message {
     CalibrateGyro(String),
     CopyMotionRuleCommand,
     SetGyro(GyroConfig),
+    Guide(guide_tab::GuideMsg),
     SetRequires(Vec<Feature>),
     AddCombo,
     RemoveCombo(usize),
@@ -556,6 +560,7 @@ impl App {
             picker: None,
             dialog: None,
             profile_tab: ProfileTab::Buttons,
+            guide_notes: iced::widget::text_editor::Content::new(),
             picture_hidden: false,
             expanded: HashSet::new(),
             finding: false,

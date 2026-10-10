@@ -1,5 +1,33 @@
 # Guide button as a shift key
 
+## Revised design (interview, 2026-10-09)
+
+This supersedes the sections below where they conflict.
+
+Stage 1 (toggle, chords, overlay shortcuts) is implemented in `src/engine.rs` (`guide_button`, `other_button_pressed`). Stage 2 (mouse mode) is implemented too: `Layer::mouse()` in `src/config.rs`, turned on by `enters_mouse_mode` in the engine.
+
+Stage 3 is implemented:
+- The centre menu is `src/guide_menu.rs`. The engine delivers D-pad, left stick, A and B while the overlay is up (`take_guide_nav`), and the daemon moves the cursor and runs the item (`guide_keys`, `guide_choose`).
+- The Notes and Mappings overlays are built in `info::guide_overlays` from the profile. Mapping rows come from `config::guide` (`editable_rows`, `mapping_rows`). Rows cover buttons, triggers and sticks, keyed by `GuideInput` (`button:South`, `trigger:Left`, `stick:Right`). Overrides, hidden rows and merged rows are stored per profile, and rows follow the mappings.
+- The Guide tab is `src/gui/guide_tab.rs`.
+- The built-in Guide and Mouse layers are static definitions (`built_in_layer`). They're never stored in a game, so they're fixed and they don't appear on the Layers tab. Packs carry no Guide layer, and references to the built-ins are never reported as missing.
+- The Guide button's own mapping is ignored by the engine. Templates no longer add a Guide double-tap gesture, and the Buttons tab has no Guide row.
+- The manual page and README describe the new behaviour.
+- Not verified on a real controller, or visually in the overlay window. The Steam overlay sends press and release in one batch; check that Steam reacts to it.
+
+- **Tap Guide** toggles the Guide overlay when Guide is let go, not when it goes down. It has to wait for release, because a chord must not open the overlay. Pressing Guide again closes it. Guide never reaches the game or Steam, whatever the profile maps it to. Hold-to-open is gone, so power buttons are safe.
+- **Guide + button chords** still work. Holding Guide and pressing a shortcut fires it without opening the overlay; the overlay opens on release only when Guide was tapped alone.
+- **Any button press while the overlay is open** closes it, except the menu buttons (D-pad, left stick, A and B), which drive the menu. A Guide shortcut still runs as well (Y closes the overlay and opens the numpad).
+- **Shortcuts inside the open overlay** work too. With the overlay up, pressing a shortcut button (e.g. Y) closes the overlay and runs the shortcut (opens the numpad).
+- **Fixed Guide shortcuts** (bindable elsewhere too): X keyboard, Y numpad, LB media, RB screenshot, L3 record, Select held 2 s force quit.
+- **Steam double tap is removed.** Steam is reached from the overlay menu, shown only while Steam runs.
+- **Mouse mode** is entered with Guide + R3, or R3 while the overlay is open. It's a built-in layer (`MOUSE_LAYER`, "Mouse mode") that swallows unbound buttons, so only its own bindings act. Pressing Guide exits it, and it doesn't open the overlay. Profile switches and the keyboard overlay leave it on. Assumed: its left and right triggers click, as on the Guide layer. Right stick moves the cursor, left stick scrolls, left stick click is M3, bumpers are M4/M5, D-pad right/down/left send Enter/Tab/Escape, and D-pad up is a shift in mouse mode. In mouse mode, X sends Ctrl, Y sends Alt, and B sends Delete. Outside mouse mode B keeps its normal jobs (overlay back, and the Select hold for force quit is unaffected). Guide exits mouse mode back to the chosen profile. Clicks stay on RT/LT (assumed).
+- **Overlay layout.** Left centre: Notes (plain text, per profile). Centre: menu (Quick Settings, profile switch, keyboard/numpad, mouse mode, media controls, Steam overlay). Right centre: Mappings, generated from the profile, with label overrides, hidden rows, and rows merged by picking inputs.
+- **Chord list** is shown in the bottom left corner of the screen while Guide or mouse mode is active.
+- **Navigation.** D-pad and left stick both move the highlight; A picks, B goes back.
+- **Tab.** A Guide tab per profile, moved out of the Layers tab.
+- **Breaking changes are accepted.** No migration of existing Guide configs is needed.
+
 Status: steps 1–2 implemented (2026-10-07): the swallow option, the default
 Guide layer without Screenshot, ForceQuit and ToggleRecording (L3, RB and B are unbound in it
 for now), and the migration. Step 3 (`Screenshot`, in `src/capture.rs`) and `ForceQuit` (`src/quit.rs`, B held 2 s) are done too; `ToggleRecording` (`src/record.rs`, L3) is written but untried against a real gpu-screen-recorder; the packs are still to do.

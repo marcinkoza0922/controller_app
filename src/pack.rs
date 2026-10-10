@@ -118,7 +118,7 @@ impl Pack {
 
     /// The game this pack makes, before any clash handling.
     pub fn to_game(&self) -> Game {
-        let mut game = Game {
+        Game {
             name: self.pack.name.clone(),
             pack: self.info(),
             origin: None,
@@ -137,9 +137,7 @@ impl Pack {
             nintendo_layout: self.nintendo_layout,
             sounds: self.sounds,
             motion: self.motion,
-        };
-        game.ensure_guide_layer();
-        game
+        }
     }
 
     pub fn to_toml(&self) -> Result<String> {
@@ -249,9 +247,12 @@ fn references(profiles: &[Profile], menus: &[Menu], macros: &[Macro], layers: &[
     refs
 }
 
-/// Every (kind, name) a game's own items refer to.
+/// Every (kind, name) a game's own items refer to. Built-in layers always resolve, so they're left out.
 pub(crate) fn game_references(g: &Game) -> BTreeSet<(ItemKind, String)> {
     references(&g.profiles, &g.menus, &g.macros, &g.layers)
+        .into_iter()
+        .filter(|(kind, name)| !(*kind == ItemKind::Layer && crate::config::built_in_layer(name).is_some()))
+        .collect()
 }
 
 /// What copying the `kind` item `name` out of `source` has to bring: the item itself (first)

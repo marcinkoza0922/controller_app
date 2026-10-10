@@ -85,6 +85,55 @@ pub fn layer_sheet(layer: &Layer) -> InfoOverlay {
     }
 }
 
+/// The `{token}` that draws an input's glyph.
+fn input_token(input: crate::config::GuideInput) -> Option<&'static str> {
+    use crate::config::{GuideInput, Stick, Trigger};
+    match input {
+        GuideInput::Button(b) => button_token(b),
+        GuideInput::Trigger(Trigger::Left) => Some("lt"),
+        GuideInput::Trigger(Trigger::Right) => Some("rt"),
+        GuideInput::Stick(Stick::Left) => Some("ls"),
+        GuideInput::Stick(Stick::Right) => Some("rs"),
+    }
+}
+
+/// The Notes and Mappings overlays of the Guide overlay, for `profile`. Notes are left out when
+/// the author wrote none. Mappings are one row per line of [`crate::config::mapping_rows`]: the
+/// glyphs of its buttons, then its text.
+pub fn guide_overlays(profile: &crate::config::Profile) -> Vec<InfoOverlay> {
+    let mut overlays = Vec::new();
+    if !profile.guide.notes.trim().is_empty() {
+        overlays.push(InfoOverlay {
+            name: "guide notes".into(),
+            always: true,
+            on_start: None,
+            linger: None,
+            current_input: Default::default(),
+            style: OverlayStyle { position: ScreenPosition::CenterLeft, ..OverlayStyle::info() },
+            title: Some("Notes".into()),
+            rows: profile.guide.notes.lines().map(|line| vec![line.to_string()]).collect(),
+        });
+    }
+    let rows = crate::config::mapping_rows(profile)
+        .into_iter()
+        .map(|row| {
+            let glyphs: Vec<String> = row.inputs.iter().filter_map(|i| input_token(*i)).map(|t| format!("{{{t}}}")).collect();
+            vec![row.shape.join(&glyphs), row.text]
+        })
+        .collect();
+    overlays.push(InfoOverlay {
+        name: "guide mappings".into(),
+        always: true,
+        on_start: None,
+        linger: None,
+        current_input: Default::default(),
+        style: OverlayStyle { position: ScreenPosition::CenterRight, ..OverlayStyle::info() },
+        title: Some("Mappings".into()),
+        rows,
+    });
+    overlays
+}
+
 /// Whose button names and symbols to show.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum PadFamily {
@@ -954,6 +1003,21 @@ fn detect_form(product: &str, vendor: &str, chassis: &str) -> FormFactor {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn the_guide_overlays_show_notes_only_when_there_are_some() {
+        use crate::config::{ButtonAction, Profile};
+        let mut p = Profile::passthrough("p");
+        p.set_button(crate::config::Button::South, ButtonAction::Keys(vec!["KEY_E".into()]));
+        let overlays = super::guide_overlays(&p);
+        assert_eq!(overlays.len(), 1, "no notes, so only the mappings");
+        assert_eq!(overlays[0].name, "guide mappings");
+        assert!(overlays[0].rows.iter().any(|r| r == &vec!["{south}".to_string(), "E".to_string()]));
+        p.guide.notes = "Hold LB for the radial menu.\nEsc is Start.".into();
+        let overlays = super::guide_overlays(&p);
+        assert_eq!(overlays[0].name, "guide notes");
+        assert_eq!(overlays[0].rows.len(), 2, "one row per line");
+    }
+
+    #[test]
     fn the_guide_layer_sheet_lists_what_it_binds() {
         let sheet = layer_sheet(&Layer::guide());
         let cells: Vec<&String> = sheet.rows.iter().flatten().collect();
@@ -964,9 +1028,7 @@ mod tests {
         pair("{west}", "On-screen keyboard");
         pair("{north}", "On-screen numpad");
         pair("{rb}", "Screenshot");
-        pair("{rt}", "Left click");
-        pair("{rs}", "Move the mouse");
-        pair("{down}", "Tab");
+        pair("{select}", "Force quit focused window (hold)");
         pair("{guide} + {start}", "Edit controls");
         assert!(sheet.rows.iter().all(|r| r.len() % 2 == 0 && r.len() <= 4));
         assert!(!cells.iter().any(|c| c.as_str() == "{south}"), "swallowed buttons aren't listed");

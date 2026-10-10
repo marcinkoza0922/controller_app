@@ -2,12 +2,14 @@ use std::{
     collections::BTreeMap,
     fmt,
     path::{Path, PathBuf},
+    sync::LazyLock,
 };
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use crate::{motion::MotionSet, sound::SoundSet};
 
+mod guide;
 mod log;
 mod store;
 mod summary;
@@ -15,6 +17,7 @@ pub use summary::{Keyword, Piece};
 mod touchpad;
 mod window_game;
 
+pub use guide::*;
 pub use log::*;
 pub use touchpad::*;
 
@@ -163,7 +166,7 @@ impl fmt::Display for Button {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Stick {
     Left,
     Right,
@@ -178,7 +181,7 @@ impl fmt::Display for Stick {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Trigger {
     Left,
     Right,
@@ -875,17 +878,10 @@ impl ButtonAction {
         }
     }
 
-    /// What the Guide button does by default: holds the Guide layer. The app owns Guide while
-    /// it runs; a double tap (see `Profile::take_guide`) is how Steam gets it.
+    /// What the Guide button's mapping says. The engine ignores it: Guide is built in (see the
+    /// Guide overlay), so this only matters to older files.
     pub fn guide_hold() -> Self {
         ButtonAction::Layer(GUIDE_LAYER.into())
-    }
-
-    /// Whether this action (or one inside a `Multi`) holds the layer called `name`.
-    pub fn holds_layer(&self, name: &str) -> bool {
-        let mut found = false;
-        self.walk(&mut |a| found |= matches!(a, ButtonAction::Layer(n) if n == name));
-        found
     }
 
     pub fn key_names(&self) -> Vec<&String> {
@@ -936,7 +932,7 @@ fn default_long_press_ms() -> u64 {
     500
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum GestureKind {
     DoubleTap,
     TripleTap,
@@ -1383,31 +1379,74 @@ pub struct Layer {
 /// The name of the layer Guide holds by default.
 pub const GUIDE_LAYER: &str = "Guide";
 
+/// The name of the built-in layer that mouse mode turns on (see the engine).
+pub const MOUSE_LAYER: &str = "Mouse mode";
+
+static GUIDE_BUILT_IN: LazyLock<Layer> = LazyLock::new(Layer::guide);
+static MOUSE_BUILT_IN: LazyLock<Layer> = LazyLock::new(Layer::mouse);
+
+/// The built-in layer called `name`, if there is one. These are fixed: every game has them, and
+/// they're never stored in a game, so they can't be edited or deleted.
+pub fn built_in_layer(name: &str) -> Option<&'static Layer> {
+    match name {
+        GUIDE_LAYER => Some(&GUIDE_BUILT_IN),
+        MOUSE_LAYER => Some(&MOUSE_BUILT_IN),
+        _ => None,
+    }
+}
+
+/// Every built-in layer.
+pub fn built_in_layers() -> [&'static Layer; 2] {
+    [&GUIDE_BUILT_IN, &MOUSE_BUILT_IN]
+}
+
 impl Layer {
-    /// The default Guide layer: system shortcuts on the face buttons, D-pad and triggers, the
-    /// right stick as a mouse, and everything else swallowed.
+    /// The default Guide layer: the system shortcuts on the Guide chords, and everything else
+    /// swallowed. Mouse mode (see [`Layer::mouse`]) has the mouse and the D-pad keys.
     pub fn guide() -> Self {
         use ButtonAction::*;
-        let key = |k: &str| Keys(vec![k.into()]);
         let mut layer = Self::new(GUIDE_LAYER);
         layer.indicator = Indicator::Bindings;
         layer.indicator_style = OverlayStyle::sheet();
-        layer.indicator_title = Some("Hold {guide} and press".into());
+        layer.indicator_title = Some("Guide shortcuts".into());
         layer.indicator_delay_ms = 100;
         layer.swallow_unbound = true;
         layer.buttons = BTreeMap::from([
-            (Button::East, ForceQuit),
+            (Button::Select, ForceQuit),
             (Button::LeftStick, ToggleRecording),
             (Button::RightBumper, Screenshot),
             (Button::LeftBumper, ToggleMedia),
             (Button::West, ToggleOverlay),
             (Button::North, ToggleNumpad),
+        ]);
+        layer
+    }
+
+    /// Mouse mode: the controller acts as a mouse and a keyboard for clicking, typing and
+    /// scrolling. Only the inputs set here do anything, so the game underneath gets nothing.
+    pub fn mouse() -> Self {
+        use ButtonAction::*;
+        let key = |k: &str| Keys(vec![k.into()]);
+        let mut layer = Self::new(MOUSE_LAYER);
+        layer.indicator = Indicator::Bindings;
+        layer.indicator_style = OverlayStyle::sheet();
+        layer.indicator_title = Some("Mouse mode: press {guide} to exit".into());
+        layer.swallow_unbound = true;
+        layer.buttons = BTreeMap::from([
+            (Button::DpadUp, key("KEY_LEFTSHIFT")),
             (Button::DpadRight, key("KEY_ENTER")),
             (Button::DpadDown, key("KEY_TAB")),
             (Button::DpadLeft, key("KEY_ESC")),
+            (Button::West, key("KEY_LEFTCTRL")),
+            (Button::North, key("KEY_LEFTALT")),
+            (Button::East, key("KEY_DELETE")),
+            (Button::LeftStick, Mouse(MouseButton::Middle)),
+            (Button::LeftBumper, Mouse(MouseButton::Back)),
+            (Button::RightBumper, Mouse(MouseButton::Forward)),
         ]);
         layer.left_trigger = Some(TriggerAction::Button { action: Mouse(MouseButton::Right), threshold: 0.3 }.into());
         layer.right_trigger = Some(TriggerAction::Button { action: Mouse(MouseButton::Left), threshold: 0.3 }.into());
+        layer.left_stick = Some(StickConfig::new(StickAction::Scroll { speed: 15.0, invert_y: false }, 0.15, 2.0));
         layer.right_stick = Some(StickConfig::new(StickAction::mouse(1600.0), 0.1, 2.0));
         layer
     }
@@ -1422,18 +1461,6 @@ pub fn combo_key(buttons: &[Button]) -> Vec<Button> {
 }
 
 impl Layer {
-    /// Fills in what this layer leaves unset of the built-in Guide layer: each button it doesn't
-    /// bind, and its triggers and right stick if it has none. What it does set stays.
-    pub fn complete_guide(&mut self) {
-        let built_in = Layer::guide();
-        for (button, action) in built_in.buttons {
-            self.buttons.entry(button).or_insert(action);
-        }
-        self.left_trigger = self.left_trigger.take().or(built_in.left_trigger);
-        self.right_trigger = self.right_trigger.take().or(built_in.right_trigger);
-        self.right_stick = self.right_stick.take().or(built_in.right_stick);
-    }
-
     pub fn new(name: &str) -> Self {
         Layer {
             name: name.into(),
@@ -1787,6 +1814,9 @@ pub struct Profile {
     /// The touchpad's click and what finger movement does, for controllers that have one.
     #[serde(default, skip_serializing_if = "TouchpadConfig::is_default")]
     pub touchpad: TouchpadConfig,
+    /// What the Guide overlay shows: notes, and how its Mappings list is edited.
+    #[serde(default, skip_serializing_if = "GuideSettings::is_default")]
+    pub guide: GuideSettings,
 }
 
 impl Profile {
@@ -1894,16 +1924,11 @@ impl Profile {
         }
     }
 
-    /// Whether Guide holds the Guide layer.
-    pub fn holds_guide_layer(&self) -> bool {
-        self.button(Button::Guide).holds_layer(GUIDE_LAYER)
-    }
-
-    /// Makes Guide hold the Guide layer, with a double tap sending Guide on to Steam.
+    /// Sets Guide to the built-in mapping. The engine doesn't read it (Guide opens the Guide
+    /// overlay), so it has no gestures: Steam is reached from the overlay's menu.
     pub fn take_guide(&mut self) {
         self.set_button(Button::Guide, ButtonAction::guide_hold());
-        let gestures = self.gestures.entry(Button::Guide).or_default();
-        gestures.double_tap = Some(ButtonAction::Gamepad(Button::Guide));
+        self.gestures.remove(&Button::Guide);
     }
 
     /// This profile with `layers` on top, oldest first: later ones win.
@@ -1943,6 +1968,7 @@ impl Profile {
             gyro: GyroConfig::default(),
             requires: Vec::new(),
             touchpad: TouchpadConfig::default(),
+            guide: GuideSettings::default(),
         };
         p.take_guide();
         p
@@ -2130,6 +2156,7 @@ impl Profile {
             gyro: GyroConfig::default(),
             requires: Vec::new(),
             touchpad: TouchpadConfig::default(),
+            guide: GuideSettings::default(),
         };
         p.take_guide();
         p
@@ -2376,10 +2403,9 @@ pub struct Game {
 }
 
 impl Game {
-    /// A game with these profiles. If any of them has Guide hold the Guide layer, the game
-    /// gets that layer too, so the binding never points at nothing.
+    /// A game with these profiles and no items of its own.
     pub fn new(name: &str, profiles: Vec<Profile>) -> Self {
-        let mut game = Game {
+        Game {
             name: name.into(),
             pack: PackInfo::default(),
             origin: None,
@@ -2398,25 +2424,17 @@ impl Game {
             nintendo_layout: None,
             sounds: None,
             motion: None,
-        };
-        if game.profiles.iter().any(Profile::holds_guide_layer) {
-            game.ensure_guide_layer();
         }
-        game
     }
 
     pub fn profile(&self, name: &str) -> Option<&Profile> {
         self.profiles.iter().find(|p| p.name == name)
     }
 
-    /// Gives the game the Guide layer, so holding Guide always has the system features (the
-    /// on-screen keyboard and numpad, the media controls, screenshots, recording, and so on).
-    /// A game's own Guide layer keeps what it sets and gets the rest of the built-in one.
-    pub fn ensure_guide_layer(&mut self) {
-        match self.layers.iter_mut().find(|l| l.name == GUIDE_LAYER) {
-            Some(layer) => layer.complete_guide(),
-            None => self.layers.push(Layer::guide()),
-        }
+    /// Drops any built-in layer a file stored in the game. They're never stored: every game has
+    /// them, fixed (see [`built_in_layer`]).
+    pub fn strip_built_in_layers(&mut self) {
+        self.layers.retain(|l| built_in_layer(&l.name).is_none());
     }
 
     /// Points every reference to the macro, menu or info overlay `old` (of `kind`) at `new`:
@@ -2448,7 +2466,7 @@ impl Game {
 
     /// Its layers named in `active` (oldest first), skipping names it has none of.
     pub fn layers_named<'a>(&'a self, active: &'a [String]) -> impl Iterator<Item = &'a Layer> {
-        active.iter().filter_map(|n| self.layers.iter().find(|l| &l.name == n))
+        active.iter().filter_map(|n| self.layers.iter().find(|l| &l.name == n).or_else(|| built_in_layer(n)))
     }
 }
 
@@ -2752,7 +2770,7 @@ impl Config {
         let mut config: Config = toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
         store::load(store::root_of(path), &mut config)?;
         for game in config.games.iter_mut().chain(std::iter::once(&mut config.general)) {
-            game.ensure_guide_layer();
+            game.strip_built_in_layers();
         }
         Ok(config)
     }
@@ -2765,10 +2783,9 @@ impl Config {
     pub fn save_to(&self, path: &Path) -> Result<()> {
         let root = store::root_of(path);
         std::fs::create_dir_all(root)?;
-        // Every game is saved with the Guide layer, including ones made in the settings window.
         let mut config = self.clone();
         for game in config.games.iter_mut().chain(std::iter::once(&mut config.general)) {
-            game.ensure_guide_layer();
+            game.strip_built_in_layers();
         }
         store::save(root, &config)?;
         // Write-then-rename so the daemon never reads a half-written file.
@@ -2957,7 +2974,7 @@ impl Config {
             menus: merge(menus, &self.shared.menus, |m| &m.name),
             info: merge(info, &self.shared.info, |o| &o.name),
             logs: merge(logs, &self.shared.logs, |o| &o.name),
-            layers: game.map(|g| g.layers.iter().collect()).unwrap_or_default(),
+            layers: game.map(|g| g.layers.iter().chain(built_in_layers()).collect()).unwrap_or_default(),
         }
     }
 
@@ -2996,27 +3013,26 @@ mod tests {
     }
 
     #[test]
-    fn every_game_gets_the_system_features_of_guide() {
-        let built_in = Layer::guide();
-        // A game with no Guide layer gets the whole built-in one.
-        let mut bare = Game::new("Bare", Vec::new());
-        bare.ensure_guide_layer();
-        assert_eq!(bare.layers.iter().find(|l| l.name == GUIDE_LAYER), Some(&built_in));
-        // A game's own Guide layer keeps what it sets, and gets the rest.
+    fn built_in_layers_are_never_stored_but_every_game_has_them() {
+        // A stored copy of a built-in layer is dropped, and the user's own layers stay.
         let mut own = Layer::new(GUIDE_LAYER);
         own.buttons.insert(Button::East, ButtonAction::Keys(vec!["KEY_Q".into()]));
         let mut game = Game::new("Own", Vec::new());
-        game.layers = vec![own];
-        game.ensure_guide_layer();
-        let layer = game.layers.iter().find(|l| l.name == GUIDE_LAYER).unwrap();
-        assert_eq!(layer.buttons.get(&Button::East), Some(&ButtonAction::Keys(vec!["KEY_Q".into()])));
-        assert_eq!(layer.buttons.get(&Button::LeftBumper), Some(&ButtonAction::ToggleMedia));
-        assert!(layer.left_trigger.is_some() && layer.right_stick.is_some());
-        // Setting a button to nothing counts as setting it, so it stays off.
-        let mut off = Layer::new(GUIDE_LAYER);
-        off.buttons.insert(Button::LeftBumper, ButtonAction::Disabled);
-        off.complete_guide();
-        assert_eq!(off.buttons.get(&Button::LeftBumper), Some(&ButtonAction::Disabled));
+        game.layers = vec![own, Layer::new("Mine")];
+        game.strip_built_in_layers();
+        assert_eq!(game.layers.iter().map(|l| l.name.as_str()).collect::<Vec<_>>(), ["Mine"]);
+        // Every game's scope has both, unchanged.
+        let mut config = Config::default();
+        config.games.push(game);
+        config.games[0].layers.clear();
+        let scope = config.scope_of(config.games.first());
+        let names: Vec<&str> = scope.layers.iter().map(|l| l.name.as_str()).collect();
+        assert!(names.contains(&GUIDE_LAYER) && names.contains(&MOUSE_LAYER), "{names:?}");
+        let guide = scope.layers.iter().find(|l| l.name == GUIDE_LAYER).unwrap();
+        assert_eq!(**guide, Layer::guide());
+        // Naming them in a layered profile finds them too.
+        let active = [GUIDE_LAYER.to_string()];
+        assert_eq!(config.games[0].layers_named(&active).count(), 1);
     }
 
     #[test]
@@ -3205,19 +3221,15 @@ key_threshold = 0.2
             }
             // Guide always opens the Guide layer, which holds the system shortcuts.
             assert_eq!(p.button(Button::Guide), &ButtonAction::guide_hold(), "{}", p.name);
-            assert_eq!(
-                p.gestures.get(&Button::Guide).and_then(|g| g.double_tap.as_ref()),
-                Some(&ButtonAction::Gamepad(Button::Guide)),
-                "{}: a double tap reaches Steam",
-                p.name
-            );
+            assert!(!p.gestures.contains_key(&Button::Guide), "{}: Guide has no gestures", p.name);
         }
     }
 
     #[test]
     fn default_config_has_the_guide_layer_and_roundtrips() {
         let config = Config::default();
-        assert!(config.general.layers.iter().any(|l| l.name == GUIDE_LAYER));
+        assert!(config.general.layers.is_empty(), "built-in layers aren't stored");
+        assert!(config.scope().layers.iter().any(|l| l.name == GUIDE_LAYER));
         let text = toml::to_string_pretty(&config).unwrap();
         assert_eq!(toml::from_str::<Config>(&text).unwrap(), config);
     }
@@ -3573,7 +3585,7 @@ key_threshold = 0.2
         config.general.profiles[0].set_button(Button::LeftBumper, ButtonAction::Layer("A".into()));
         let back: Config = toml::from_str(&toml::to_string_pretty(&config).unwrap()).unwrap();
         assert_eq!(back, config);
-        assert_eq!(config.scope().layers.len(), 2);
+        assert_eq!(config.general.layers.len(), 2);
         assert_eq!(config.general.layers_named(&["B".into(), "Nope".into()]).map(|l| l.name.as_str()).collect::<Vec<_>>(), ["B"]);
         config.general.rename_refs(ItemKind::Layer, "A", "Alpha");
         assert_eq!(config.general.profiles[0].button(Button::LeftBumper), &ButtonAction::Layer("Alpha".into()));

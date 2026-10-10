@@ -61,7 +61,7 @@ fn a_double_tap_gesture_is_set_from_the_gestures_page() {
 #[test]
 fn a_layer_button_is_bound_from_the_layers_page() {
     let mut config = Config::default();
-    assert!(!config.general.layers.is_empty(), "General should have the Guide layer");
+    config.general.layers.push(crate::config::Layer::new("Mine"));
     let mut editor = LayoutEditor::new();
     editor.cursor = top_index(Top::Layers);
     editor.choose(&mut config);

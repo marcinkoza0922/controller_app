@@ -63,6 +63,12 @@ fn gyro() -> String {
     ))
 }
 
+/// The Guide button: a ring with a centre dot.
+fn guide() -> String {
+    let c = hex(INK);
+    svg_of(&format!("<circle cx='12' cy='12' r='9' fill='none' stroke='{c}' stroke-width='2'/><circle cx='12' cy='12' r='3' fill='{c}'/>"))
+}
+
 /// Two sliders: settings.
 fn details() -> String {
     let c = hex(INK);
@@ -100,6 +106,7 @@ impl ProfileTab {
             ProfileTab::Sticks => stick(),
             ProfileTab::Combos => chord(),
             ProfileTab::Gyro => gyro(),
+            ProfileTab::Guide => guide(),
         };
         tab_svg(text)
     }

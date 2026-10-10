@@ -5,6 +5,7 @@ use iced::widget::{Column, column, rich_text, row, span};
 use super::*;
 use crate::config::{FlickVertical, MouseResponse};
 use crate::info::Glyphs;
+use super::guide_tab::{self, GuideView};
 use crate::pad_widget::controller_drawing;
 
 /// Sections of the profile editor.
@@ -14,6 +15,7 @@ pub(super) enum ProfileTab {
     Sticks,
     Combos,
     Gyro,
+    Guide,
 }
 
 /// What the free view functions need to know about the app beyond the profile itself.
@@ -244,7 +246,7 @@ pub(super) fn drawing_labels(p: &Profile) -> Vec<(pad_svg::Spot, String)> {
 }
 
 #[expect(clippy::too_many_lines, reason = "predates the size lints")]
-pub(super) fn view_profile<'a>(p: &'a Profile, ui: &Ui, tab: ProfileTab) -> Element<'a, Message> {
+pub(super) fn view_profile<'a>(p: &'a Profile, ui: &Ui, tab: ProfileTab, guide: GuideView<'a>) -> Element<'a, Message> {
     let names = ui.names;
     let sections: Vec<Element<'a, Message>> = match tab {
         ProfileTab::Buttons => vec![
@@ -318,6 +320,7 @@ pub(super) fn view_profile<'a>(p: &'a Profile, ui: &Ui, tab: ProfileTab) -> Elem
             }
             sections
         }
+        ProfileTab::Guide => guide_tab::sections(p, guide, ui.layer.is_some()),
         ProfileTab::Gyro => {
             let base = ui.layer.map_or(&p.gyro, |m| &m.base.gyro);
             let summary = match base.mode {
@@ -367,7 +370,7 @@ pub(super) fn base_combos<'a>(marks: LayerMarks<'_>) -> Element<'a, Message> {
 }
 
 impl ProfileTab {
-    pub(super) const ALL: [ProfileTab; 4] = [ProfileTab::Buttons, ProfileTab::Sticks, ProfileTab::Combos, ProfileTab::Gyro];
+    pub(super) const ALL: [ProfileTab; 5] = [ProfileTab::Buttons, ProfileTab::Sticks, ProfileTab::Combos, ProfileTab::Gyro, ProfileTab::Guide];
 }
 
 impl fmt::Display for ProfileTab {
@@ -377,6 +380,7 @@ impl fmt::Display for ProfileTab {
             ProfileTab::Sticks => "Sticks & triggers",
             ProfileTab::Combos => "Combos",
             ProfileTab::Gyro => "Gyro",
+            ProfileTab::Guide => "Guide",
         })
     }
 }
@@ -659,7 +663,8 @@ pub(super) fn button_rows<'a>(p: &'a Profile, ui: &Ui) -> Vec<Element<'a, Messag
             value_slider("Long press after", 200.0..=1500.0, p.long_press_ms as f32, 50.0, "ms", Message::SetLongPress),
         ]
     };
-    for b in Button::ALL {
+    // Guide is built in: the Guide tab says what it does, so it has no row here.
+    for b in Button::ALL.into_iter().filter(|b| *b != Button::Guide) {
         rows.extend(button_row(p, b, ui));
     }
     rows
@@ -1352,6 +1357,7 @@ impl App {
             Message::EditProfile(name) => {
                 if let Some(i) = self.game().profiles.iter().position(|p| p.name == name) {
                     self.editing = i;
+                    self.reload_guide_notes();
                 }
             }
             Message::RenameProfile(name) => {
@@ -1382,10 +1388,6 @@ impl App {
                     }
                     other => other.make(&name),
                 };
-                // A profile whose Guide holds the Guide layer needs the game to have it.
-                if profile.holds_guide_layer() {
-                    self.game_mut().ensure_guide_layer();
-                }
                 self.game_mut().profiles.push(profile);
                 self.editing = self.game().profiles.len() - 1;
             }
@@ -1474,7 +1476,11 @@ impl App {
             Message::SelectProfileTab(tab) => {
                 self.profile_tab = tab;
                 self.found = None;
+                if tab == ProfileTab::Guide {
+                    self.reload_guide_notes();
+                }
             }
+            Message::Guide(msg) => self.update_guide(msg),
             Message::TogglePicture => self.picture_hidden = !self.picture_hidden,
             Message::ToggleExpanded(target) => {
                 if !self.expanded.remove(&target) {
@@ -1498,7 +1504,7 @@ impl App {
                     ProfileTab::Combos => {
                         (0..self.profile().map_or(0, |p| p.combos.len())).map(Target::Combo).collect()
                     }
-                    ProfileTab::Gyro => Vec::new(),
+                    ProfileTab::Gyro | ProfileTab::Guide => Vec::new(),
                 };
                 for t in targets {
                     if open {
@@ -1649,6 +1655,7 @@ impl App {
         }
         col = col.push(row![find].align_y(Alignment::Center)).push(tabs);
 
+        let guide = GuideView { notes: &self.guide_notes };
         let ui = Ui {
             names,
             expanded: &self.expanded,
@@ -1661,7 +1668,7 @@ impl App {
             nintendo_layout: self.nintendo_layout(),
             layer,
         };
-        col.push(view_profile(p, &ui, self.profile_tab)).into()
+        col.push(view_profile(p, &ui, self.profile_tab, guide)).into()
     }
 
     /// The live controller drawing, labelled with `labels_from`'s mappings.
