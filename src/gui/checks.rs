@@ -186,7 +186,7 @@ pub(super) fn section_has_problem(p: &Profile, tab: ProfileTab, names: &Names) -
             dirs || zones || triggers || rings || two_flicks
         }
         ProfileTab::Combos => p.combos.iter().any(|c| c.buttons.len() < 2 || bad(&c.action)),
-        ProfileTab::Gyro => false,
+        ProfileTab::Gyro | ProfileTab::Guide => false,
     }
 }
 

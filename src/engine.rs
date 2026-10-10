@@ -11,8 +11,8 @@ use evdev::KeyCode;
 
 use crate::{
     config::{
-        Analog, Button, ButtonAction, GestureKind, GyroActivation, GyroConfig, GyroHorizontal, GyroInput, GyroMode,
-        Macro, MacroStep, Menu, Profile, Stick, StickAction, Toggled, Trigger, TriggerAction,
+        Analog, Button, ButtonAction, GUIDE_LAYER, GestureKind, MOUSE_LAYER, GyroActivation, GyroConfig, GyroHorizontal, GyroInput,
+        GyroMode, Macro, MacroStep, Menu, Profile, Stick, StickAction, Toggled, Trigger, TriggerAction,
     },
     input::{Axis, InputEvent, MotionSample},
     output::OutEvent,
@@ -37,6 +37,9 @@ const WHEEL_REPEAT_DELAY: f32 = 0.35;
 const WHEEL_REPEAT_RATE: f32 = 10.0;
 /// Time constant (seconds) for smoothing the accelerometer tilt used by gyro steering.
 const TILT_SMOOTHING: f32 = 0.05;
+/// Holding a Guide menu direction repeats it: after this delay, then at this interval.
+const GUIDE_REPEAT_DELAY: Duration = Duration::from_millis(400);
+const GUIDE_REPEAT_RATE: Duration = Duration::from_millis(125);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum Source {
@@ -138,6 +141,18 @@ pub struct Engine {
     layers: Vec<(String, u32)>,
     /// Set when `layers` changes; the daemon takes it.
     layers_changed: bool,
+    /// Set while the Guide button is held: whether another button went down during the hold,
+    /// which makes it a chord rather than a tap that toggles the Guide overlay.
+    guide_held: Option<bool>,
+    /// Whether the Guide overlay is up. Its layer stays on until the overlay closes.
+    guide_open: bool,
+    /// Whether mouse mode is on. It stays on until Guide is pressed again.
+    mouse_mode: bool,
+    /// Buttons pressed while the Guide overlay is up that drive its menu (see [`guide_nav`]),
+    /// in order; the daemon takes them.
+    guide_nav: Vec<Button>,
+    /// The menu direction held down, and when it next repeats.
+    guide_repeat: Option<(Button, Instant)>,
     mouse_acc: (f32, f32),
     scroll_acc: (f32, f32),
     /// Sub-pixel pointer movement from the touchpad, not yet sent.
@@ -287,14 +302,26 @@ impl Engine {
         self.digital(&src, action, false, out);
     }
 
-    /// Active layers, oldest first.
+    /// Active layers, oldest first. The Guide layer is last while the Guide overlay is up, and
+    /// the mouse-mode layer while mouse mode is on.
     pub fn layers(&self) -> Vec<String> {
-        self.layers.iter().map(|(name, _)| name.clone()).collect()
+        let mut names: Vec<String> = self.layers.iter().map(|(name, _)| name.clone()).collect();
+        for (on, name) in [(self.guide_open, GUIDE_LAYER), (self.mouse_mode, MOUSE_LAYER)] {
+            if on && !names.iter().any(|n| n == name) {
+                names.push(name.into());
+            }
+        }
+        names
     }
 
     /// Whether the active layers changed since the last call.
     pub fn take_layers_changed(&mut self) -> bool {
         std::mem::take(&mut self.layers_changed)
+    }
+
+    /// Whether the Guide overlay is up (on any controller of this engine).
+    pub fn guide_overlay_open(&self) -> bool {
+        self.guide_open
     }
 
     /// Whether the shown info overlays changed since the last call.
@@ -463,7 +490,125 @@ impl Engine {
         }
     }
 
+    /// The Guide button is handled here, whatever the profile maps it to, so it works the same
+    /// in every game. A tap toggles the Guide overlay; holding it turns the Guide layer on, so
+    /// Guide + a button runs that button's Guide shortcut.
+    fn guide_button(&mut self, pressed: bool) {
+        match (pressed, self.guide_held) {
+            // In mouse mode, Guide only exits it. Counted as a chord so letting go doesn't open the overlay.
+            (true, None) if self.mouse_mode => {
+                self.set_mouse_mode(false);
+                self.guide_held = Some(true);
+            }
+            (true, None) => {
+                self.guide_held = Some(false);
+                self.hold_layer(GUIDE_LAYER, true);
+            }
+            (false, Some(chorded)) => {
+                self.guide_held = None;
+                self.hold_layer(GUIDE_LAYER, false);
+                if !chorded {
+                    self.set_guide_open(!self.guide_open);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// A button went down: it makes the Guide hold a chord, and it closes an open Guide overlay
+    /// unless it drives the overlay's menu. The press itself still runs, under the Guide layer,
+    /// if it's a Guide shortcut.
+    fn other_button_pressed(&mut self, b: Button, now: Instant) {
+        if let Some(chorded) = self.guide_held.as_mut() {
+            *chorded = true;
+        }
+        if self.guide_open {
+            if guide_nav(b) {
+                self.guide_nav.push(b);
+                if matches!(b, Button::DpadUp | Button::DpadDown | Button::LeftStickUp | Button::LeftStickDown) {
+                    self.guide_repeat = Some((b, now + GUIDE_REPEAT_DELAY));
+                }
+            } else {
+                self.set_guide_open(false);
+            }
+        }
+    }
+
+    /// Takes the menu presses made since the last call (see [`guide_nav`]).
+    pub fn take_guide_nav(&mut self) -> Vec<Button> {
+        std::mem::take(&mut self.guide_nav)
+    }
+
+    /// Closes the Guide overlay, if it's up.
+    pub fn close_guide_overlay(&mut self) {
+        if self.guide_open {
+            self.set_guide_open(false);
+        }
+    }
+
+    /// Turns the Guide overlay off and mouse mode on: the overlay's Mouse mode item.
+    pub fn enter_mouse_mode(&mut self) {
+        self.set_guide_open(false);
+        self.set_mouse_mode(true);
+    }
+
+    fn set_guide_open(&mut self, open: bool) {
+        self.guide_open = open;
+        self.guide_repeat = None;
+        self.layers_changed = true;
+    }
+
+    /// Queues a repeat of the held menu direction once it's due.
+    fn repeat_guide_nav(&mut self, now: Instant) {
+        if let Some((b, due)) = self.guide_repeat
+            && now >= due
+        {
+            self.guide_nav.push(b);
+            self.guide_repeat = Some((b, now + GUIDE_REPEAT_RATE));
+        }
+    }
+
+    fn set_mouse_mode(&mut self, on: bool) {
+        self.mouse_mode = on;
+        self.layers_changed = true;
+    }
+
+    /// Whether the Guide button (held, or with its overlay up) should turn on mouse mode.
+    fn enters_mouse_mode(&self) -> bool {
+        !self.mouse_mode && (self.guide_held.is_some() || self.guide_open)
+    }
+
+    /// Handles the Guide button, mouse mode's entry, and the overlay's own presses. Returns true
+    /// when the press is theirs, so the profile doesn't see it.
+    fn guide_routes(&mut self, b: Button, pressed: bool, now: Instant) -> bool {
+        if !pressed && self.guide_repeat.is_some_and(|(r, _)| r == b) {
+            self.guide_repeat = None;
+        }
+        if b == Button::Guide {
+            self.guide_button(pressed);
+            return true;
+        }
+        if pressed && b == Button::RightStick && self.enters_mouse_mode() {
+            // Guide + right stick click (or the click with the overlay up) starts mouse mode.
+            if let Some(chorded) = self.guide_held.as_mut() {
+                *chorded = true;
+            }
+            self.set_guide_open(false);
+            self.set_mouse_mode(true);
+            return true;
+        }
+        if pressed {
+            self.other_button_pressed(b, now);
+        }
+        false
+    }
+
     fn handle_mapped(&mut self, profile: &Profile, ev: InputEvent, now: Instant, out: &mut Vec<OutEvent>) {
+        if let InputEvent::Button(b, pressed) = ev
+            && self.guide_routes(b, pressed, now)
+        {
+            return;
+        }
         match ev {
             InputEvent::Button(b, true) if profile.in_combo(b) => {
                 let deadline = match profile.button(b) {
@@ -533,6 +678,7 @@ impl Engine {
 
     /// Fires combo members whose window has run out.
     pub fn timers(&mut self, profile: &Profile, now: Instant, out: &mut Vec<OutEvent>) {
+        self.repeat_guide_nav(now);
         let due: Vec<Button> = self
             .members
             .iter()
@@ -596,7 +742,8 @@ impl Engine {
             GestureState::Up { deadline, .. } => Some(*deadline),
             GestureState::Holding | GestureState::Pressed => None,
         });
-        combos.chain(gestures).min()
+        let guide = self.guide_repeat.map(|(_, due)| due);
+        combos.chain(gestures).chain(guide).min()
     }
 
     /// A button acting on its own (not as part of a combo). Runs gesture detection if the
@@ -1176,6 +1323,12 @@ impl Engine {
     /// profile switch, when an on-screen overlay takes the controller, or when the device goes
     /// away. With `keep_toggled_layers`, layers a Toggle switched on stay on (held ones end).
     pub fn release_all(&mut self, keep_toggled_layers: bool, out: &mut Vec<OutEvent>) {
+        if self.guide_held.take().is_some() {
+            self.hold_layer(GUIDE_LAYER, false);
+        }
+        if self.guide_open {
+            self.set_guide_open(false);
+        }
         let held: Vec<_> = self.held.drain().collect();
         for (src, action) in held {
             self.emit(&src, &action, false, 0, out);
@@ -1238,6 +1391,24 @@ impl Engine {
 }
 
 /// Difference between two angles in degrees, wrapped to -180..180.
+/// Whether a button drives the Guide overlay's menu rather than closing the overlay: the D-pad
+/// and left stick move the highlight, A chooses and B closes.
+fn guide_nav(b: Button) -> bool {
+    matches!(
+        b,
+        Button::DpadUp
+            | Button::DpadDown
+            | Button::DpadLeft
+            | Button::DpadRight
+            | Button::LeftStickUp
+            | Button::LeftStickDown
+            | Button::LeftStickLeft
+            | Button::LeftStickRight
+            | Button::South
+            | Button::East
+    )
+}
+
 /// Counts one more (or one fewer) hold on a named overlay, forgetting it at none.
 fn count_hold(holds: &mut HashMap<String, u32>, name: &str, pressed: bool) {
     if pressed {
@@ -1384,19 +1555,136 @@ mod tests {
     }
 
     #[test]
-    fn guide_taps_stay_with_the_app_until_a_double_tap() {
+    fn guide_tap_toggles_the_overlay_and_never_reaches_the_pad() {
+        let (base, _) = guide_setup();
+        let mut e = Engine::default();
+        let t0 = Instant::now();
+        let mut out = press(&mut e, &base, Button::Guide, true, t0);
+        out.extend(press(&mut e, &base, Button::Guide, false, ms(t0, 80)));
+        assert!(out.is_empty(), "the Guide button sends nothing to the game or Steam");
+        assert_eq!(e.layers(), [GUIDE_LAYER], "a tap opens the overlay");
+        press(&mut e, &base, Button::Guide, true, ms(t0, 2000));
+        press(&mut e, &base, Button::Guide, false, ms(t0, 2050));
+        assert!(e.layers().is_empty(), "a second tap closes it");
+    }
+
+    #[test]
+    fn guide_chord_runs_its_shortcut_and_leaves_the_overlay_shut() {
+        let (base, on) = guide_setup();
+        let mut e = Engine::default();
+        let t0 = Instant::now();
+        press(&mut e, &base, Button::Guide, true, t0);
+        press(&mut e, &on, Button::West, true, ms(t0, 50));
+        assert!(e.take_overlay_toggle().is_some(), "Guide + X opens the keyboard");
+        press(&mut e, &on, Button::West, false, ms(t0, 100));
+        press(&mut e, &on, Button::Guide, false, ms(t0, 150));
+        assert!(e.layers().is_empty(), "the chord doesn't open the overlay on release");
+    }
+
+    #[test]
+    fn guide_overlay_closes_on_the_next_press_and_that_press_runs() {
+        let (base, on) = guide_setup();
+        let mut e = Engine::default();
+        let t0 = Instant::now();
+        press(&mut e, &base, Button::Guide, true, t0);
+        press(&mut e, &base, Button::Guide, false, ms(t0, 80));
+        assert_eq!(e.layers(), [GUIDE_LAYER]);
+        press(&mut e, &on, Button::North, true, ms(t0, 500));
+        assert_eq!(e.take_overlay_toggle(), Some(crate::keyboard::Layout::Numpad), "Y opens the numpad");
+        assert!(e.layers().is_empty(), "and closes the overlay");
+    }
+
+    /// A profile with the mouse-mode layer on top of the passthrough one.
+    fn mouse_setup() -> (Profile, Profile) {
+        let base = Profile::passthrough("p");
+        let on = layered(&base, &crate::config::Layer::mouse());
+        (base, on)
+    }
+
+    #[test]
+    fn guide_and_right_stick_click_start_mouse_mode() {
+        let (base, mouse) = mouse_setup();
+        let mut e = Engine::default();
+        let t0 = Instant::now();
+        let mut out = press(&mut e, &base, Button::Guide, true, t0);
+        out.extend(press(&mut e, &base, Button::RightStick, true, ms(t0, 50)));
+        out.extend(press(&mut e, &mouse, Button::RightStick, false, ms(t0, 100)));
+        out.extend(press(&mut e, &base, Button::Guide, false, ms(t0, 150)));
+        assert!(out.is_empty(), "the chord doesn't reach the game");
+        assert_eq!(e.layers(), [MOUSE_LAYER], "mouse mode stays on after the chord, with no overlay");
+    }
+
+    #[test]
+    fn right_stick_click_with_the_overlay_up_starts_mouse_mode() {
+        let (base, on) = guide_setup();
+        let mut e = Engine::default();
+        let t0 = Instant::now();
+        press(&mut e, &base, Button::Guide, true, t0);
+        press(&mut e, &base, Button::Guide, false, ms(t0, 80));
+        press(&mut e, &on, Button::RightStick, true, ms(t0, 500));
+        assert_eq!(e.layers(), [MOUSE_LAYER]);
+    }
+
+    #[test]
+    fn guide_leaves_mouse_mode_and_does_not_open_the_overlay() {
+        let (base, mouse) = mouse_setup();
+        let mut e = Engine::default();
+        let t0 = Instant::now();
+        press(&mut e, &base, Button::Guide, true, t0);
+        press(&mut e, &base, Button::RightStick, true, ms(t0, 50));
+        press(&mut e, &mouse, Button::RightStick, false, ms(t0, 60));
+        press(&mut e, &mouse, Button::Guide, false, ms(t0, 70));
+        press(&mut e, &mouse, Button::Guide, true, ms(t0, 500));
+        press(&mut e, &mouse, Button::Guide, false, ms(t0, 580));
+        assert!(e.layers().is_empty());
+    }
+
+    #[test]
+    fn mouse_mode_keys_are_held_while_the_button_is_down() {
+        let (_, mouse) = mouse_setup();
+        let mut e = Engine::default();
+        let t0 = Instant::now();
+        e.mouse_mode = true;
+        assert_eq!(press(&mut e, &mouse, Button::DpadUp, true, t0), vec![OutEvent::Key(KeyCode::KEY_LEFTSHIFT, true)]);
+        assert_eq!(press(&mut e, &mouse, Button::DpadUp, false, ms(t0, 10)), vec![OutEvent::Key(KeyCode::KEY_LEFTSHIFT, false)]);
+        assert_eq!(press(&mut e, &mouse, Button::West, true, ms(t0, 20)), vec![OutEvent::Key(KeyCode::KEY_LEFTCTRL, true)]);
+        assert_eq!(press(&mut e, &mouse, Button::West, false, ms(t0, 30)), vec![OutEvent::Key(KeyCode::KEY_LEFTCTRL, false)]);
+        assert_eq!(press(&mut e, &mouse, Button::North, true, ms(t0, 40)), vec![OutEvent::Key(KeyCode::KEY_LEFTALT, true)]);
+        assert_eq!(press(&mut e, &mouse, Button::North, false, ms(t0, 50)), vec![OutEvent::Key(KeyCode::KEY_LEFTALT, false)]);
+        assert_eq!(press(&mut e, &mouse, Button::East, true, ms(t0, 60)), vec![OutEvent::Key(KeyCode::KEY_DELETE, true)]);
+        assert_eq!(press(&mut e, &mouse, Button::East, false, ms(t0, 70)), vec![OutEvent::Key(KeyCode::KEY_DELETE, false)]);
+    }
+
+    #[test]
+    fn holding_a_menu_direction_repeats_it_until_let_go() {
+        let (base, on) = guide_setup();
+        let mut e = Engine::default();
+        let t0 = Instant::now();
+        press(&mut e, &base, Button::Guide, true, t0);
+        press(&mut e, &base, Button::Guide, false, ms(t0, 10));
+        press(&mut e, &on, Button::DpadDown, true, ms(t0, 100));
+        assert_eq!(e.take_guide_nav(), [Button::DpadDown]);
+        fire_timers(&mut e, &on, ms(t0, 300));
+        assert!(e.take_guide_nav().is_empty(), "no repeat before the delay");
+        fire_timers(&mut e, &on, ms(t0, 500));
+        assert_eq!(e.take_guide_nav(), [Button::DpadDown], "repeats after the delay");
+        fire_timers(&mut e, &on, ms(t0, 640));
+        assert_eq!(e.take_guide_nav(), [Button::DpadDown], "then at the repeat rate");
+        press(&mut e, &on, Button::DpadDown, false, ms(t0, 700));
+        assert_eq!(e.next_deadline(), None, "letting go stops it");
+        fire_timers(&mut e, &on, ms(t0, 2000));
+        assert!(e.take_guide_nav().is_empty());
+    }
+
+    #[test]
+    fn letting_go_of_everything_closes_the_guide_overlay() {
         let (base, _) = guide_setup();
         let mut e = Engine::default();
         let t0 = Instant::now();
         press(&mut e, &base, Button::Guide, true, t0);
         press(&mut e, &base, Button::Guide, false, ms(t0, 80));
-        fire_timers(&mut e, &base, ms(t0, 1000));
+        e.release_all(false, &mut Vec::new());
         assert!(e.layers().is_empty());
-        press(&mut e, &base, Button::Guide, true, ms(t0, 2000));
-        press(&mut e, &base, Button::Guide, false, ms(t0, 2050));
-        let mut out = press(&mut e, &base, Button::Guide, true, ms(t0, 2100));
-        out.extend(press(&mut e, &base, Button::Guide, false, ms(t0, 2150)));
-        assert_eq!(out, vec![OutEvent::PadButton(Button::Guide, true), OutEvent::PadButton(Button::Guide, false)]);
     }
 
     #[test]
@@ -1441,17 +1729,30 @@ mod tests {
     }
 
     #[test]
-    fn guide_chords_can_follow_each_other() {
+    fn a_held_guide_swallows_the_d_pad_which_mouse_mode_owns() {
         let (base, on) = guide_setup();
         let mut e = Engine::default();
-        let mut out = Vec::new();
-        e.handle(&base, InputEvent::Button(Button::Guide, true), Instant::now(), &mut out);
-        for b in [Button::DpadRight, Button::DpadDown] {
-            e.handle(&on, InputEvent::Button(b, true), Instant::now(), &mut out);
-            e.handle(&on, InputEvent::Button(b, false), Instant::now(), &mut out);
-        }
-        let keys: Vec<_> = out.iter().filter(|o| matches!(o, OutEvent::Key(_, true))).collect();
-        assert_eq!(keys, [&OutEvent::Key(KeyCode::KEY_ENTER, true), &OutEvent::Key(KeyCode::KEY_TAB, true)]);
+        let t0 = Instant::now();
+        press(&mut e, &base, Button::Guide, true, t0);
+        assert!(press(&mut e, &on, Button::DpadRight, true, ms(t0, 10)).is_empty());
+        assert!(press(&mut e, &on, Button::DpadRight, false, ms(t0, 20)).is_empty());
+    }
+
+    #[test]
+    fn menu_buttons_drive_the_open_overlay_without_closing_it() {
+        let (base, on) = guide_setup();
+        let mut e = Engine::default();
+        let t0 = Instant::now();
+        press(&mut e, &base, Button::Guide, true, t0);
+        press(&mut e, &base, Button::Guide, false, ms(t0, 80));
+        press(&mut e, &on, Button::DpadDown, true, ms(t0, 200));
+        press(&mut e, &on, Button::LeftStickUp, true, ms(t0, 300));
+        press(&mut e, &on, Button::South, true, ms(t0, 400));
+        assert_eq!(e.layers(), [GUIDE_LAYER], "the menu buttons don't close the overlay");
+        assert_eq!(e.take_guide_nav(), [Button::DpadDown, Button::LeftStickUp, Button::South]);
+        assert!(e.take_guide_nav().is_empty());
+        press(&mut e, &on, Button::Start, true, ms(t0, 500));
+        assert!(e.layers().is_empty(), "any other button closes it");
     }
 
     #[test]
@@ -1620,14 +1921,14 @@ mod tests {
     #[test]
     fn disabled_member_works_as_modifier() {
         let mut p = Profile::passthrough("p");
-        p.set_button(Button::Guide, ButtonAction::Disabled);
+        p.set_button(Button::Start, ButtonAction::Disabled);
         p.combos.push(Combo {
-            buttons: vec![Button::Guide, Button::South],
+            buttons: vec![Button::Start, Button::South],
             action: ButtonAction::Screenshot,
         });
         let mut e = Engine::default();
         let t0 = Instant::now();
-        step(&mut e, &p, InputEvent::Button(Button::Guide, true), t0);
+        step(&mut e, &p, InputEvent::Button(Button::Start, true), t0);
         assert_eq!(e.next_deadline(), None);
         let mut out = Vec::new();
         e.handle(&p, InputEvent::Button(Button::South, true), t0 + Duration::from_secs(5), &mut out);

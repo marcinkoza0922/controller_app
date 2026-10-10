@@ -301,6 +301,13 @@ struct Offers {
     declined: HashSet<String>,
 }
 
+/// The Guide overlay's menu while it's up: the cursor, and whether Steam was running when it
+/// opened (the Steam overlay row is listed only then).
+struct GuideMenu {
+    cursor: usize,
+    steam: bool,
+}
+
 struct Daemon {
     config: Config,
     /// What the active profile can use (its game's items, then shared ones).
@@ -354,6 +361,8 @@ struct Daemon {
     overlay_watchers: Vec<Sender<OverlayFrame>>,
     /// The frame last sent to the overlay window, to skip sending it again unchanged.
     last_frame: Option<OverlayFrame>,
+    /// The Guide overlay's menu while the overlay is up.
+    guide_menu: Option<GuideMenu>,
     /// When shown info overlays with live values next refresh.
     info_refresh: Option<Instant>,
     /// When an info overlay that hides after a while next needs redrawing (fading or gone).
@@ -417,9 +426,7 @@ pub fn run(debug: bool) -> Result<()> {
     let config = Config::load()?;
     let (tx, rx) = mpsc::channel();
     stop_on_signals(tx.clone())?;
-    let listener = bind_socket()?;
-    let ipc_tx = tx.clone();
-    thread::spawn(move || ipc_server(&listener, &ipc_tx));
+    serve_ipc(tx.clone())?;
 
     let kbm = VirtualKbm::new().context("creating virtual keyboard/mouse (do you have write access to /dev/uinput?)")?;
     let mut daemon = Daemon {
@@ -455,6 +462,7 @@ pub fn run(debug: bool) -> Result<()> {
         layer_started: HashMap::new(),
         overlay_watchers: Vec::new(),
         last_frame: None,
+        guide_menu: None,
         info_refresh: None,
         info_fade: None,
         info_timers: crate::info::Timers::default(),
@@ -474,6 +482,13 @@ pub fn run(debug: bool) -> Result<()> {
     daemon.start_services();
     daemon.scan();
     daemon.run(&rx);
+    Ok(())
+}
+
+/// Binds the control socket and serves it on a thread.
+fn serve_ipc(tx: Sender<Msg>) -> Result<()> {
+    let listener = bind_socket()?;
+    thread::spawn(move || ipc_server(&listener, &tx));
     Ok(())
 }
 
@@ -687,6 +702,7 @@ impl Daemon {
         let mut media = false;
         let mut menu_request = None;
         let mut fired = Vec::new();
+        let mut guide_keys = Vec::new();
         for (id, dev) in self.devices.iter_mut() {
             if dev.engine.next_deadline().is_none_or(|d| d > now) {
                 continue;
@@ -694,6 +710,10 @@ impl Daemon {
             fired.push(*id);
             let mut out = Vec::new();
             dev.engine.timers(layered(&dev.layered, base), now, &mut out);
+            let keys = dev.engine.take_guide_nav();
+            if !keys.is_empty() {
+                guide_keys.push((*id, keys));
+            }
             if dev.refresh_layers(&self.config) {
                 dev.engine.resync(layered(&dev.layered, base), &mut out);
             }
@@ -722,6 +742,9 @@ impl Daemon {
         self.update_force_quit();
         if let Some((id, (name, opener))) = menu_request {
             self.open_menu(id, &name, opener);
+        }
+        for (id, keys) in guide_keys {
+            self.guide_keys(id, &keys);
         }
         // A gesture or combo window ran out: its action labels the press it came from.
         if fired.into_iter().fold(false, |any, id| self.log_fired(id) | any) {
@@ -1124,7 +1147,11 @@ impl Daemon {
             }
             Some(Active::Offer(o)) => Some(OverlayView::Offer(o.view())),
             Some(Active::Settings(m)) => Some(OverlayView::Menu(m.view(&self.config))),
-            None => None,
+            None => self.guide_menu.as_ref().map(|menu| {
+                let profile = self.config.active().map(|p| p.name.as_str()).unwrap_or_default();
+                let style = self.config.active_menu_style().clone();
+                OverlayView::Menu(crate::guide_menu::view(menu.steam, menu.cursor, profile, style))
+            }),
         }
     }
 
@@ -1226,6 +1253,12 @@ impl Daemon {
                 (steady || timed).then(|| (o.clone(), steady))
             })
             .collect();
+        // The Guide overlay's Notes and Mappings, while it's up.
+        if self.devices.values().any(|d| d.engine.guide_overlay_open())
+            && let Some(profile) = self.config.active()
+        {
+            shown.extend(crate::info::guide_overlays(profile).into_iter().map(|o| (o, true)));
+        }
         // Each active layer's indicator: its name, or an info overlay of the game's.
         for name in self.active_layers() {
             let Some(layer) = self.scope.layers.iter().find(|l| l.name == name) else { continue };
@@ -1318,8 +1351,106 @@ impl Daemon {
             changed |= dev.engine.take_layers_changed();
         }
         if changed {
+            self.sync_guide_menu();
             self.broadcast_overlay();
         }
+    }
+
+    /// Makes the Guide menu when the Guide overlay goes up, and drops it when the overlay comes down.
+    fn sync_guide_menu(&mut self) {
+        let open = self.devices.values().any(|d| d.engine.guide_overlay_open());
+        match (open, self.guide_menu.is_some()) {
+            (true, false) => {
+                self.guide_menu = Some(GuideMenu { cursor: 0, steam: crate::guide_menu::steam_running() });
+            }
+            (false, true) => self.guide_menu = None,
+            _ => {}
+        }
+    }
+
+    /// Moves the Guide menu's cursor, or chooses or closes, for the presses the engine took while
+    /// the overlay was up.
+    fn guide_keys(&mut self, device: u64, keys: &[crate::config::Button]) {
+        use crate::config::Button;
+        for &key in keys {
+            let Some(menu) = self.guide_menu.as_mut() else { return };
+            let len = crate::guide_menu::items(menu.steam).len();
+            match key {
+                Button::DpadUp | Button::LeftStickUp => menu.cursor = (menu.cursor + len - 1) % len,
+                Button::DpadDown | Button::LeftStickDown => menu.cursor = (menu.cursor + 1) % len,
+                Button::South => {
+                    let item = crate::guide_menu::items(menu.steam)[menu.cursor];
+                    self.guide_choose(device, item);
+                }
+                Button::East => self.guide_close(device),
+                _ => {}
+            }
+        }
+        // The cursor is part of the drawn frame, so the overlay has to be sent again to move it.
+        self.broadcast_overlay();
+    }
+
+    /// Runs a Guide menu item. The overlay goes away first, except for Quick Settings, which opens its own menu.
+    fn guide_choose(&mut self, device: u64, item: crate::guide_menu::Item) {
+        use crate::guide_menu::Item;
+        match item {
+            Item::QuickSettings => {
+                self.guide_close(device);
+                self.open_system_menu();
+            }
+            Item::Keyboard | Item::Numpad | Item::Media | Item::NextProfile | Item::Steam => {
+                self.guide_close(device);
+                match item {
+                    Item::Keyboard => self.toggle_overlay(Layout::Keyboard),
+                    Item::Numpad => self.toggle_overlay(Layout::Numpad),
+                    Item::Media => self.toggle_media(),
+                    Item::NextProfile => {
+                        if let Some(next) = self.config.next_profile(self.pad_features().as_deref()) {
+                            self.switch_profile(next, BY_HAND);
+                        }
+                    }
+                    _ => self.send_steam_overlay(device),
+                }
+            }
+            Item::MouseMode => {
+                if let Some(dev) = self.devices.get_mut(&device) {
+                    dev.engine.enter_mouse_mode();
+                }
+                self.engine_changed(device);
+            }
+        }
+    }
+
+    /// Closes the Guide overlay on the controller that drives it.
+    fn guide_close(&mut self, device: u64) {
+        if let Some(dev) = self.devices.get_mut(&device) {
+            dev.engine.close_guide_overlay();
+        }
+        self.engine_changed(device);
+    }
+
+    /// Applies a layer change the engine made outside an event: the layered profile and the
+    /// analog state follow it, as they do after an event.
+    fn engine_changed(&mut self, device: u64) {
+        let Some(dev) = self.devices.get_mut(&device) else { return };
+        let mut out = Vec::new();
+        if dev.refresh_layers(&self.config)
+            && let Some(base) = self.config.active()
+        {
+            dev.engine.resync(layered(&dev.layered, base), &mut out);
+        }
+        dev.dispatch(&mut self.kbm, out);
+        self.check_info_changes();
+    }
+
+    /// Sends the real Guide button to the virtual pad, which opens Steam's overlay.
+    fn send_steam_overlay(&mut self, device: u64) {
+        let Some(dev) = self.devices.get_mut(&device) else { return };
+        let out = vec![
+            OutEvent::PadButton(crate::config::Button::Guide, true),
+            OutEvent::PadButton(crate::config::Button::Guide, false),
+        ];
+        dev.dispatch(&mut self.kbm, out);
     }
 
     /// If the overlay window died (crashed, or no compositor yet), leave overlay mode so the
@@ -1705,6 +1836,7 @@ impl Daemon {
         let recording = dev.engine.take_recording_toggle();
         let media = dev.engine.take_media_toggle();
         let menu_request = dev.engine.take_menu_request();
+        let guide_keys = dev.engine.take_guide_nav();
         if let Some(layout) = toggle_overlay {
             self.toggle_overlay(layout);
         }
@@ -1720,6 +1852,9 @@ impl Daemon {
         self.update_force_quit();
         if let Some((name, opener)) = menu_request {
             self.open_menu(id, &name, opener);
+        }
+        if !guide_keys.is_empty() {
+            self.guide_keys(id, &guide_keys);
         }
         if self.log_fired(id) | logged {
             self.log_changed();
@@ -1980,6 +2115,14 @@ impl Daemon {
             dev.draw_status();
         }
         for ev in events {
+            // Guide closes the keyboard, numpad or media controls, as well as their own close inputs.
+            // The tap it ends isn't a Guide tap, so it doesn't offer a library game on release.
+            if let InputEvent::Button(crate::config::Button::Guide, true) = ev
+                && matches!(self.active, Some(Active::Keyboard(_) | Active::Media(_)))
+            {
+                self.offers.guide_tap = None;
+                return self.close_overlay();
+            }
             match &mut self.active {
                 Some(Active::Keyboard(_)) => self.keyboard_input(id, ev, now),
                 Some(Active::Menu { session, device }) => {

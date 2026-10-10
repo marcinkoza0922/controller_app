@@ -6,6 +6,7 @@ mod engine;
 mod focus;
 mod font;
 mod gui;
+mod guide_menu;
 mod icon;
 mod info;
 mod inputlog;

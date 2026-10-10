@@ -119,7 +119,7 @@ On top of that, you get some handy extras:
 - **Gestures**: double tap, triple tap and long press, per button. The final tap of a sequence fires on press and holds, so "double-tap and hold" works. A quick tap on a button with gestures fires once the gesture is decided. Holding past the tap window presses the button's own action right away and holds it until release, unless a long press is set.
 - **Zones**: extra actions that are held while a stick or trigger is within part of its travel. For example, Left Shift on a partial stick push gives you walk and run with WASD, and a half versus full trigger pull can do two different things. Zones are hidden for controllers whose triggers are simply on or off (e.g. Switch pads).
 
-General's defaults are **Gamepad** (1:1 passthrough) and **Desktop** (left stick moves the mouse, right stick scrolls, A/B click, LB+RB = Alt+Tab). Guide holds the Guide layer. Profiles switch from Quick Settings (Guide + Start) or the app, never from the controller alone.
+General's defaults are **Gamepad** (1:1 passthrough) and **Desktop** (left stick moves the mouse, right stick scrolls, A/B click, LB+RB = Alt+Tab). Tapping Guide opens the Guide overlay. Profiles switch from Quick Settings (Guide + Start) or the app, never from the controller alone.
 
 Want a head start? These are under "New from template…" in the GUI:
 
@@ -157,14 +157,11 @@ Each pass of a macro releases anything it still holds when it ends. Wrap a repea
 
 ## Mouse and keyboard from the couch
 
-A game can work fine with a controller and still trip you up. Its launcher may need a mouse to pick settings or a server, or its name entry may assume you're at a desk with a keyboard. For those moments, the Guide button has a few tools built in. You hold Guide and press something else, so nothing reaches the game underneath unless you ask for it:
+A game can work fine with a controller and still trip you up. Its launcher may need a mouse to pick settings or a server, or its name entry may assume you're at a desk with a keyboard. For those moments, tap Guide to open its overlay: the notes the game's author wrote, a menu, and what each button does. The menu has the on-screen keyboard and numpad, media controls, Quick Settings and, while Steam runs, the Steam overlay.
 
-- **Right stick**: moves the mouse pointer.
-- **RT / LT**: left click / right click.
-- **D-pad Right, Down, Left**: Enter, Tab and Escape.
-- **X**: opens the on-screen keyboard. **Y**: opens the on-screen numpad.
+Hold Guide and press X, Y, LB, RB, L3 or Select for a shortcut (keyboard, numpad, media, screenshot, recording, force quit). Hold Guide and press right stick, or press right stick with the overlay open, for mouse mode: the controller moves the pointer, clicks, scrolls and sends Enter, Tab, Escape and modifier keys.
 
-The full list, along with media controls (LB), screenshots (RB), screen recording (L3), and force quit (hold B for 2 seconds to close the program in the focused window), is in the manual's [Guide button](docs/manual/guide-button.md) page. You can change these shortcuts for each setup on its **Layers** tab.
+The full list is in the manual's [Guide button](docs/manual/guide-button.md) page. The shortcuts are the same in every game. Each profile's **Guide** tab sets the overlay's notes and how its mapping list reads.
 
 ## On-screen overlay
 
@@ -179,7 +176,7 @@ The "On-screen keyboard" action (also a button on the Overview tab, and `padwigh
 | hold LT | hold Shift |
 | hold B | close |
 
-Guide holds the Guide layer, where X opens the keyboard (Guide + X). It needs a compositor with layer-shell (KDE Plasma, Sway, Hyprland, …).
+Guide + X, or X with the Guide overlay open, opens the keyboard. It needs a compositor with layer-shell (KDE Plasma, Sway, Hyprland, …).
 
 The "On-screen numpad" action (or `padwight numpad-toggle`) opens a smaller pad with the digits 0–9 and a dot, for codes and number fields. Move with the D-pad or left stick, press A for a number, X for backspace, Start for Enter, and hold B to close. It types the top-row number keys, so it works whatever the Num Lock state. Both pads have their own position, size and colors on the App settings page, and opening one closes the other.
 
