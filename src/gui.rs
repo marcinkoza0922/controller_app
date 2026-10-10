@@ -16,7 +16,7 @@ use iced::{
     Alignment, Color, Element, Length, Subscription, Task,
     widget::{
         button, center, checkbox, column, container, mouse_area, opaque, pick_list, row, rule,
-        scrollable, slider, space, stack, svg, text, text_input, toggler, tooltip,
+        rich_text, scrollable, slider, space, span, stack, svg, text, text_input, toggler, tooltip,
     },
 };
 
@@ -1091,10 +1091,17 @@ impl App {
         .spacing(12);
 
         if !running {
+            let code = |s: &'static str| -> text::Span<'static> { span(s).font(iced::Font::MONOSPACE) };
             header = header.push(
-                text("The background service isn't running. Start it with `systemctl --user start padwight` (or `padwight daemon`). You can still edit: your changes are saved and take effect once it starts.")
-                    .size(13)
-                    .color(MUTED_COLOR),
+                rich_text![
+                    "The background service isn't running. Start it with ",
+                    code("systemctl --user start padwight"),
+                    " or ",
+                    code("padwight daemon"),
+                    ". You can still edit: your changes are saved and take effect once it starts.",
+                ]
+                .size(13)
+                .color(MUTED_COLOR),
             );
         }
         header.into()

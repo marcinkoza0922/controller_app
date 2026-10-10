@@ -16,8 +16,9 @@ Tick an item when it's done and merged.
   others, the "Lean" row has an "Add an input" list and a blue "Split" button, and the hold and
   ×2 rows have no "Share with" column. The Show and controls columns now have fixed widths on
   every row, and Split and Remove are grey buttons of one size.
-- [ ] 3. The "daemon not running" note on the Overview prints the backticks around
-  `systemctl --user start padwight` and `padwight daemon` (`src/gui.rs`).
+- [x] 3. The "daemon not running" note on the Overview prints the backticks around
+  `systemctl --user start padwight` and `padwight daemon` (`src/gui.rs`). The commands are now
+  set in monospace instead.
 - [ ] 4. The Guide tab shows the raw token `{keyboard:apostrophe}` as the label for "X hold".
 
 ## Contradictory or misleading states
