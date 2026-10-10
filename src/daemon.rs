@@ -39,7 +39,7 @@ use crate::{
     media::{MediaOutcome, MediaSession, MediaState},
     offer::{OfferOutcome, OfferSession},
     menu::{MenuOutcome, MenuSession},
-    system_menu::{self, Outcome as SystemOutcome, SystemMenu},
+    system_menu::{self, Outcome as SystemOutcome, Page, SystemMenu},
     overlay::{OverlayAction, OverlayController, OverlayFrame, OverlayView},
     rumble,
     tray::{self, TrayIcon},
@@ -238,7 +238,7 @@ enum Active {
     /// The offer to add a library game's profiles.
     Offer(OfferSession),
     /// The menu Guide + Start opens: Quick Settings and Edit Controls.
-    Settings(SystemMenu),
+    Settings(SystemMenu, u64),
 }
 
 /// The sounds of the on-screen keyboard or the numpad, whichever is up.
@@ -253,7 +253,7 @@ fn keyboard_sound(layout: Layout) -> sound::SoundOverlay {
 fn active_sound(active: &Active) -> sound::SoundOverlay {
     match active {
         Active::Keyboard(k) => keyboard_sound(k.layout()),
-        Active::Menu { .. } | Active::Settings(_) => sound::SoundOverlay::Menu,
+        Active::Menu { .. } | Active::Settings(..) => sound::SoundOverlay::Menu,
         Active::Media(_) => sound::SoundOverlay::Media,
         Active::Offer(_) => sound::SoundOverlay::Offer,
     }
@@ -638,7 +638,7 @@ impl Daemon {
             Some(Active::Menu { session, .. }) => session.next_deadline(),
             Some(Active::Media(m)) => m.next_deadline(),
             Some(Active::Offer(o)) => o.next_deadline(),
-            Some(Active::Settings(_)) | None => None,
+            Some(Active::Settings(..)) | None => None,
         };
         self.devices
             .values()
@@ -867,7 +867,7 @@ impl Daemon {
         match &self.active {
             Some(Active::Keyboard(k)) if k.layout() == layout => return self.close_overlay(),
             Some(Active::Keyboard(_)) => self.close_overlay(),
-            Some(Active::Menu { .. } | Active::Media(_) | Active::Offer(_) | Active::Settings(_)) => return,
+            Some(Active::Menu { .. } | Active::Media(_) | Active::Offer(_) | Active::Settings(..)) => return,
             None => {}
         }
         if !self.ensure_overlay_process() {
@@ -1061,7 +1061,7 @@ impl Daemon {
             }
             Some(Active::Menu { .. }) => {}
             Some(Active::Media(_)) => log!("media controls closed"),
-            Some(Active::Offer(_) | Active::Settings(_)) => {}
+            Some(Active::Offer(_) | Active::Settings(..)) => {}
             None => return,
         }
         // The overlay window goes back to idle (it stays running for next time).
@@ -1146,7 +1146,7 @@ impl Daemon {
                 Some(OverlayView::Media(view))
             }
             Some(Active::Offer(o)) => Some(OverlayView::Offer(o.view())),
-            Some(Active::Settings(m)) => Some(OverlayView::Menu(m.view(&self.config))),
+            Some(Active::Settings(m, _)) => Some(OverlayView::Menu(m.view(&self.config))),
             None => self.guide_menu.as_ref().map(|menu| {
                 let profile = self.config.active().map(|p| p.name.as_str()).unwrap_or_default();
                 let style = self.config.active_menu_style().clone();
@@ -1390,13 +1390,20 @@ impl Daemon {
         self.broadcast_overlay();
     }
 
-    /// Runs a Guide menu item. The overlay goes away first, except for Quick Settings, which opens its own menu.
+    /// Runs a Guide menu item. The overlay goes away first, except for Quick Settings and Edit Controls, which open the Guide + Start menu on their page.
     fn guide_choose(&mut self, device: u64, item: crate::guide_menu::Item) {
         use crate::guide_menu::Item;
         match item {
             Item::QuickSettings => {
                 self.guide_close(device);
-                self.open_system_menu();
+                self.open_system_menu(device, Page::Quick);
+            }
+            Item::EditControls => {
+                self.guide_close(device);
+                self.open_system_menu(device, Page::EditControls);
+                if self.edit_controls() {
+                    self.apply_settings_change();
+                }
             }
             Item::Keyboard | Item::Numpad | Item::Media | Item::NextProfile | Item::Steam => {
                 self.guide_close(device);
@@ -1902,18 +1909,19 @@ impl Daemon {
         let Some(dev) = self.devices.get(&id) else { return };
         let held: HashSet<crate::config::Button> = dev.view.buttons().collect();
         if system_menu::chord(&held, events) {
-            self.open_system_menu();
+            self.open_system_menu(id, Page::Main);
         }
     }
 
-    /// Opens the Guide + Start menu over the game. The controller drives it from now on.
-    fn open_system_menu(&mut self) {
+    /// Opens the Guide + Start menu over the game, on `page`, for the controller `device`. That
+    /// controller drives it from now on.
+    fn open_system_menu(&mut self, device: u64, page: Page) {
         if !self.ensure_overlay_process() {
             return;
         }
         log!("opening the settings menu");
         self.release_mappings();
-        self.active = Some(Active::Settings(SystemMenu::new(&self.config)));
+        self.active = Some(Active::Settings(SystemMenu::new(&self.config).on_page(page), device));
         self.broadcast_overlay();
         self.overlay_sound(sound::SoundOverlay::Menu, Some(sound::Feedback::Open));
     }
@@ -1923,8 +1931,12 @@ impl Daemon {
         // Outside any game, General is what a change would land in: keep a copy so the change
         // can move into a new pack instead.
         let general = self.config.active_ref().game.is_none().then(|| self.config.general.clone());
+        let device = match self.active {
+            Some(Active::Settings(_, device)) => device,
+            _ => 0,
+        };
         let (outcome, moved) = match &mut self.active {
-            Some(Active::Settings(menu)) => {
+            Some(Active::Settings(menu, _)) => {
                 let before = menu.cursor();
                 let outcome = menu.handle(ev, &mut self.config);
                 (outcome, menu.cursor() != before)
@@ -1945,20 +1957,9 @@ impl Daemon {
                 self.apply_settings_change();
             }
             Some(SystemOutcome::EditControls) => {
-                // Outside any game there is no game to edit, and no window to name a pack after.
-                // Refuse, and go back to the menu's main page.
-                if self.config.active_ref().game.is_none() && self.focused.is_none() {
-                    if let Some(Active::Settings(menu)) = &mut self.active {
-                        menu.back_to_main();
-                    }
-                    self.say(vec!["Edit Controls needs a setup".into(), "Focus a game window first".into()]);
-                    return false;
+                if self.edit_controls() {
+                    self.apply_settings_change();
                 }
-                let general = self.config.general.clone();
-                if self.config.active_ref().game.is_none() {
-                    self.pack_from_general(general);
-                }
-                self.apply_settings_change();
             }
             Some(SystemOutcome::Save) => {
                 if let Err(e) = self.config.save() {
@@ -1975,6 +1976,14 @@ impl Daemon {
                 return true;
             }
             Some(SystemOutcome::Switch(target)) => self.switch_profile(target, "Chosen in the in-game menu"),
+            Some(SystemOutcome::ReturnToGuide) => {
+                self.close_overlay();
+                if let Some(dev) = self.devices.get_mut(&device) {
+                    dev.engine.open_guide_overlay();
+                }
+                self.engine_changed(device);
+                return true;
+            }
             None => {}
         }
         false
@@ -1983,6 +1992,25 @@ impl Daemon {
     /// Moves what General's active profile is into a new pack for the window in front, and puts
     /// General back as `general` was. Returns false, changing nothing, without a window: there is
     /// nothing to name the pack after, so the change stays in General.
+    /// Edit Controls was chosen. Outside a game it makes the window's pack first. `false` when
+    /// there is nothing to edit: the menu goes back to its main page.
+    fn edit_controls(&mut self) -> bool {
+        // Outside any game there is no game to edit, and no window to name a pack after.
+        // Refuse, and go back to the menu's main page.
+        if self.config.active_ref().game.is_none() && self.focused.is_none() {
+            if let Some(Active::Settings(menu, _)) = &mut self.active {
+                menu.back_to_main();
+            }
+            self.say(vec!["Edit Controls needs a setup".into(), "Focus a game window first".into()]);
+            return false;
+        }
+        if self.config.active_ref().game.is_none() {
+            let general = self.config.general.clone();
+            self.pack_from_general(general);
+        }
+        true
+    }
+
     fn pack_from_general(&mut self, general: Game) -> bool {
         let Some(window) = self.focused.clone() else { return false };
         let Some(edited) = self.config.active().cloned() else { return false };
@@ -2150,7 +2178,7 @@ impl Daemon {
                         None => {}
                     }
                 }
-                Some(Active::Settings(_)) => {
+                Some(Active::Settings(..)) => {
                     if self.settings_input(ev) {
                         return;
                     }

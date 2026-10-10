@@ -539,6 +539,13 @@ impl Engine {
         std::mem::take(&mut self.guide_nav)
     }
 
+    /// Opens the Guide overlay, if it's down.
+    pub fn open_guide_overlay(&mut self) {
+        if !self.guide_open {
+            self.set_guide_open(true);
+        }
+    }
+
     /// Closes the Guide overlay, if it's up.
     pub fn close_guide_overlay(&mut self) {
         if self.guide_open {

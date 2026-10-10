@@ -9,7 +9,7 @@ Tap Guide to open the overlay, and tap it again to close it. It opens when you l
 The overlay has three parts:
 
 - **Notes** on the left: what the game's author wants you to know, such as limits in the control scheme, or when to switch layers.
-- **The menu** in the middle: Quick Settings, the on-screen keyboard and numpad, mouse mode, media controls, the next profile and, while Steam runs, the Steam overlay.
+- **The menu** in the middle: Quick Settings, Edit Controls, the on-screen keyboard and numpad, mouse mode, media controls, the next profile and, while Steam runs, the Steam overlay.
 - **Mappings** on the right: what each button, trigger and stick does in the current profile. Its text can be changed, and rows can be hidden or merged by the author on the profile's **Guide** tab.
 - **Shortcuts** in the bottom left corner: the Guide shortcuts listed below.
 
