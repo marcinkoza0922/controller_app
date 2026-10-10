@@ -1069,6 +1069,7 @@ impl App {
             .flat_map(|(key, g)| g.profiles.iter().map(move |p| ProfileRef::new(key, &p.name)))
             .collect();
         let running = self.status.is_some();
+        let remapping = running && self.config.enabled;
 
         let mut title = row![text("Padwight").size(26), space::horizontal()].align_y(Alignment::Center);
         if !running {
@@ -1078,8 +1079,10 @@ impl App {
         let mut header = column![
             title,
             row![
-                toggler(self.config.enabled)
-                    .label("Remapping enabled")
+                // Without the daemon nothing is remapped, so the switch reads off, whatever the
+                // config says, and can't be turned on.
+                toggler(remapping)
+                    .label(if remapping { "Remapping on" } else { "Remapping off" })
                     .on_toggle_maybe(running.then_some(Message::SetEnabled)),
                 space::horizontal(),
                 text("Active profile"),

@@ -19,13 +19,17 @@ Tick an item when it's done and merged.
 - [x] 3. The "daemon not running" note on the Overview prints the backticks around
   `systemctl --user start padwight` and `padwight daemon` (`src/gui.rs`). The commands are now
   set in monospace instead.
-- [ ] 4. The Guide tab shows the raw token `{keyboard:apostrophe}` as the label for "X hold".
+- [x] 4. The Guide tab shows the raw token `{keyboard:apostrophe}` as the label for "X hold".
+  A row's field now holds only text the author wrote, and the default shows as plain words in
+  its placeholder ("Press “'”"), since a text field can't draw glyph tokens.
 
 ## Contradictory or misleading states
 
-- [ ] 5. With the daemon down, Overview says "No profile has switched since the daemon started."
-- [ ] 6. The "Remapping enabled" toggle is greyed out while the daemon is down, so it looks off,
-  but its label still says "enabled".
+- [x] 5. With the daemon down, Overview says "No profile has switched since the daemon started."
+  It now says "Needs the daemon.", like the two feeds above it.
+- [x] 6. The "Remapping enabled" toggle is greyed out while the daemon is down, so it looks off,
+  but its label still says "enabled". It now reads "Remapping on" or "Remapping off", and is off
+  while the daemon is down, since nothing is remapped then.
 - [ ] 7. "Revert" looks clickable when there is nothing to revert, while "Save & apply" is greyed
   out next to it.
 - [ ] 8. The disabled "Save & apply" is a pale blue that is hard to read, and "Find by pressing"

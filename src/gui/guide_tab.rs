@@ -129,7 +129,7 @@ pub(super) fn sections<'a>(p: &'a Profile, guide: GuideView<'a>, in_layer: bool)
     let free: Vec<Choice> = rows
         .iter()
         .filter_map(|r| match r.key {
-            RowKey::Row(RowId::Input(input)) => Some(Choice(input, format!("{} {}", label(input), r.default_text))),
+            RowKey::Row(RowId::Input(input)) => Some(Choice(input, format!("{} {}", label(input), r.default_label))),
             RowKey::Row(_) | RowKey::Merged(_) | RowKey::Custom(_) => None,
         })
         .collect();
@@ -169,8 +169,12 @@ const SMALL_WIDTH: f32 = 70.0;
 fn mapping_row<'a>(r: &crate::config::EditableRow, others: &[Choice], guide: GuideView<'_>) -> iced::Element<'a, Message> {
     let glyphs = pieces::row_glyphs(&r.inputs, r.shape, guide.family, guide.swap);
     let key = r.key.clone();
-    let placeholder = if r.default_text.is_empty() { "Text" } else { r.default_text.as_str() };
-    let edit = field(placeholder, &r.text).on_input({
+    // The default text shows as plain words in the placeholder, since its glyph tokens
+    // (`{keyboard:apostrophe}`) can't be drawn in a text field. The field holds only what the
+    // author wrote.
+    let placeholder = if r.default_label.is_empty() { "Text" } else { r.default_label.as_str() };
+    let value = if r.overridden { r.text.as_str() } else { "" };
+    let edit = field(placeholder, value).on_input({
         let key = key.clone();
         move |t| Message::Guide(GuideMsg::Text(key.clone(), t))
     })

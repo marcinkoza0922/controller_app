@@ -38,7 +38,8 @@ impl App {
         let switches = self.status.as_ref().map(|s| s.switches.as_slice()).unwrap_or_default();
         let mut list = column![].spacing(10);
         if switches.is_empty() {
-            list = list.push(text("No profile has switched since the daemon started.").size(13).color(MUTED_COLOR));
+            let none = if self.status.is_some() { "No profile has switched since the daemon started." } else { hint };
+            list = list.push(text(none).size(13).color(MUTED_COLOR));
         }
         for s in switches.iter().take(SHOWN_SWITCHES) {
             let setup = s.game.as_deref().unwrap_or("General");
