@@ -8,8 +8,8 @@ use iced::{
 
 use super::*;
 use crate::{
-    config::{Button, Keyword, Piece},
-    info::{PadFamily, Segment, button_glyph, glyph},
+    config::{Button, GuideInput, Keyword, Piece, RowShape, Stick},
+    info::{PadFamily, Segment, button_glyph, glyph, trigger_glyph},
     keyword_icon,
 };
 
@@ -36,6 +36,50 @@ pub(super) fn piece_line<'a>(pieces: Vec<Piece>, family: PadFamily, swapped: boo
         })
         .collect();
     row(items).align_y(Alignment::Center).into()
+}
+
+/// An input's glyph, as the overlays draw it: a button as its controller glyph, a trigger as its
+/// trigger glyph, and a stick as a round LS or RS.
+pub(super) fn input_chip<'a>(input: GuideInput, family: PadFamily, swapped: bool) -> Element<'a, Message> {
+    match input {
+        GuideInput::Button(b) => piece_line(vec![Piece::Pad(b)], family, swapped, false),
+        GuideInput::Trigger(t) => chip(trigger_glyph(t, family)),
+        GuideInput::Stick(s) => chip(stick_glyph(s)),
+    }
+}
+
+/// An input's glyph as plain text, for places that can't draw one, such as a dropdown: the same
+/// label the glyph is drawn with.
+pub(super) fn input_text(input: GuideInput, family: PadFamily, swapped: bool) -> String {
+    let segment = match input {
+        GuideInput::Button(b) => pad_glyph(b, family, swapped),
+        GuideInput::Trigger(t) => trigger_glyph(t, family),
+        GuideInput::Stick(s) => stick_glyph(s),
+    };
+    match segment {
+        Segment::Glyph { label, .. } => label,
+        _ => format!("{input:?}"),
+    }
+}
+
+/// The glyphs of a Mapping guide row, joined and marked the way its shape says.
+pub(super) fn row_glyphs<'a>(inputs: &[GuideInput], shape: RowShape, family: PadFamily, swapped: bool) -> Element<'a, Message> {
+    let mut items: Vec<Element<'a, Message>> = Vec::new();
+    for (n, input) in inputs.iter().enumerate() {
+        if n > 0 {
+            items.push(text(shape.separator()).into());
+        }
+        items.push(input_chip(*input, family, swapped));
+    }
+    if !shape.mark().is_empty() {
+        items.push(text(shape.mark()).into());
+    }
+    row(items).spacing(2).align_y(Alignment::Center).into()
+}
+
+/// A stick as a round LS or RS, the way the overlay draws `{ls}` and `{rs}`.
+fn stick_glyph(s: Stick) -> Segment {
+    glyph(if s == Stick::Left { "LS" } else { "RS" }, None, true)
 }
 
 /// The four buttons whose labels the Nintendo layout swaps.

@@ -6,8 +6,8 @@ They need a compositor with layer-shell support: KDE Plasma, Sway, Hyprland and 
 
 ## Opening them
 
-- **On-screen keyboard**: the "On-screen keyboard" action, the button on the Overview page, or `padwight overlay-toggle`. With the default Guide layer, Guide + X.
-- **On-screen numpad**: the "On-screen numpad" action, or `padwight numpad-toggle`. With the default Guide layer, Guide + Y.
+- **On-screen keyboard**: the "On-screen keyboard" action, the button on the Overview page, or `padwight overlay-toggle`. Hold Guide and press X, or open the Guide overlay and press X. See [The Guide button](Guide-Button).
+- **On-screen numpad**: the "On-screen numpad" action, or `padwight numpad-toggle`. Hold Guide and press Y, or open the Guide overlay and press Y.
 
 Opening one closes the other.
 

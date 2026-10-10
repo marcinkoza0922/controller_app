@@ -55,12 +55,6 @@ keys = ["KEY_P"]
 [profiles.buttons.Start]
 keys = ["KEY_ESC"]
 
-[profiles.buttons.Guide]
-multi = [
-    { layer = "Guide" },
-    { show_info = "Controls" },
-]
-
 [profiles.buttons.LeftStick.toggle]
 keys = ["KEY_C"]
 
@@ -121,6 +115,30 @@ invert_x = false
 invert_y = false
 activation = "always"
 noise_threshold = 1.0
+[profiles.guide.edits]
+"stick:Left" = { text = "Move" }
+"stick:Right" = { text = "Aim" }
+"trigger:Left" = { text = "Bullet time" }
+"button:RightBumper" = { text = "Shoot-dodge (move + {rb})" }
+"trigger:Right" = { text = "Shoot" }
+"button:South" = { text = "Jump" }
+"button:East" = { text = "Use" }
+"button:West" = { text = "Reload" }
+"button:North" = { text = "Hold: sniper zoom" }
+"button:LeftBumper" = { text = "Hold: weapon groups" }
+"button:LeftStick" = { text = "Click: crouch (toggle)" }
+"button:DpadUp" = { text = "Best weapon" }
+"button:Start" = { text = "Menu" }
+"gesture:button:Start:double_tap" = { text = "quick save" }
+"button:Select" = { text = "Pause" }
+"gesture:button:Start:long_press" = { text = "Quick load" }
+"button:DpadDown" = { text = "Painkillers" }
+
+[[profiles.guide.merged]]
+inputs = ["button:DpadLeft", "button:DpadRight"]
+text = "Previous / next weapon"
+
+
 
 
 [[profiles]]
@@ -157,12 +175,6 @@ keys = ["KEY_P"]
 
 [profiles.buttons.Start]
 keys = ["KEY_ESC"]
-
-[profiles.buttons.Guide]
-multi = [
-    { layer = "Guide" },
-    { show_info = "Controls" },
-]
 
 [profiles.buttons.LeftStick.toggle]
 keys = ["KEY_C"]
@@ -228,6 +240,30 @@ sensitivity = 15.0
 
 [profiles.gyro.activation.unless_held]
 button = "DpadDown"
+[profiles.guide.edits]
+"stick:Left" = { text = "Move" }
+"stick:Right" = { text = "Aim" }
+"trigger:Left" = { text = "Bullet time" }
+"button:RightBumper" = { text = "Shoot-dodge (move + {rb})" }
+"trigger:Right" = { text = "Shoot" }
+"button:South" = { text = "Jump" }
+"button:East" = { text = "Use" }
+"button:West" = { text = "Reload" }
+"button:North" = { text = "Hold: sniper zoom" }
+"button:LeftBumper" = { text = "Hold: weapon groups" }
+"button:LeftStick" = { text = "Click: crouch (toggle)" }
+"button:DpadUp" = { text = "Best weapon" }
+"button:Start" = { text = "Menu" }
+"gesture:button:Start:double_tap" = { text = "quick save" }
+"button:Select" = { text = "Pause" }
+"gesture:button:Start:long_press" = { text = "Quick load" }
+"button:DpadDown" = { text = "Painkillers" }
+
+[[profiles.guide.merged]]
+inputs = ["button:DpadLeft", "button:DpadRight"]
+text = "Previous / next weapon"
+
+
 
 [[profiles]]
 name = "Max Payne + Flick stick"
@@ -264,12 +300,6 @@ keys = ["KEY_P"]
 
 [profiles.buttons.Start]
 keys = ["KEY_ESC"]
-
-[profiles.buttons.Guide]
-multi = [
-    { layer = "Guide" },
-    { show_info = "Controls" },
-]
 
 [profiles.buttons.LeftStick.toggle]
 keys = ["KEY_C"]
@@ -340,6 +370,30 @@ sensitivity = 22.0
 
 [profiles.gyro.activation.unless_held]
 button = "DpadDown"
+[profiles.guide.edits]
+"stick:Left" = { text = "Move" }
+"stick:Right" = { text = "Aim" }
+"trigger:Left" = { text = "Bullet time" }
+"button:RightBumper" = { text = "Shoot-dodge (move + {rb})" }
+"trigger:Right" = { text = "Shoot" }
+"button:South" = { text = "Jump" }
+"button:East" = { text = "Use" }
+"button:West" = { text = "Reload" }
+"button:North" = { text = "Hold: sniper zoom" }
+"button:LeftBumper" = { text = "Hold: weapon groups" }
+"button:LeftStick" = { text = "Click: crouch (toggle)" }
+"button:DpadUp" = { text = "Best weapon" }
+"button:Start" = { text = "Menu" }
+"gesture:button:Start:double_tap" = { text = "quick save" }
+"button:Select" = { text = "Pause" }
+"gesture:button:Start:long_press" = { text = "Quick load" }
+"button:DpadDown" = { text = "Painkillers" }
+
+[[profiles.guide.merged]]
+inputs = ["button:DpadLeft", "button:DpadRight"]
+text = "Previous / next weapon"
+
+
 [[menus]]
 name = "Weapons"
 
@@ -398,79 +452,3 @@ opacity = 0.95
 [menus.style.selected]
 color = "#b8322a"
 opacity = 1.0
-
-[[info_overlays]]
-name = "Controls"
-title = "This game's controls"
-always = false
-rows = [
-    [
-    "{ls}",
-    "Move",
-    "{rs}",
-    "Aim",
-],
-    [
-    "{lt}",
-    "Bullet time",
-    "{rb}",
-    "Shoot-dodge (move + {rb})",
-],
-    [
-    "{rt}",
-    "Shoot",
-    "{south}",
-    "Jump",
-],
-    [
-    "{east}",
-    "Use",
-    "{west}",
-    "Reload",
-],
-    [
-    "{north}",
-    "Hold: sniper zoom",
-    "{lb}",
-    "Hold: weapon groups",
-],
-    [
-    "{l3}",
-    "Click: crouch (toggle)",
-    "{up}",
-    "Best weapon",
-],
-    [
-    "{left} {right}",
-    "Previous / next weapon",
-    "{start}",
-    "Menu · double tap: quick save",
-],
-    [
-    "{select}",
-    "Pause",
-    "hold {start}",
-    "Quick load",
-],
-    [
-    "{down}",
-    "Painkillers",
-],
-]
-
-[info_overlays.style]
-position = "center"
-scale = 0.9
-
-[info_overlays.style.background]
-color = "#101317"
-opacity = 0.88
-
-[info_overlays.style.items]
-color = "#2a3039"
-opacity = 0.95
-
-[info_overlays.style.selected]
-color = "#b8322a"
-opacity = 1.0
-

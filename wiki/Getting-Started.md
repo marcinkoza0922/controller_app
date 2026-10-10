@@ -41,7 +41,7 @@ Edits stay in memory until you click **Save & apply**. **Revert** drops them. Pr
 
 ## Changing controls while you play
 
-Press Guide and Start together to open the [in-game menu](In-Game-Menu). It has quick settings for the game you're playing, and the editor for its controls.
+Press Guide and Start together to open the [in-game menu](In-Game-Menu). It has quick settings for the game you're playing, and the editor for its controls. Tap Guide on its own to open the [Guide overlay](Guide-Button), with the game's notes, mappings and the keyboard, numpad and other shortcuts.
 
 ## Next
 

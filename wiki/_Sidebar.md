@@ -11,6 +11,7 @@
 **Mapping**
 - [Games and profiles](Games-and-Profiles)
 - [Buttons and actions](Buttons-and-Actions)
+- [The Guide button](Guide-Button)
 - [Sticks and triggers](Sticks-and-Triggers)
 - [Layers](Layers)
 - [Macros](Macros)

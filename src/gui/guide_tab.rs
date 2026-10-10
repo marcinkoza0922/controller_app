@@ -3,17 +3,21 @@
 //! and sharing a row with other inputs.
 
 use iced::{
-    Length,
-    widget::{button, checkbox, row, text, text_editor},
+    Alignment, Length,
+    widget::{button, checkbox, container, row, text, text_editor},
 };
 
-use super::{App, Message, widgets::{dropdown, field, section}};
-use crate::config::{GuideInput, Profile, RowId, RowKey, Stick, Trigger, default_text, editable_rows};
+use super::{App, Message, pieces, widgets::{dropdown, field, section}};
+use crate::info::PadFamily;
+use crate::config::{GuideInput, Profile, RowId, RowKey, default_text, editable_rows};
 
 /// The Guide tab's notes editor, which the app keeps.
 #[derive(Clone, Copy)]
 pub(super) struct GuideView<'a> {
     pub(super) notes: &'a text_editor::Content,
+    /// Whose glyphs the rows are drawn with, and whether the face buttons are swapped.
+    pub(super) family: PadFamily,
+    pub(super) nintendo_layout: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -103,7 +107,10 @@ pub(super) fn sections<'a>(p: &'a Profile, guide: GuideView<'a>, in_layer: bool)
     let free: Vec<Choice> = rows
         .iter()
         .filter_map(|r| match r.key {
-            RowKey::Row(RowId::Input(input)) => Some(Choice(input, format!("{} {}", input_label(input), r.default_text))),
+            RowKey::Row(RowId::Input(input)) => {
+                let label = pieces::input_text(input, guide.family, guide.nintendo_layout);
+                Some(Choice(input, format!("{label} {}", r.default_text)))
+            }
             RowKey::Row(_) | RowKey::Merged(_) => None,
         })
         .collect();
@@ -111,7 +118,7 @@ pub(super) fn sections<'a>(p: &'a Profile, guide: GuideView<'a>, in_layer: bool)
         .iter()
         .map(|r| {
             let others: Vec<Choice> = free.iter().filter(|c| !r.inputs.contains(&c.0)).cloned().collect();
-            mapping_row(r, others)
+            mapping_row(r, others, guide)
         })
         .collect();
     vec![
@@ -128,21 +135,9 @@ pub(super) fn sections<'a>(p: &'a Profile, guide: GuideView<'a>, in_layer: bool)
     ]
 }
 
-/// The short name an input's row starts with: a button's label, or LT, RT, LS and RS.
-fn input_label(input: GuideInput) -> &'static str {
-    match input {
-        GuideInput::Button(b) => super::profile::short_button(b),
-        GuideInput::Trigger(Trigger::Left) => "LT",
-        GuideInput::Trigger(Trigger::Right) => "RT",
-        GuideInput::Stick(Stick::Left) => "LS",
-        GuideInput::Stick(Stick::Right) => "RS",
-    }
-}
-
 /// One row of the list: its glyphs, its text, and its controls.
-fn mapping_row<'a>(r: &crate::config::EditableRow, others: Vec<Choice>) -> iced::Element<'a, Message> {
-    let labels: Vec<String> = r.inputs.iter().map(|i| input_label(*i).to_string()).collect();
-    let glyphs = r.shape.join(&labels);
+fn mapping_row<'a>(r: &crate::config::EditableRow, others: Vec<Choice>, guide: GuideView<'_>) -> iced::Element<'a, Message> {
+    let glyphs = pieces::row_glyphs(&r.inputs, r.shape, guide.family, guide.nintendo_layout);
     let key = r.key.clone();
     let placeholder = if r.default_text.is_empty() { "Text" } else { r.default_text.as_str() };
     let edit = field(placeholder, &r.text).on_input({
@@ -176,5 +171,5 @@ fn mapping_row<'a>(r: &crate::config::EditableRow, others: Vec<Choice>) -> iced:
         }
         RowKey::Row(_) => text("").into(),
     };
-    row![text(glyphs).size(14).width(Length::Fixed(140.0)), edit, shown, share].spacing(10).into()
+    row![container(glyphs).width(Length::Fixed(140.0)), edit, shown, share].spacing(10).align_y(Alignment::Center).into()
 }

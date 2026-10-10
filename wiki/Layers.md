@@ -12,8 +12,6 @@ A layer can override:
 - gyro,
 - combos (add combos, or switch the profile's combos off).
 
-![The Guide layer on the Layers tab, with its bindings and the controller drawing](https://raw.githubusercontent.com/marcinkoza0922/padwight/main/docs/images/layers-guide.png)
-
 ## Turning a layer on
 
 Map **Layer…** to any button, trigger, stick direction, zone, gesture or combo. The layer is on while that input is held.
@@ -57,4 +55,4 @@ Layers use their profile's timings (combo window, tap window and so on).
 
 Shared items can't use layers, because layers always belong to one game.
 
-The Guide button holds a default layer, also called Guide. See [Buttons and actions](Buttons-and-Actions#the-guide-button).
+The Guide button's shortcuts aren't a layer and don't appear on this tab. See [The Guide button](Guide-Button).

@@ -162,22 +162,28 @@ pub enum RowShape {
 }
 
 impl RowShape {
-    /// The glyphs of a row, given each input's glyph (`parts`, in the row's order): joined the
-    /// way the shape says, and marked for a gesture.
-    pub fn join(self, parts: &[String]) -> String {
+    /// What goes between the glyphs of a row.
+    pub fn separator(self) -> &'static str {
         match self {
-            RowShape::Input => parts.join(" "),
-            RowShape::Merged => parts.join(", "),
-            RowShape::Combo => parts.join(" + "),
-            RowShape::Gesture(kind) => {
-                let mark = match kind {
-                    GestureKind::DoubleTap => " ×2",
-                    GestureKind::TripleTap => " ×3",
-                    GestureKind::LongPress => " hold",
-                };
-                format!("{}{mark}", parts.join(" "))
-            }
+            RowShape::Input | RowShape::Gesture(_) => " ",
+            RowShape::Merged => ", ",
+            RowShape::Combo => " + ",
         }
+    }
+
+    /// What follows the glyphs of a row: the mark of a gesture, which says how it's done.
+    pub fn mark(self) -> &'static str {
+        match self {
+            RowShape::Input | RowShape::Merged | RowShape::Combo => "",
+            RowShape::Gesture(GestureKind::DoubleTap) => " ×2",
+            RowShape::Gesture(GestureKind::TripleTap) => " ×3",
+            RowShape::Gesture(GestureKind::LongPress) => " hold",
+        }
+    }
+
+    /// The glyphs of a row, given each input's glyph (`parts`, in the row's order), joined and marked.
+    pub fn join(self, parts: &[String]) -> String {
+        format!("{}{}", parts.join(self.separator()), self.mark())
     }
 }
 

@@ -1,6 +1,6 @@
 # The in-game menu
 
-Guide + Start, pressed together, opens a menu over the game you're playing. You can change a few settings from it, or open the full editor for the game's controls. The menu is built into padwight, not part of any profile, so it's there for every game.
+Guide + Start, pressed together, opens a menu over the game you're playing. Tapping Guide alone opens the [Guide overlay](Guide-Button) instead, with the game's notes, its mappings and the system shortcuts. You can change a few settings from it, or open the full editor for the game's controls. The menu is built into padwight, not part of any profile, so it's there for every game.
 
 Use the controller to drive it: the left stick or D-pad moves, **A** chooses, and **B** goes back or closes the menu.
 
