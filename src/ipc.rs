@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     config::{Button, Config, ProfileRef},
     info::PadModel,
+    inputlog::LogView,
     input::Axis,
 };
 
@@ -49,9 +50,9 @@ pub enum Request {
     /// Keep the connection open; the daemon streams one `Option<OverlayView>` JSON line per
     /// change. `null` means nothing is shown (the resident overlay idles).
     WatchOverlay,
-    /// Keep the connection open; the daemon streams one `Option<LogView>` JSON line per change:
-    /// the latest presses of the most recently used controller, with what each did. `null` when
-    /// no controller is active.
+    /// Keep the connection open; the daemon streams one `Option<Feeds>` JSON line per change: the
+    /// latest presses of the most recently used controller, and what padwight exported for them.
+    /// `null` when no controller is active.
     WatchFeed,
     /// Debug mode only (the daemon must run with `--debug`): adds a controller that no hardware
     /// backs, and replies `Attached` with its device path. Its output is recorded, and also sent
@@ -121,6 +122,15 @@ pub struct Status {
     /// Profile switches, newest first, each with the reason the daemon made it.
     #[serde(default)]
     pub switches: Vec<SwitchEvent>,
+}
+
+/// The Overview's two feeds for the controller in use.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Feeds {
+    /// The presses as the controller labels them, with what each did.
+    pub presses: LogView,
+    /// The buttons padwight exported for those presses, labelled as the controller in use labels them.
+    pub exports: LogView,
 }
 
 /// A profile switch and why it happened.

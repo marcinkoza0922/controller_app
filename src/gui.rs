@@ -30,9 +30,8 @@ use crate::{
     engine::Opener,
     motion::{MotionStyle, OverlayKind},
     info::{PadFamily, PadModel},
-    inputlog::LogView,
     pad_identity::PadIdentity,
-    ipc::{self, InputSnapshot, Request, Response, Status, WindowInfo},
+    ipc::{self, Feeds, InputSnapshot, Request, Response, Status, WindowInfo},
     keyboard::{self, Layout},
     launchers, library,
     menu::MenuSession,
@@ -156,7 +155,7 @@ struct App {
     /// The controller picture shown on the editor (see `settle_pad`).
     pad_shown: Option<PadShown>,
     /// The latest presses and what each did, streamed from the daemon.
-    feed: Option<LogView>,
+    feeds: Option<Feeds>,
     picker: Option<KeyPicker>,
     dialog: Option<Dialog>,
     profile_tab: ProfileTab,
@@ -312,7 +311,7 @@ fn unique_name(base: &str, taken: impl Fn(&str) -> bool) -> String {
 enum Message {
     Poll,
     LiveInput(Option<InputSnapshot>),
-    LiveFeed(Option<LogView>),
+    LiveFeed(Option<Feeds>),
     StatusLoaded(Result<Status, String>),
     ConfigLoaded(Box<Config>, Option<String>),
     SetEnabled(bool),
@@ -559,7 +558,7 @@ impl App {
             message: None,
             live: None,
             pad_shown: None,
-            feed: None,
+            feeds: None,
             picker: None,
             dialog: None,
             profile_tab: ProfileTab::Buttons,
@@ -640,6 +639,26 @@ impl App {
     fn nintendo_layout(&self) -> bool {
         let setting = self.game().nintendo_layout.unwrap_or(self.config.nintendo_layout);
         self.presented_identity().applies_nintendo_layout(setting)
+    }
+
+    /// How the Nintendo layout shows on the face buttons of profile `p`: the labels, and whether the
+    /// buttons send the swapped letters (see [`pieces::Swap`]).
+    fn swap_for(&self, p: &Profile) -> pieces::Swap {
+        use pieces::Swap;
+        let setting = self.game().nintendo_layout.unwrap_or(self.config.nintendo_layout);
+        let identity = self.presented_identity();
+        if !identity.applies_nintendo_layout(setting) {
+            return Swap::Off;
+        }
+        let pad = self.shown_pad();
+        let nintendo_pad = pad.family == PadFamily::Nintendo;
+        if identity.swaps_face_output(nintendo_pad, setting, p.faces_default()) {
+            Swap::Sends
+        } else if nintendo_pad {
+            Swap::Quiet
+        } else {
+            Swap::Labels
+        }
     }
 
     fn theme(&self) -> iced::Theme {
@@ -850,7 +869,7 @@ impl App {
                 self.live = snapshot;
                 self.settle_pad(Instant::now());
             }
-            Message::LiveFeed(feed) => self.feed = feed,
+            Message::LiveFeed(feeds) => self.feeds = feeds,
             Message::StatusLoaded(Ok(status)) => {
                 // Mirror daemon-owned fields so both copies stay comparable.
                 let active = ProfileRef { game: status.active_game.clone(), profile: status.active_profile.clone() };

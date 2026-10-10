@@ -31,8 +31,8 @@ use crate::{
     engine::{Engine, Opener},
     focus::{self, FocusEvent},
     input::{self, InputEvent, MotionFrame, MotionNormalizer, MotionSample, Normalizer},
-    ipc::{self, DeviceInfo, FocusBackend, InputSnapshot, Request, Response, Status, WindowInfo},
-    inputlog::LogView,
+    ipc::{self, DeviceInfo, Feeds, FocusBackend, InputSnapshot, Request, Response, Status, WindowInfo},
+    inputlog::Thresholds,
     keyboard::Layout,
     monitor::{self, InputView, OutputView, log},
     output::{OutEvent, VIRTUAL_PREFIX, VirtualKbm, VirtualPad},
@@ -87,7 +87,7 @@ enum Msg {
     Gone { id: u64 },
     Ipc { req: Request, reply: Sender<Response> },
     Watch(Sender<Option<InputSnapshot>>),
-    WatchFeed(Sender<Option<LogView>>),
+    WatchFeed(Sender<Option<Feeds>>),
     Focus(FocusEvent),
     Motion { id: u64, sample: MotionSample },
     MotionGone { id: u64 },
@@ -144,6 +144,8 @@ struct Managed {
     layered: Option<(Vec<String>, Profile)>,
     /// What it pressed lately, for the input log.
     log: crate::inputlog::InputLog,
+    /// The buttons padwight exported to the virtual pad lately, for the Overview's second feed.
+    exports: crate::inputlog::InputLog,
     /// 0, 1, 2… in the order controllers connected, kept until this one disconnects
     /// (`{current_input_device_N}`, a log overlay's controller).
     number: u8,
@@ -214,6 +216,12 @@ impl Managed {
     /// Sends what the mappings output to the virtual devices; an injected controller's output
     /// is also recorded, and without a pad it goes no further.
     fn dispatch(&mut self, kbm: &mut VirtualKbm, out: Vec<OutEvent>) {
+        let now = Instant::now();
+        for ev in &out {
+            if let OutEvent::PadButton(b, pressed) = ev {
+                self.exports.event(InputEvent::Button(*b, *pressed), Thresholds::default(), now);
+            }
+        }
         if let Some(recorded) = &mut self.recorded {
             inject::record(recorded, &out);
         }
@@ -363,7 +371,7 @@ struct Daemon {
     /// Clients streaming live input (the GUI's controller view).
     watchers: Vec<Sender<Option<InputSnapshot>>>,
     /// Clients streaming the latest presses and what they did (the GUI's "what's happening").
-    feed_watchers: Vec<Sender<Option<LogView>>>,
+    feed_watchers: Vec<Sender<Option<Feeds>>>,
     /// Profile switches and why they were made, for the GUI.
     activity: activity::Activity,
     /// Device whose input watchers are shown.
@@ -1850,13 +1858,13 @@ impl Daemon {
         if self.active.is_some() {
             return self.overlay_input(id, events);
         }
+        self.sync_face_swap(id);
         let Some(base) = self.config.active() else { return };
         let Some(dev) = self.devices.get_mut(&id) else { return };
         let mut out = Vec::new();
-        let now = Instant::now();
         for ev in events {
             dev.view.apply(&ev);
-            dev.engine.handle(layered(&dev.layered, base), ev, now, &mut out);
+            dev.engine.handle(layered(&dev.layered, base), ev, Instant::now(), &mut out);
             // A layer started or ended: the next events use it, and sticks, triggers and
             // gyro switch modes right away.
             if dev.refresh_layers(&self.config) {
@@ -2379,6 +2387,22 @@ impl Daemon {
         self.config.active_game().controllers.unwrap_or_default()
     }
 
+    /// Tells pad `id`'s engine whether its face buttons send the Nintendo letters now, under the
+    /// active profile: see [`PadIdentity::swaps_face_output`].
+    fn sync_face_swap(&mut self, id: u64) {
+        let swap = self.config.active().is_some_and(|base| self.face_output_swapped(id, base));
+        if let Some(dev) = self.devices.get_mut(&id) {
+            dev.engine.set_face_swap(swap);
+        }
+    }
+
+    fn face_output_swapped(&self, id: u64, base: &Profile) -> bool {
+        let Some(dev) = self.devices.get(&id) else { return false };
+        let identity = PadIdentity::resolve(self.identity_override, dev.model, self.active_support());
+        let nintendo_pad = dev.family == Some(crate::info::PadFamily::Nintendo);
+        identity.swaps_face_output(nintendo_pad, self.config.active_nintendo_layout(), base.faces_default())
+    }
+
     /// Makes every controller's virtual pad present the identity the active game asks for.
     fn sync_identities(&mut self) {
         let (forced, support) = (self.identity_override, self.active_support());
@@ -2674,6 +2698,7 @@ impl Daemon {
             calibrating: None,
             layered: None,
             log: crate::inputlog::InputLog::default(),
+            exports: crate::inputlog::InputLog::default(),
             number: logs::free_number(self.devices.values().map(|d| d.number)),
         }
     }

@@ -23,16 +23,44 @@ fn keyword<'a>(k: Keyword) -> Element<'a, Message> {
 /// The swap icon drawn after a face button whose glyph is swapped: two opposed arrows.
 const SWAP_ICON: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#8a8f98" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h15l-4-4M20 16H5l4 4"/></svg>"##;
 
-/// A summary on one line. `muted` greys the words, for rows that aren't changed. `swapped` draws
+/// How the Nintendo layout shows on a profile's face buttons: their labels, and whether the
+/// buttons send the letters on them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Swap {
+    /// The labels are the controller's own.
+    Off,
+    /// The labels are swapped, and the buttons still send their positions, as on a controller
+    /// that isn't a Nintendo pad.
+    Labels,
+    /// The labels are swapped, and the buttons send the letter on each label.
+    Sends,
+    /// The labels are swapped on a Nintendo pad whose face buttons are reassigned: the buttons send
+    /// their positions, and the labels carry no marker saying otherwise.
+    Quiet,
+}
+
+impl Swap {
+    /// Whether the face buttons' labels are drawn swapped.
+    pub(super) fn labels(self) -> bool {
+        self != Self::Off
+    }
+
+    /// Whether a swap icon marks the swapped labels.
+    fn marked(self) -> bool {
+        matches!(self, Self::Labels | Self::Sends)
+    }
+}
+
+/// A summary on one line. `muted` greys the words, for rows that aren't changed. `swap` draws
 /// the Nintendo layout's face-button labels, each with a swap icon that explains them.
-pub(super) fn piece_line<'a>(pieces: Vec<Piece>, family: PadFamily, swapped: bool, muted: bool) -> Element<'a, Message> {
+pub(super) fn piece_line<'a>(pieces: Vec<Piece>, family: PadFamily, swap: Swap, muted: bool) -> Element<'a, Message> {
     let items: Vec<Element<'a, Message>> = pieces
         .into_iter()
         .map(|piece| match piece {
             Piece::Text(s) => text(s).color_maybe(muted.then_some(MUTED_COLOR)).into(),
             Piece::Keyword(k) => keyword(k),
-            Piece::Pad(b) if swapped && is_face(b) => row![chip(pad_glyph(b, family, swapped)), swap_marker()].spacing(2).align_y(Alignment::Center).into(),
-            Piece::Pad(b) => chip(pad_glyph(b, family, swapped)),
+            Piece::Pad(b) if swap.marked() && is_face(b) => row![chip(pad_glyph(b, family, true)), swap_marker(swap)].spacing(2).align_y(Alignment::Center).into(),
+            Piece::Pad(b) => chip(pad_glyph(b, family, swap.labels())),
             Piece::Key(code) => chip(key_glyph(&code)),
             Piece::Mouse(m) => chip(mouse_glyph(m)),
         })
@@ -42,9 +70,9 @@ pub(super) fn piece_line<'a>(pieces: Vec<Piece>, family: PadFamily, swapped: boo
 
 /// An input's glyph, as the overlays draw it: a button as its controller glyph, a trigger as its
 /// trigger glyph, and a stick as a round LS or RS.
-pub(super) fn input_chip<'a>(input: GuideInput, family: PadFamily, swapped: bool) -> Element<'a, Message> {
+pub(super) fn input_chip<'a>(input: GuideInput, family: PadFamily, swap: Swap) -> Element<'a, Message> {
     match input {
-        GuideInput::Button(b) => piece_line(vec![Piece::Pad(b)], family, swapped, false),
+        GuideInput::Button(b) => piece_line(vec![Piece::Pad(b)], family, swap, false),
         GuideInput::Trigger(t) => chip(trigger_glyph(t, family)),
         GuideInput::Stick(s) => chip(stick_glyph(s)),
     }
@@ -52,9 +80,9 @@ pub(super) fn input_chip<'a>(input: GuideInput, family: PadFamily, swapped: bool
 
 /// An input's glyph as plain text, for places that can't draw one, such as a dropdown: the same
 /// label the glyph is drawn with.
-pub(super) fn input_text(input: GuideInput, family: PadFamily, swapped: bool) -> String {
+pub(super) fn input_text(input: GuideInput, family: PadFamily, swap: Swap) -> String {
     let segment = match input {
-        GuideInput::Button(b) => pad_glyph(b, family, swapped),
+        GuideInput::Button(b) => pad_glyph(b, family, swap.labels()),
         GuideInput::Trigger(t) => trigger_glyph(t, family),
         GuideInput::Stick(s) => stick_glyph(s),
     };
@@ -65,13 +93,13 @@ pub(super) fn input_text(input: GuideInput, family: PadFamily, swapped: bool) ->
 }
 
 /// The glyphs of a Mapping guide row, joined and marked the way its shape says.
-pub(super) fn row_glyphs<'a>(inputs: &[GuideInput], shape: RowShape, family: PadFamily, swapped: bool) -> Element<'a, Message> {
+pub(super) fn row_glyphs<'a>(inputs: &[GuideInput], shape: RowShape, family: PadFamily, swap: Swap) -> Element<'a, Message> {
     let mut items: Vec<Element<'a, Message>> = Vec::new();
     for (n, input) in inputs.iter().enumerate() {
         if n > 0 {
             items.push(text(shape.separator()).into());
         }
-        items.push(input_chip(*input, family, swapped));
+        items.push(input_chip(*input, family, swap));
     }
     if !shape.mark().is_empty() {
         items.push(text(shape.mark()).into());
@@ -89,12 +117,17 @@ fn is_face(b: Button) -> bool {
     matches!(b, Button::South | Button::East | Button::West | Button::North)
 }
 
-/// A small swap icon whose tooltip says the face buttons' labels are swapped here.
-fn swap_marker<'a>() -> Element<'a, Message> {
+/// A small swap icon whose tooltip says the face buttons' labels are swapped here, and whether the
+/// buttons send the swapped letters.
+fn swap_marker<'a>(swap: Swap) -> Element<'a, Message> {
     let icon = svg(svg::Handle::from_memory(SWAP_ICON.as_bytes())).width(14).height(14);
+    let explain = match swap {
+        Swap::Sends => "Nintendo layout: A and B, X and Y are swapped on these labels, and the buttons send the letter on each label.",
+        _ => "Nintendo layout: A and B, X and Y are swapped on these labels. The buttons still do what their bindings say.",
+    };
     tooltip(
         icon,
-        container(text("Nintendo layout: A and B, X and Y are swapped on these labels. The buttons still do what their bindings say.").size(13))
+        container(text(explain).size(13))
             .padding(8)
             .max_width(320.0)
             .style(style::tooltip),

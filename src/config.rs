@@ -59,6 +59,9 @@ pub enum Button {
 }
 
 impl Button {
+    /// The four face buttons, the ones the Nintendo button layout swaps.
+    pub const FACE: [Button; 4] = [Button::South, Button::East, Button::West, Button::North];
+
     pub const ALL: [Button; 15] = [
         Button::South,
         Button::East,
@@ -1834,6 +1837,12 @@ impl Profile {
         self.buttons.get(&b).unwrap_or(&ButtonAction::Disabled)
     }
 
+    /// Whether every face button's plain press still sends its own button. Only the base
+    /// assignments count: a layer's changes don't turn the Nintendo layout's swap off.
+    pub fn faces_default(&self) -> bool {
+        Button::FACE.iter().all(|&b| *self.button(b) == ButtonAction::Gamepad(b))
+    }
+
     /// The button's gestures, if it has any set.
     /// Every top-level action in the profile: buttons, gestures, combos, triggers and zones.
     pub fn actions(&self) -> Vec<&ButtonAction> {
@@ -2388,7 +2397,7 @@ pub struct Game {
     /// applies when unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub overlay_font: Option<String>,
-    /// Button glyphs swapped to the Nintendo layout while this game is active; `None` follows
+    /// The Nintendo button layout while this game is active; `None` follows
     /// `Config::nintendo_layout`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nintendo_layout: Option<bool>,
@@ -2685,8 +2694,9 @@ pub struct Config {
     /// Whose button glyphs info overlays use when the controller in use isn't recognized.
     #[serde(default)]
     pub info_glyphs: crate::info::PadFamily,
-    /// Swaps A with B and X with Y in button glyphs, to match prompts drawn in the Nintendo
-    /// layout. Only the labels change; the buttons still do what their bindings say.
+    /// Swaps A with B and X with Y, to match prompts drawn in the Nintendo layout. On a Nintendo
+    /// pad the face buttons send the letters on their labels; a face button's plain press that
+    /// is reassigned turns that off. Other pads only get swapped labels.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub nintendo_layout: bool,
     /// Draws the added and removed rows of menus in blue and orange, with a + or − in front, so

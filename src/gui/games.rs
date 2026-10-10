@@ -393,9 +393,10 @@ impl App {
         section(
             "Button layout",
             Some(
-                "Swaps A with B and X with Y in the button glyphs, to match prompts that a game draws in the \
-                 Nintendo layout. Only the labels change: each button still does what its binding says. The \
-                 swapped labels carry a swap icon wherever they show here."
+                "Swaps A with B and X with Y, to match prompts that a game draws in the Nintendo layout. On a \
+                 Nintendo pad the face buttons send the letter on their label, so the B button sends B. A face \
+                 button whose plain press is changed turns that off, and the buttons send their positions again. \
+                 On other pads only the labels change. The swapped labels carry a swap icon wherever they show here."
                     .into(),
             ),
             vec![toggler(self.config.nintendo_layout).label("Nintendo button layout").on_toggle(Message::SetNintendoLayout).into()],

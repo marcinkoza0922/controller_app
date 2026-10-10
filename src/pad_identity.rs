@@ -99,6 +99,14 @@ impl PadIdentity {
     pub fn applies_nintendo_layout(self, setting: bool) -> bool {
         setting && self != Self::SwitchPro
     }
+
+    /// Whether the face buttons send the letters on their Nintendo labels instead of their
+    /// positions: a Nintendo pad whose layout applies, and whose face buttons are all still at
+    /// their defaults (`faces_default`). Any reassigned face button means the user chose the
+    /// layout, so the positions are kept.
+    pub fn swaps_face_output(self, nintendo_pad: bool, setting: bool, faces_default: bool) -> bool {
+        nintendo_pad && faces_default && self.applies_nintendo_layout(setting)
+    }
 }
 
 #[cfg(test)]
@@ -146,6 +154,15 @@ mod tests {
         assert!(PadIdentity::DualSense.applies_nintendo_layout(true));
         assert!(!PadIdentity::SwitchPro.applies_nintendo_layout(true));
         assert!(!PadIdentity::Xbox360.applies_nintendo_layout(false));
+    }
+
+    #[test]
+    fn the_face_swap_needs_a_nintendo_pad_the_layout_and_default_face_buttons() {
+        assert!(PadIdentity::Xbox360.swaps_face_output(true, true, true));
+        assert!(!PadIdentity::Xbox360.swaps_face_output(false, true, true));
+        assert!(!PadIdentity::Xbox360.swaps_face_output(true, false, true));
+        assert!(!PadIdentity::Xbox360.swaps_face_output(true, true, false));
+        assert!(!PadIdentity::SwitchPro.swaps_face_output(true, true, true));
     }
 
     #[test]
