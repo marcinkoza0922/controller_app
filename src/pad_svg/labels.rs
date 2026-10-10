@@ -39,22 +39,25 @@ fn anchors(l: &Layout) -> Vec<(Spot, (f32, f32), bool)> {
     use Button::{DpadDown, DpadLeft, DpadRight, DpadUp, Guide, LeftBumper, LeftStick, RightBumper, RightStick, Select, Start};
     let (lx, rx) = l.shoulders;
     let quarter = l.shoulder_w / 4.0;
+    // Meet each bar in the middle of what shows above the body.
+    let trigger_y = l.trigger_top() + super::TRIGGER_HEIGHT / 2.0;
+    let bumper_y = l.bumper_top() + super::BUMPER_ABOVE / 2.0;
     let (dx, dy) = l.dpad;
     let arm = l.dpad_reach * 18.0 / 26.0;
     let (fx, fy) = l.face;
     let [south, east, west, north] = l.face_offsets();
     let at = |(x, y, _): (f32, f32, f32)| (x, y);
     vec![
-        (Spot::Trigger(Trigger::Left), (lx - quarter, 21.0), false),
-        (Spot::Button(LeftBumper), (lx, 47.0), false),
+        (Spot::Trigger(Trigger::Left), (lx - quarter, trigger_y), false),
+        (Spot::Button(LeftBumper), (lx, bumper_y), false),
         (Spot::Button(Select), at(l.select), false),
         (Spot::Button(LeftStick), l.left_stick, false),
         (Spot::Button(DpadUp), (dx, dy - arm), false),
         (Spot::Button(DpadLeft), (dx - arm, dy), false),
         (Spot::Button(DpadRight), (dx + arm, dy), false),
         (Spot::Button(DpadDown), (dx, dy + arm), false),
-        (Spot::Trigger(Trigger::Right), (rx + quarter, 21.0), true),
-        (Spot::Button(RightBumper), (rx, 47.0), true),
+        (Spot::Trigger(Trigger::Right), (rx + quarter, trigger_y), true),
+        (Spot::Button(RightBumper), (rx, bumper_y), true),
         (Spot::Button(Guide), at(l.guide), true),
         (Spot::Button(Button::North), (fx + north.0 + l.face_r, fy + north.1), true),
         (Spot::Button(Button::East), (fx + east.0 + l.face_r, fy + east.1), true),

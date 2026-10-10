@@ -27,16 +27,28 @@ pub enum Spot {
     Trigger(Trigger),
 }
 
-const BODY: &str = "#30343c";
 const BODY_EDGE: &str = "#4a505a";
+/// The shell's shading: the body is filled with a gradient from `SHELL_TOP` down to
+/// `SHELL_BOTTOM` (around the flat `#30343c` it replaces) so it reads as a molded shape
+/// rather than a flat cutout.
+const SHELL_TOP: &str = "#373d47";
+const SHELL_BOTTOM: &str = "#2c3039";
 const IDLE: &str = "#1d2026";
 const IDLE_EDGE: &str = "#5d6470";
 const ACTIVE: &str = "#4ea1ff";
+/// The guide/home button, which stands out from the small buttons around it on the real pads.
+const GUIDE: &str = "#3a3f48";
 
-const TRIGGER_TOP: f32 = 6.0;
 const TRIGGER_HEIGHT: f32 = 30.0;
-const BUMPER_TOP: f32 = 40.0;
-const BUMPER_HEIGHT: f32 = 14.0;
+/// The blue the pads glow in: the light strips beside a DualSense's touchpad, the light bar
+/// above a DualShock 4's.
+const LIGHT: &str = "#4ea1ff";
+/// How much of the bumper shows above the body's top edge, and how far it reaches down past
+/// it. The body is drawn over that lower part, so the bar follows an edge that curves away
+/// under its ends instead of floating above it.
+const BUMPER_ABOVE: f32 = 16.0;
+const BUMPER_BELOW: f32 = 10.0;
+const BUMPER_HEIGHT: f32 = BUMPER_ABOVE + BUMPER_BELOW;
 
 /// How a face button is drawn: its label and color for the controller's family (as the overlays
 /// draw it), and whether that color fills it when pressed. Nintendo's have no color, so they're
@@ -69,12 +81,12 @@ pub fn render(input: Option<&InputSnapshot>, model: Option<PadModel>, glyphs: Gl
     let mut s = String::with_capacity(8192);
     let _ = write!(
         s,
-        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {WIDTH} {HEIGHT}"><g transform="translate({MARGIN},0)">"#
+        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {WIDTH} {HEIGHT}"><defs><linearGradient id="g-shell" x1="0" y1="46" x2="0" y2="274" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="{SHELL_TOP}"/><stop offset="1" stop-color="{SHELL_BOTTOM}"/></linearGradient></defs><g transform="translate({MARGIN},0)">"#
     );
     shoulders(&mut s, layout, [(lt, Button::LeftBumper), (rt, Button::RightBumper)], pressed);
 
     // Body, and the marks that tell the models apart.
-    let _ = write!(s, r#"<path d="{}" fill="{BODY}" stroke="{BODY_EDGE}" stroke-width="3"/>"#, layout.outline);
+    let _ = write!(s, r#"<path d="{}" fill="url(#g-shell)" stroke="{BODY_EDGE}" stroke-width="3"/>"#, layout.outline);
     for mark in layout.marks {
         match *mark {
             Mark::Rect(x, y, w, h, rx) => {
@@ -82,6 +94,9 @@ pub fn render(input: Option<&InputSnapshot>, model: Option<PadModel>, glyphs: Gl
             }
             Mark::Circle(x, y, r) => {
                 let _ = write!(s, r#"<circle cx="{x}" cy="{y}" r="{r}" fill="{IDLE}" stroke="{IDLE_EDGE}" stroke-width="1.5"/>"#);
+            }
+            Mark::Strip(x, y, w, h, rx, fill) => {
+                let _ = write!(s, r#"<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="{rx}" fill="{fill}"/>"#);
             }
         }
     }
@@ -105,7 +120,11 @@ pub fn render(input: Option<&InputSnapshot>, model: Option<PadModel>, glyphs: Gl
 
     // Select, Guide, Start.
     for (b, (x, y, r)) in [(Button::Select, layout.select), (Button::Guide, layout.guide), (Button::Start, layout.start)] {
-        let fill = if pressed(b) { ACTIVE } else { IDLE };
+        let fill = match (pressed(b), b) {
+            (true, _) => ACTIVE,
+            (false, Button::Guide) => GUIDE,
+            _ => IDLE,
+        };
         let _ = write!(s, r#"<circle cx="{x}" cy="{y}" r="{r}" fill="{fill}" stroke="{IDLE_EDGE}" stroke-width="2"/>"#);
     }
 
@@ -125,24 +144,25 @@ fn face_positions(layout: &Layout) -> [(Button, (f32, f32)); 4] {
 /// Triggers (an outline with a fill that rises with pressure) above the bumpers.
 fn shoulders(s: &mut String, layout: &Layout, sides: [(f32, Button); 2], pressed: impl Fn(Button) -> bool) {
     let w = layout.shoulder_w;
+    let (trigger_top, bumper_top) = (layout.trigger_top(), layout.bumper_top());
     for ((value, bumper), cx) in sides.into_iter().zip([layout.shoulders.0, layout.shoulders.1]) {
         let (x, tw) = (cx - w / 4.0, w / 2.0);
         let h = value.clamp(0.0, 1.0) * TRIGGER_HEIGHT;
         let _ = write!(
             s,
-            r#"<rect x="{x}" y="{TRIGGER_TOP}" width="{tw}" height="{TRIGGER_HEIGHT}" rx="8" fill="{IDLE}" stroke="{IDLE_EDGE}" stroke-width="2"/>"#
+            r#"<rect x="{x}" y="{trigger_top}" width="{tw}" height="{TRIGGER_HEIGHT}" rx="8" fill="{IDLE}" stroke="{IDLE_EDGE}" stroke-width="2"/>"#
         );
         if h > 0.5 {
             let _ = write!(
                 s,
                 r#"<rect x="{x}" y="{y}" width="{tw}" height="{h}" rx="6" fill="{ACTIVE}"/>"#,
-                y = TRIGGER_TOP + TRIGGER_HEIGHT - h
+                y = trigger_top + TRIGGER_HEIGHT - h
             );
         }
         let fill = if pressed(bumper) { ACTIVE } else { IDLE };
         let _ = write!(
             s,
-            r#"<rect x="{}" y="{BUMPER_TOP}" width="{w}" height="{BUMPER_HEIGHT}" rx="7" fill="{fill}" stroke="{IDLE_EDGE}" stroke-width="2"/>"#,
+            r#"<rect x="{}" y="{bumper_top}" width="{w}" height="{BUMPER_HEIGHT}" rx="7" fill="{fill}" stroke="{IDLE_EDGE}" stroke-width="2"/>"#,
             cx - w / 2.0
         );
     }
@@ -223,7 +243,7 @@ pub fn overlays(input: Option<&InputSnapshot>, model: Option<PadModel>, glyphs: 
             Segment::Glyph { label, .. } => label,
             _ => String::new(),
         };
-        list.push(Overlay { x: x + MARGIN, y: 21.0, text, color: LABEL_RGB });
+        list.push(Overlay { x: x + MARGIN, y: layout.trigger_top() + TRIGGER_HEIGHT / 2.0, text, color: LABEL_RGB });
     }
     list
 }
@@ -244,6 +264,35 @@ fn stick(s: &mut String, (cx, cy): (f32, f32), r: f32, (x, y): (f32, f32), click
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Writes every model's SVG (plus the GUI-drawn letters) for eyeballing with
+    /// `cargo test --bin padwight pad_svg::tests::dump -- --ignored`. Previews land in
+    /// the temp dir under `padwight-pad-svg/`.
+    #[test]
+    #[ignore = "dev convenience: writes previews to a temp dir"]
+    fn dump() {
+        let dir = std::env::temp_dir().join("padwight-pad-svg");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut models: Vec<Option<crate::info::PadModel>> = vec![None];
+        models.extend(crate::info::PadModel::ALL.map(Some));
+        for model in models {
+            let name = model.map_or_else(|| "generic".into(), |m| m.slug().to_string());
+            let glyphs = Glyphs { family: model.map_or(crate::info::PadFamily::Xbox, crate::info::PadModel::family), nintendo_layout: false };
+            let svg = render(None, model, glyphs, &[]);
+            // Preview only: the GUI draws the letters as widgets, so add them to see the picture whole.
+            let mut with_text = String::new();
+            for o in overlays(None, model, glyphs) {
+                let [r, g, b] = o.color;
+                let _ = write!(
+                    with_text,
+                    r##"<text x="{}" y="{}" font-size="12" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="#{r:02x}{g:02x}{b:02x}">{}</text>"##,
+                    o.x, o.y, o.text
+                );
+            }
+            let svg = svg.replace("</svg>", &format!("{with_text}</svg>"));
+            std::fs::write(dir.join(format!("{name}.svg")), svg).unwrap();
+        }
+    }
 
     #[test]
     fn pressed_button_and_stick_change_the_drawing() {
@@ -321,7 +370,7 @@ mod tests {
         assert!(svg.starts_with("<svg") && svg.ends_with("</svg>"));
         assert!(!svg.contains("<text"), "text is drawn by the GUI, not the SVG");
         assert_eq!(svg.matches("<g").count(), svg.matches("</g>").count());
-        assert_eq!(svg.matches("<line").count(), 1, "one leader line per label");
+        assert_eq!(svg.matches("<line ").count(), 1, "one leader line per label");
     }
 
     #[test]
