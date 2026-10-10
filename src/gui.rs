@@ -464,8 +464,9 @@ enum Message {
     SetMotion(OverlayKind, MotionStyle),
     /// A kind of overlay's motion in the shown game's own set, which starts as the global one.
     SetGameMotion(OverlayKind, MotionStyle),
-    /// The shown game goes back to the global motion.
-    ClearGameMotion,
+    /// The shown game gets its own motion, a copy of the global one, or (false) goes back to the
+    /// global motion.
+    OwnGameMotion(bool),
     SetGameOverlayFont(Option<String>),
     /// A game's own style for the keyboard or numpad, or back to the global one.
     SetGameOverlayStyle(crate::keyboard::Layout, Option<OverlayStyle>),

@@ -23,27 +23,17 @@ fn settings(o: &mut LogOverlay) -> &mut InputLogSettings {
 }
 
 fn view_new_log_card<'a>() -> Element<'a, Message> {
-    container(
-        row![
-            button(text("+ New log overlay")).style(style::secondary).on_press(Message::NewLog),
-            text("The buttons just pressed, and what each did.").size(13).color(MUTED_COLOR),
-            space::horizontal(),
-            help(
-                "A log overlay lists recent input on screen, one line per burst of presses: a fireball \
-                 motion reads ↓ ↘ → X. Under each button is what it did when it's mapped to something \
-                 else, and how long it was held. Show it always while its game is active, or with the \
-                 \"Show log overlay…\" action. For just the latest burst inside an info overlay, use the \
-                 {current_input} token there."
-                    .into(),
-            ),
-        ]
-        .spacing(12)
-        .align_y(Alignment::Center),
+    items_header(
+        ItemKind::Log,
+        button(text("+ New log overlay")).style(style::secondary).on_press(Message::NewLog).into(),
+        "The buttons just pressed, and what each did.",
+        "A log overlay lists recent input on screen, one line per burst of presses: a fireball \
+         motion reads ↓ ↘ → X. Under each button is what it did when it's mapped to something \
+         else, and how long it was held. Show it always while its game is active, or with the \
+         \"Show log overlay…\" action. For just the latest burst inside an info overlay, use the \
+         {current_input} token there."
+            .into(),
     )
-    .padding(14)
-    .width(Length::Fill)
-    .style(style::card)
-    .into()
 }
 
 impl App {
@@ -78,14 +68,13 @@ impl App {
     fn view_log_card<'a>(&'a self, i: usize, o: &'a LogOverlay) -> Element<'a, Message> {
         let open = self.open_logs.contains(&i);
         let problem = self.name_problem(ItemKind::Log, i, &o.name);
-        let chevron = if open { "▾" } else { "▸" };
-        let title = text(format!("{chevron}  {}", if o.name.is_empty() { "(unnamed)" } else { &o.name })).size(18);
+        let title = text(if o.name.is_empty() { "(unnamed)" } else { &o.name }).size(18);
         let title = if problem.is_some() { title.color(ERROR_COLOR) } else { title };
         let LogSource::Input(s) = &o.source;
         let shown = if o.always { "always shown" } else { "shown by an action" };
         let summary = format!("Input · {} lines · {} · {shown}", s.lines, DeviceChoice(s.tracking.device).to_string().to_lowercase());
         let mut header = row![
-            button(title).style(button::text).padding(0).on_press(Message::ToggleLog(i)),
+            card_title(open, title).on_press(Message::ToggleLog(i)),
             text(summary).size(13).color(MUTED_COLOR),
             space::horizontal(),
         ]
@@ -94,7 +83,7 @@ impl App {
         if let Some(problem) = problem {
             header = header.push(text(format!("⚠ {problem}")).size(12).color(ERROR_COLOR));
         }
-        header = header.push(button(text("✕").size(14)).style(style::quiet_danger).on_press(Message::DeleteLog(i)));
+        header = header.push(delete_item("Delete log overlay", Message::DeleteLog(i)));
         let mut col = column![header].spacing(12);
         if open {
             col = col.push(self.view_log_editor(i, o));

@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use iced::widget::{checkbox, column};
+use iced::widget::column;
 
 use super::*;
 use crate::{
@@ -104,15 +104,17 @@ impl App {
         )
     }
 
+    /// The setup's own font. An empty name is its own choice of the system default, which `None`
+    /// (follow App settings) can't say.
     fn view_game_font(&self) -> Element<'_, Message> {
-        section(
-            "Overlay font",
-            Some(FONT_HELP.into()),
-            vec![labeled(
-                "Font",
-                font_picker("Same as App settings", self.game().overlay_font.as_deref(), Message::SetGameOverlayFont),
-            )],
-        )
+        let own = self.game().overlay_font.as_deref();
+        let global = self.config.overlay_font.clone();
+        let mut rows = own_rows("font", own.is_some(), move |on| Message::SetGameOverlayFont(on.then(|| global.clone().unwrap_or_default())));
+        if let Some(own) = own {
+            let picker = font_picker("System default", Some(own).filter(|f| !f.is_empty()), |f| Message::SetGameOverlayFont(Some(f.unwrap_or_default())));
+            rows.push(labeled("Font", picker));
+        }
+        section("Overlay font", Some(FONT_HELP.into()), rows)
     }
 
     /// Sets (or with `None` clears) the shown game's own style for a layout.
@@ -183,17 +185,12 @@ fn game_overlay_card<'a>(
         let set = set.clone();
         Rc::new(move |s| set(Some(s))) as OnStyle<'a>
     };
-    let toggle = checkbox(own.is_some())
-        .label("Use its own appearance in this setup")
-        .on_toggle(move |on| set(on.then(|| global.clone())));
-    let mut rows: Vec<Element<'a, Message>> = vec![toggle.into()];
+    let mut rows = own_rows("appearance", own.is_some(), move |on| set(on.then(|| global.clone())));
     if let Some(style) = own {
         rows.push(style_editor(style, on_style));
         rows.push(sample(style));
-    } else {
-        rows.push(text("Following the appearance set on the App settings page.").size(13).color(MUTED_COLOR).into());
     }
-    section(title, None, rows)
+    section(title, Some("A setup can have its own look here, or follow the one set on the App settings page.".into()), rows)
 }
 
 /// A keyboard or numpad drawn with `style`, with the cursor on a key, for the card's preview.
@@ -272,5 +269,27 @@ mod tests {
         assert_eq!(doom.overlay_font.as_deref(), Some("Comfortaa"));
         assert_eq!(app.config.overlay_font.as_deref(), Some("Inter"));
         assert_eq!(font_choices("x", Some("Fira")).len(), crate::font::names().len() + 2);
+    }
+
+    #[test]
+    fn a_game_can_pick_the_system_font_over_a_global_one() {
+        let mut app = with_game();
+        let _ = app.update(Message::SetOverlayFont(Some("Inter".into())));
+        let _ = app.update(Message::SelectPage(Page::Game(Some("Doom".into()))));
+        // The setup's own font picker gives back an empty name for "System default".
+        let _ = app.update(Message::SetGameOverlayFont(Some(String::new())));
+        assert_eq!(crate::font::resolve(app.game().overlay_font.as_deref().or(app.config.overlay_font.as_deref())), iced::Font::DEFAULT);
+        let _ = app.update(Message::SetGameOverlayFont(None));
+        assert_eq!(app.game().overlay_font, None);
+    }
+
+    #[test]
+    fn a_games_own_motion_starts_as_the_global_one() {
+        let mut app = with_game();
+        let _ = app.update(Message::SelectPage(Page::Game(Some("Doom".into()))));
+        let _ = app.update(Message::OwnGameMotion(true));
+        assert_eq!(app.game().motion, Some(app.config.motion));
+        let _ = app.update(Message::OwnGameMotion(false));
+        assert_eq!(app.game().motion, None);
     }
 }

@@ -13,11 +13,11 @@ use crate::{
     keyword_icon,
 };
 
-/// A keyword in its color: its icon, then its word.
+/// A keyword: its icon in its color, then its word in the text color. The color is only on the
+/// icon, so the word doesn't look like an error or a link.
 fn keyword<'a>(k: Keyword) -> Element<'a, Message> {
-    let [r, g, b] = keyword_icon::color(k);
     let icon = svg(svg::Handle::from_memory(keyword_icon::svg(k).into_bytes())).width(14).height(14);
-    row![icon, text(k.word()).color(Color::from_rgb8(r, g, b))].spacing(4).align_y(Alignment::Center).into()
+    row![icon, text(k.word())].spacing(4).align_y(Alignment::Center).into()
 }
 
 /// The swap icon drawn after a face button whose glyph is swapped: two opposed arrows.
@@ -62,7 +62,12 @@ pub(super) fn piece_line<'a>(pieces: Vec<Piece>, family: PadFamily, swap: Swap, 
             Piece::Pad(b) if swap.marked() && is_face(b) => row![chip(pad_glyph(b, family, true)), swap_marker(swap)].spacing(2).align_y(Alignment::Center).into(),
             Piece::Pad(b) => chip(pad_glyph(b, family, swap.labels())),
             Piece::Key(code) => chip(key_glyph(&code)),
-            Piece::Mouse(m) => chip(mouse_glyph(m)),
+            Piece::Mouse(m) => tooltip(
+                chip(mouse_glyph(m)),
+                container(text("A mouse button: teal, as the overlays draw it.").size(13)).padding(8).style(style::tooltip),
+                tooltip::Position::Top,
+            )
+            .into(),
         })
         .collect();
     row(items).align_y(Alignment::Center).into()

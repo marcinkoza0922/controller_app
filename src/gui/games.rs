@@ -133,7 +133,7 @@ impl App {
                 set.set(kind, style);
                 self.game_mut().motion = Some(set);
             }
-            Message::ClearGameMotion => self.game_mut().motion = None,
+            Message::OwnGameMotion(on) => self.game_mut().motion = on.then_some(self.config.motion),
             Message::SetGameOverlayFont(font) => self.game_mut().overlay_font = font,
             Message::SetGameOverlayStyle(layout, style) => self.set_game_overlay_style(layout, style),
             Message::SetGameMediaStyle(style) => self.game_mut().media_style = style,
@@ -340,34 +340,32 @@ impl App {
     }
 
     /// The setup's overlay sounds: each overlay's cues, on or off, and what its steps and picks sound like.
-    /// Starts from the App settings' sounds until one is changed.
+    /// Its own sounds start as a copy of the App settings' ones.
     fn view_game_sounds(&self) -> Element<'_, Message> {
         let own = self.game().sounds;
-        let set = own.unwrap_or(self.config.sounds);
-        let mut rows: Vec<Element<'_, Message>> = SoundOverlay::ALL.iter().map(|&overlay| overlay_sounds(set, overlay, Message::SetGameSounds)).collect();
-        let mut buttons = row![button(text("Turn every sound off").size(13)).style(style::secondary).on_press(Message::SetGameSounds(set.silenced()))].spacing(8);
-        if own.is_some() {
-            buttons = buttons.push(button(text("Use the global sounds").size(13)).style(style::secondary).on_press(Message::ClearGameSounds));
+        let global = self.config.sounds;
+        let mut rows = own_rows("sounds", own.is_some(), move |on| if on { Message::SetGameSounds(global) } else { Message::ClearGameSounds });
+        if let Some(set) = own {
+            rows.extend(SoundOverlay::ALL.iter().map(|&overlay| overlay_sounds(set, overlay, Message::SetGameSounds)));
+            rows.push(button(text("Turn every sound off").size(13)).style(style::secondary).on_press(Message::SetGameSounds(set.silenced())).into());
         }
-        rows.push(buttons.into());
         section(
             "Overlay sounds",
-            Some("A faint sound as the cursor moves in an overlay, another when something is picked, and a softer one as it pops in and out. Any sound this setup doesn't set uses the global sounds from App settings. Any overlay can be turned off.".into()),
+            Some("A faint sound as the cursor moves in an overlay, another when something is picked, and a softer one as it pops in and out. A setup's own sounds start as a copy of the ones on App settings. Any overlay can be turned off.".into()),
             rows,
         )
     }
 
-    /// The setup's own overlay motion: each kind of overlay, starting from the global set until
-    /// one is changed.
+    /// The setup's own overlay motion: each kind of overlay, starting as a copy of the global set.
     fn view_game_motion(&self) -> Element<'_, Message> {
         let own = self.game().motion;
-        let mut rows = motion_rows(own.unwrap_or(self.config.motion), Message::SetGameMotion);
-        if own.is_some() {
-            rows.push(button(text("Use the global motion").size(13)).style(style::secondary).on_press(Message::ClearGameMotion).into());
+        let mut rows = own_rows("motion", own.is_some(), Message::OwnGameMotion);
+        if let Some(set) = own {
+            rows.extend(motion_rows(set, Message::SetGameMotion));
         }
         section(
             "Overlay motion",
-            Some(format!("How this setup's overlays move, while it is active. Each kind of overlay has its own style; any this setup doesn't set use the global motion from App settings. {}", motion_guide())),
+            Some(format!("How this setup's overlays move, while it is active. Each kind of overlay has its own style; a setup's own motion starts as a copy of the one on App settings. {}", motion_guide())),
             rows,
         )
     }
@@ -377,7 +375,7 @@ impl App {
     fn view_game_controllers(&self) -> Element<'_, Message> {
         let support = self.game().controllers.unwrap_or_default();
         let toggle = |label: &'static str, on: bool, set: fn(&mut crate::pad_identity::ControllerSupport, bool)| {
-            toggler(on).label(label).on_toggle(move |value| {
+            checkbox(on).label(label).on_toggle(move |value| {
                 let mut next = support;
                 set(&mut next, value);
                 Message::SetGameControllers(next)
@@ -396,23 +394,17 @@ impl App {
 
     /// A game's own choice of the Nintendo layout, or the one App settings gives.
     fn view_game_nintendo_layout(&self) -> Element<'_, Message> {
-        let current = self.game().nintendo_layout;
-        let choice = |label: &'static str, value: Option<bool>| {
-            button(text(label).size(14))
-                .style(style::segment(current == value))
-                .padding([5, 14])
-                .on_press(Message::SetGameNintendoLayout(value))
-        };
-        let settings = if self.config.nintendo_layout { "on" } else { "off" };
+        let own = self.game().nintendo_layout;
+        let global = self.config.nintendo_layout;
+        let mut rows = own_rows("button layout", own.is_some(), move |on| Message::SetGameNintendoLayout(on.then_some(global)));
+        if let Some(on) = own {
+            rows.push(toggler(on).label("Nintendo button layout").on_toggle(|on| Message::SetGameNintendoLayout(Some(on))).into());
+        }
+        let settings = if global { "on" } else { "off" };
         section(
             "Button layout",
-            Some(format!("Nintendo layout for this setup's glyphs. Same as App settings is currently {settings}.")),
-            vec![
-                container(row![choice("Same as App settings", None), choice("On", Some(true)), choice("Off", Some(false))].spacing(2))
-                    .padding(3)
-                    .style(style::segments)
-                    .into(),
-            ],
+            Some(format!("Nintendo layout for this setup's glyphs. On the App settings page it is currently {settings}.")),
+            rows,
         )
     }
 
@@ -528,9 +520,10 @@ impl App {
         );
 
         column![
-            labeled(
-                "Name",
-                field("Setup name", &game.name).on_input(Message::RenameGame).width(260).into(),
+            section(
+                "Setup",
+                None,
+                vec![labeled("Name", field("Setup name", &game.name).on_input(Message::RenameGame).width(260).into())],
             ),
             section(
                 "Auto-switch rules",

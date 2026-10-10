@@ -214,7 +214,10 @@ pub(super) fn view_profile<'a>(p: &'a Profile, ui: &Ui, tab: ProfileTab, guide: 
                      with the \"+\" buttons under its actions. Buttons with gestures act once the gesture \
                      is decided: a quick tap fires after the tap window; held past the tap window, the \
                      button's own action presses \
-                     and holds until release (unless a long press is set, which takes over when held)."
+                     and holds until release (unless a long press is set, which takes over when held). \
+                     In the summaries, keys are gray, mouse buttons teal and controller buttons their \
+                     own glyphs, as the overlays draw them; the colored icon before a word such as \
+                     Menu or Toggle marks the kind of action."
                         .into(),
                 ),
                 button_rows(p, ui),
@@ -288,7 +291,11 @@ pub(super) fn view_profile<'a>(p: &'a Profile, ui: &Ui, tab: ProfileTab, guide: 
                 layer_part(ui, LayerPart::Gyro, "Gyro".into(), summary, || gyro_rows(&p.gyro, ui.any_gyro)),
             )];
             if ui.layer.is_none() {
-                sections.push(section("Controller requirements", None, requirement_rows(p, Feature::Gyro)));
+                sections.push(section(
+                    "Controller requirements",
+                    Some("What the profile's author says it can't be played without. Set by the author, not worked out from the settings.".into()),
+                    requirement_rows(p, Feature::Gyro),
+                ));
             }
             sections
         }
@@ -628,9 +635,9 @@ pub(super) fn button_rows<'a>(p: &'a Profile, ui: &Ui) -> Vec<Element<'a, Messag
 /// The label column of a collapsible row: click to open or close it.
 pub(super) fn row_toggle<'a>(label: &str, target: Target, open: bool, problem: bool) -> Element<'a, Message> {
     let chevron = if open { "▾" } else { "▸" };
-    let label = text(format!("{chevron} {label}"));
+    let label = text(label.to_owned());
     let label = if problem { label.color(ERROR_COLOR) } else { label };
-    button(label)
+    button(row![text(chevron).size(14), label].spacing(4).align_y(Alignment::Center))
         .style(button::text)
         .padding([4, 0])
         .width(LABEL_WIDTH)
@@ -765,7 +772,7 @@ pub(super) fn combo_rows<'a>(p: &'a Profile, ui: &Ui) -> Vec<Element<'a, Message
         } else {
             action_problem(&combo.action, ui.names)
         };
-        let remove = button(text("Remove combo").size(13)).style(button::danger).on_press(Message::RemoveCombo(i));
+        let remove = delete_item("Delete combo", Message::RemoveCombo(i));
         if !open {
             let mut line = row![row_toggle(&name, target, false, problem.is_some()), text(summarize(&combo.action)), space::horizontal()]
                 .spacing(10)
@@ -1129,10 +1136,16 @@ impl App {
         let mut tabs = row![container(segments).padding(3).style(style::segments), space::horizontal()]
             .spacing(6)
             .align_y(Alignment::Center);
-        if self.profile_tab != ProfileTab::Gyro {
+        // Only where there are rows that open: every button, and the combos once there is one.
+        let expandable = match self.profile_tab {
+            ProfileTab::Buttons => true,
+            ProfileTab::Combos => self.profile().is_some_and(|p| !p.combos.is_empty()),
+            ProfileTab::Sticks | ProfileTab::Gyro | ProfileTab::Guide => false,
+        };
+        if expandable {
             tabs = tabs
-                .push(button(text("Expand all").size(13)).style(button::text).on_press(Message::ExpandAll(true)))
-                .push(button(text("Collapse all").size(13)).style(button::text).on_press(Message::ExpandAll(false)));
+                .push(button(text("Expand all")).style(style::secondary).on_press(Message::ExpandAll(true)))
+                .push(button(text("Collapse all")).style(style::secondary).on_press(Message::ExpandAll(false)));
         }
         col = col.push(row![find].align_y(Alignment::Center)).push(tabs);
 
@@ -1172,7 +1185,7 @@ impl App {
         let title: Element<'_, Message> = if foldable {
             row![
                 text("Live input").size(20),
-                button(text(if folded { "Show" } else { "Hide" }).size(13)).style(button::text).on_press(Message::TogglePicture),
+                button(text(if folded { "Show" } else { "Hide" })).style(style::secondary).on_press(Message::TogglePicture),
             ]
             .spacing(8)
             .align_y(Alignment::Center)
@@ -1210,7 +1223,7 @@ impl App {
         let active = self.profile_ref().is_some_and(|at| at == self.saved.active);
         let activate: Element<'_, Message> = match self.profile_ref() {
             Some(at) if !active && self.status.is_some() => {
-                button(text("Make active").size(13)).style(style::secondary).on_press(Message::ActivateProfile(at)).into()
+                button(text("Make active")).style(style::secondary).on_press(Message::ActivateProfile(at)).into()
             }
             _ if active => text("● active").size(13).color(style_accent()).into(),
             _ => space().into(),
@@ -1218,7 +1231,9 @@ impl App {
         column![
             row![text("Edit profile").size(20), activate].spacing(12).align_y(Alignment::Center),
             row![
+                text("Profile").size(14),
                 dropdown(names, current.clone(), Message::EditProfile).width(170),
+                text("Name").size(14),
                 field("Profile name", current.as_deref().unwrap_or(""))
                     .on_input(Message::RenameProfile)
                     .width(170),

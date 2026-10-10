@@ -297,6 +297,49 @@ pub(super) fn section<'a>(title: &'a str, help_text: Option<String>, rows: Vec<E
         .into()
 }
 
+/// The card at the top of an items tab (layers, macros, menus, info and log overlays): the add
+/// buttons, a line on what the items are, the copy link and the tab's help. Every tab has this
+/// layout, so the controls sit in the same places.
+pub(super) fn items_header<'a>(kind: ItemKind, add: Element<'a, Message>, blurb: &'static str, explain: String) -> Element<'a, Message> {
+    container(
+        row![
+            add,
+            text(blurb).size(13).color(MUTED_COLOR),
+            space::horizontal(),
+            button(text("Copy from another setup…").size(13)).style(button::text).on_press(Message::OpenBrowse(kind)),
+            help(explain),
+        ]
+        .spacing(12)
+        .align_y(Alignment::Center),
+    )
+    .padding(14)
+    .width(Length::Fill)
+    .style(style::card)
+    .into()
+}
+
+/// The title of an item's card, with the chevron that opens it at the same size as a disclosure's.
+pub(super) fn card_title<'a>(open: bool, title: iced::widget::Text<'a>) -> iced::widget::Button<'a, Message> {
+    let chevron = text(if open { "▾" } else { "▸" }).size(14);
+    button(row![chevron, title].spacing(8).align_y(Alignment::Center)).style(button::text).padding(0)
+}
+
+/// The top of a Details card that a setup can override: a toggle for "Use its own `what` in this
+/// setup", and while it's off, a note that the card follows App settings. Every such card starts
+/// with this, and shows its editor only while the toggle is on.
+pub(super) fn own_rows<'a>(what: &str, own: bool, on_toggle: impl Fn(bool) -> Message + 'a) -> Vec<Element<'a, Message>> {
+    let mut rows = vec![toggler(own).label(format!("Use its own {what} in this setup")).on_toggle(on_toggle).into()];
+    if !own {
+        rows.push(text(format!("Following the {what} set on the App settings page.")).size(13).color(MUTED_COLOR).into());
+    }
+    rows
+}
+
+/// Deletes a whole item, from its card's header.
+pub(super) fn delete_item<'a>(label: &'static str, message: Message) -> Element<'a, Message> {
+    button(text(label).size(13)).style(style::quiet_danger).on_press(message).into()
+}
+
 /// An ⓘ that explains a section on hover, instead of a paragraph of gray text.
 pub(super) fn help<'a>(explanation: String) -> Element<'a, Message> {
     tooltip(

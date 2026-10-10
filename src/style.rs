@@ -159,7 +159,7 @@ fn disabled(theme: &Theme) -> button::Style {
     }
 }
 
-/// A quiet "✕" for removing a card: muted until hovered, then red.
+/// A quiet "Delete …" for deleting a whole item: muted until hovered, then red.
 pub fn quiet_danger(theme: &Theme, status: button::Status) -> button::Style {
     let p = theme.extended_palette();
     let text_color = match status {

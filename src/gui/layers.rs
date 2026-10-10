@@ -235,18 +235,18 @@ impl App {
                 let current = game.layers.get(self.layer).map(|l| l.name.clone());
                 picker = picker.push(dropdown(names, current, Message::SelectLayer).width(220));
             }
-            picker
-                .push(button(text("+ New layer")).style(style::secondary).on_press(Message::NewLayer))
-                .push(space::horizontal())
-                .push(button(text("Copy from another setup…").size(13)).style(button::text).on_press(Message::OpenBrowse(ItemKind::Layer)))
-                .push(help(
-                    "A layer changes some of the controller's mappings while it's on, then restores them: e.g. hold LB, and the face buttons type F1–F4. Turn one on with \"Layer…\" on \
-                     any button, trigger, stick direction, zone, gesture or combo: on while held, or wrapped \
-                     in Toggle, until pressed again (that also works from a menu item). It applies over \
-                     whichever of the game's profiles is active; what it doesn't set stays as in the profile. \
-                     Several layers can be on at once; the newest wins."
-                        .into(),
-                ))
+            let add = picker.push(button(text("+ New layer")).style(style::secondary).on_press(Message::NewLayer));
+            items_header(
+                ItemKind::Layer,
+                add.into(),
+                "A layer changes some of the mappings while it's on.",
+                "A layer changes some of the controller's mappings while it's on, then restores them: e.g. hold LB, and the face buttons type F1–F4. Turn one on with \"Layer…\" on \
+                 any button, trigger, stick direction, zone, gesture or combo: on while held, or wrapped \
+                 in Toggle, until pressed again (that also works from a menu item). It applies over \
+                 whichever of the game's profiles is active; what it doesn't set stays as in the profile. \
+                 Several layers can be on at once; the newest wins."
+                    .into(),
+            )
         };
         let mut col = column![picker_row].spacing(16);
         let Some(layer) = game.layers.get(self.layer) else {
@@ -267,7 +267,7 @@ impl App {
                 row![
                     field("Layer name", &layer.name).on_input(Message::RenameLayer).width(220),
                     space::horizontal(),
-                    button(text("Delete layer").size(13)).style(button::danger).on_press(Message::DeleteLayer),
+                    delete_item("Delete layer", Message::DeleteLayer),
                 ]
                 .align_y(Alignment::Center)
                 .into(),
