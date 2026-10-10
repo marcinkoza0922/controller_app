@@ -17,13 +17,16 @@ pub enum DpadKind {
     Buttons,
 }
 
-/// Something drawn on the body that isn't an input: a touchpad, a capture button.
+/// Something drawn on the body that isn't an input: a touchpad, a capture button, a light.
 #[derive(Debug, Clone, Copy)]
 pub enum Mark {
     /// x, y, width, height, corner radius.
     Rect(f32, f32, f32, f32, f32),
     /// x, y, radius.
     Circle(f32, f32, f32),
+    /// x, y, width, height, corner radius, fill: something the pad carries in a color of its
+    /// own, like the DualSense's light strips or a Joy-Con's rail.
+    Strip(f32, f32, f32, f32, f32, &'static str),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -49,6 +52,8 @@ pub struct Layout {
     pub shoulders: (f32, f32),
     /// The bumper's width; the trigger above it is half as wide.
     pub shoulder_w: f32,
+    /// Where the body's top edge runs under the shoulders: the bumper is drawn sitting on it.
+    pub shoulder_y: f32,
     pub marks: &'static [Mark],
 }
 
@@ -78,12 +83,22 @@ impl Layout {
         let g = self.face_gap;
         [(0.0, g), (g, 0.0), (-g, 0.0), (0.0, -g)]
     }
+
+    /// The top of the bumper bar, just above where the body's edge runs.
+    pub fn bumper_top(&self) -> f32 {
+        self.shoulder_y - super::BUMPER_ABOVE
+    }
+
+    /// The top of the trigger: it stands right on the bumper it belongs to.
+    pub fn trigger_top(&self) -> f32 {
+        self.bumper_top() - super::TRIGGER_HEIGHT
+    }
 }
 
 const DUALSHOCK_4: Layout = Layout {
     outline: "M 84.8 57.7 C 114.1 50.0 145.1 54.6 160.5 56.2 L 261.0 56.2 C 276.5 54.6 307.4 50.0 336.8 57.7 C 361.5 69.3 377.0 111.8 377.0 162.1 C 377.0 212.3 361.5 243.3 342.2 258.7 C 326.7 268.0 307.4 258.7 295.8 239.4 C 284.2 212.3 276.5 193.0 257.2 185.3 L 160.5 185.3 C 141.2 193.0 133.5 212.3 123.4 239.4 C 111.8 258.7 92.5 268.0 77.0 258.7 C 57.7 243.3 43.0 212.3 43.0 162.1 C 43.0 111.8 58.5 69.3 84.8 57.7Z",
-    left_stick: (156.7, 154.4),
-    right_stick: (267.2, 156.7),
+    left_stick: (156.7, 152.0),
+    right_stick: (267.2, 152.0),
     stick_r: 30.9,
     dpad: (98.7, 108.0),
     dpad_kind: DpadKind::Cross,
@@ -96,7 +111,9 @@ const DUALSHOCK_4: Layout = Layout {
     start: (281.1, 74.7, 6.2),
     shoulders: (108.0, 313.6),
     shoulder_w: 54.1,
-    marks: &[Mark::Rect(156.7, 57.7, 112.1, 61.8, 6.2)],
+    shoulder_y: 54.0,
+    // The touchpad, with the light bar glowing along the body's top edge behind it.
+    marks: &[Mark::Rect(156.7, 57.7, 112.1, 61.8, 6.2), Mark::Strip(170.0, 55.0, 82.0, 3.5, 1.75, super::LIGHT)],
 };
 
 const DUALSENSE: Layout = Layout {
@@ -107,15 +124,17 @@ const DUALSENSE: Layout = Layout {
     dpad: (103.0, 109.6),
     dpad_kind: DpadKind::Cross,
     dpad_reach: 27.1,
-    face: (310.2, 109.6),
-    face_gap: 25.7,
-    face_r: 11.5,
+    face: (307.5, 109.6),
+    face_gap: 25.0,
+    face_r: 11.0,
     select: (128.8, 74.4, 4.7),
     guide: (206.6, 155.6, 5.4),
     start: (285.8, 74.4, 4.7),
-    shoulders: (105.1, 311.6),
-    shoulder_w: 50.8,
-    marks: &[Mark::Rect(142.3, 55.4, 130.0, 67.7, 6.8)],
+    shoulders: (116.0, 301.0),
+    shoulder_w: 48.0,
+    shoulder_y: 53.0,
+    // The touchpad, with the light strips that run along its sides.
+    marks: &[Mark::Rect(142.3, 55.4, 130.0, 67.7, 6.8), Mark::Strip(136.5, 58.0, 4.5, 62.0, 2.2, super::LIGHT), Mark::Strip(273.0, 58.0, 4.5, 62.0, 2.2, super::LIGHT)],
 };
 
 const DUALSENSE_EDGE: Layout = Layout {
@@ -126,15 +145,16 @@ const DUALSENSE_EDGE: Layout = Layout {
     dpad: (103.0, 109.6),
     dpad_kind: DpadKind::Cross,
     dpad_reach: 27.1,
-    face: (310.2, 109.6),
-    face_gap: 25.7,
-    face_r: 11.5,
+    face: (307.5, 109.6),
+    face_gap: 25.0,
+    face_r: 11.0,
     select: (128.8, 74.4, 4.7),
     guide: (206.6, 155.6, 5.4),
     start: (285.8, 74.4, 4.7),
-    shoulders: (105.1, 311.6),
-    shoulder_w: 50.8,
-    marks: &[Mark::Rect(142.3, 55.4, 130.0, 67.7, 6.8), Mark::Rect(122.0, 170.5, 16.2, 8.1, 2.0), Mark::Rect(281.8, 170.5, 16.2, 8.1, 2.0)],
+    shoulders: (116.0, 301.0),
+    shoulder_w: 48.0,
+    shoulder_y: 53.0,
+    marks: &[Mark::Rect(142.3, 55.4, 130.0, 67.7, 6.8), Mark::Strip(136.5, 58.0, 4.5, 62.0, 2.2, super::LIGHT), Mark::Strip(273.0, 58.0, 4.5, 62.0, 2.2, super::LIGHT), Mark::Rect(122.0, 170.5, 16.2, 8.1, 2.0), Mark::Rect(281.8, 170.5, 16.2, 8.1, 2.0)],
 };
 
 const PRO_CONTROLLER: Layout = Layout {
@@ -153,6 +173,7 @@ const PRO_CONTROLLER: Layout = Layout {
     start: (248.4, 89.8, 7.6),
     shoulders: (140.5, 293.1),
     shoulder_w: 70.9,
+    shoulder_y: 51.0,
     marks: &[Mark::Rect(180.3, 107.2, 13.1, 13.1, 2.2)],
 };
 
@@ -170,13 +191,14 @@ const SWITCH_2_PRO: Layout = Layout {
     select: (161.9, 76.6, 7.7),
     guide: (231.6, 109.8, 8.9),
     start: (254.8, 76.6, 7.7),
-    shoulders: (97.7, 330.1),
-    shoulder_w: 94.1,
+    shoulders: (110.0, 308.0),
+    shoulder_w: 72.0,
+    shoulder_y: 53.0,
     marks: &[Mark::Rect(150.8, 100.9, 17.7, 17.7, 3.3), Mark::Circle(206.1, 193.9, 8.9)],
 };
 
 const JOY_CONS: Layout = Layout {
-    outline: "M 93.6 50.0 L 161.6 50.0 C 168.6 50.0 172.1 54.4 172.1 61.3 L 172.1 256.7 C 172.1 263.6 168.6 268.0 161.6 268.0 L 115.4 268.0 C 89.2 268.0 71.8 246.2 71.8 215.7 L 71.8 93.6 C 71.8 67.4 76.1 50.0 93.6 50.0Z M 248.8 61.3 C 248.8 54.4 252.3 50.0 259.3 50.0 L 324.7 50.0 C 344.7 50.0 348.2 67.4 348.2 93.6 L 348.2 215.7 C 348.2 246.2 330.8 268.0 307.2 268.0 L 259.3 268.0 C 252.3 268.0 248.8 263.6 248.8 256.7Z",
+    outline: "M 93.6 50.0 L 145.5 50.0 C 152.5 50.0 156.0 54.4 156.0 61.3 L 156.0 256.7 C 156.0 263.6 152.5 268.0 145.5 268.0 L 115.4 268.0 C 89.2 268.0 71.8 246.2 71.8 215.7 L 71.8 93.6 C 71.8 67.4 76.1 50.0 93.6 50.0Z M 264.0 61.3 C 264.0 54.4 267.5 50.0 274.5 50.0 L 324.7 50.0 C 344.7 50.0 348.2 67.4 348.2 93.6 L 348.2 215.7 C 348.2 246.2 330.8 268.0 307.2 268.0 L 274.5 268.0 C 267.5 268.0 264.0 263.6 264.0 256.7Z",
     left_stick: (111.0, 104.9),
     right_stick: (309.8, 165.1),
     stick_r: 22.7,
@@ -186,16 +208,18 @@ const JOY_CONS: Layout = Layout {
     face: (309.8, 104.1),
     face_gap: 15.7,
     face_r: 7.8,
-    select: (132.8, 73.5, 4.4),
+    select: (144.0, 73.5, 4.4),
     guide: (295.9, 202.6, 7.0),
-    start: (268.0, 71.8, 4.4),
+    start: (276.0, 71.8, 4.4),
     shoulders: (115.4, 307.2),
     shoulder_w: 61.0,
-    marks: &[Mark::Rect(114.5, 195.6, 14.0, 14.0, 2.6)],
+    shoulder_y: 50.0,
+    // The rail each half locks onto the console (or the other half) with.
+    marks: &[Mark::Rect(150.0, 66.0, 6.0, 186.0, 2.0), Mark::Rect(264.0, 66.0, 6.0, 186.0, 2.0), Mark::Rect(114.5, 195.6, 14.0, 14.0, 2.6)],
 };
 
 const JOY_CONS_2: Layout = Layout {
-    outline: "M 93.6 50.0 L 161.6 50.0 C 168.6 50.0 172.1 54.4 172.1 61.3 L 172.1 256.7 C 172.1 263.6 168.6 268.0 161.6 268.0 L 115.4 268.0 C 89.2 268.0 71.8 246.2 71.8 215.7 L 71.8 93.6 C 71.8 67.4 76.1 50.0 93.6 50.0Z M 248.8 61.3 C 248.8 54.4 252.3 50.0 259.3 50.0 L 324.7 50.0 C 344.7 50.0 348.2 67.4 348.2 93.6 L 348.2 215.7 C 348.2 246.2 330.8 268.0 307.2 268.0 L 259.3 268.0 C 252.3 268.0 248.8 263.6 248.8 256.7Z",
+    outline: "M 96.0 50.0 L 145.5 50.0 C 152.5 50.0 156.0 54.4 156.0 61.3 L 156.0 256.7 C 156.0 263.6 152.5 268.0 145.5 268.0 L 115.4 268.0 C 87.0 268.0 71.8 243.0 71.8 212.0 L 71.8 96.0 C 71.8 66.0 78.0 50.0 96.0 50.0Z M 264.0 61.3 C 264.0 54.4 267.5 50.0 274.5 50.0 L 324.0 50.0 C 342.0 50.0 348.2 66.0 348.2 96.0 L 348.2 212.0 C 348.2 243.0 333.0 268.0 304.6 268.0 L 274.5 268.0 C 267.5 268.0 264.0 263.6 264.0 256.7Z",
     left_stick: (111.0, 104.9),
     right_stick: (309.8, 165.1),
     stick_r: 22.7,
@@ -205,12 +229,19 @@ const JOY_CONS_2: Layout = Layout {
     face: (309.8, 104.1),
     face_gap: 15.7,
     face_r: 7.8,
-    select: (132.8, 73.5, 4.4),
+    select: (144.0, 73.5, 4.4),
     guide: (295.9, 202.6, 7.0),
-    start: (268.0, 71.8, 4.4),
+    start: (276.0, 71.8, 4.4),
     shoulders: (115.4, 307.2),
     shoulder_w: 61.0,
-    marks: &[Mark::Rect(114.5, 195.6, 14.0, 14.0, 2.6), Mark::Circle(295.9, 221.8, 5.2)],
+    shoulder_y: 50.0,
+    // Blue and coral rails, and the C button the Switch 2 halves add below Home.
+    marks: &[
+        Mark::Strip(150.0, 66.0, 6.0, 186.0, 2.0, "#3ab7f0"),
+        Mark::Strip(264.0, 66.0, 6.0, 186.0, 2.0, "#ff7059"),
+        Mark::Rect(114.5, 195.6, 14.0, 14.0, 2.6),
+        Mark::Circle(295.9, 221.8, 5.2),
+    ],
 };
 
 const XBOX_360: Layout = Layout {
@@ -229,6 +260,7 @@ const XBOX_360: Layout = Layout {
     start: (242.5, 94.7, 7.3),
     shoulders: (142.3, 286.3),
     shoulder_w: 55.9,
+    shoulder_y: 58.0,
     marks: &[],
 };
 
@@ -240,14 +272,15 @@ const XBOX_ONE: Layout = Layout {
     dpad: (155.3, 165.8),
     dpad_kind: DpadKind::Cross,
     dpad_reach: 25.7,
-    face: (304.1, 112.7),
+    face: (301.0, 112.7),
     face_gap: 24.1,
     face_r: 12.1,
     select: (181.8, 113.5, 5.6),
     guide: (209.2, 73.3, 11.3),
     start: (235.7, 113.5, 5.6),
-    shoulders: (135.2, 288.0),
-    shoulder_w: 60.3,
+    shoulders: (140.0, 281.0),
+    shoulder_w: 44.0,
+    shoulder_y: 55.0,
     marks: &[],
 };
 
@@ -267,6 +300,7 @@ const XBOX_SERIES: Layout = Layout {
     start: (233.1, 111.0, 6.1),
     shoulders: (138.9, 291.5),
     shoulder_w: 52.3,
+    shoulder_y: 55.0,
     marks: &[Mark::Rect(200.8, 120.6, 19.2, 10.5, 3.5)],
 };
 
@@ -285,8 +319,10 @@ const XBOX_ELITE: Layout = Layout {
     guide: (208.9, 72.2, 10.4),
     start: (233.4, 108.6, 5.2),
     shoulders: (137.0, 281.6),
-    shoulder_w: 51.9,
-    marks: &[Mark::Rect(196.3, 127.1, 25.2, 7.4, 3.7), Mark::Rect(118.4, 60.4, 51.9, 4.4, 2.2), Mark::Rect(247.4, 60.4, 51.9, 4.4, 2.2)],
+    shoulder_w: 50.0,
+    shoulder_y: 53.0,
+    // The pair button under View and Menu; the faceplate seam it sits in reads as clutter.
+    marks: &[Mark::Rect(196.3, 127.1, 25.2, 7.4, 3.7)],
 };
 
 const STEAM_CONTROLLER: Layout = Layout {
@@ -303,8 +339,9 @@ const STEAM_CONTROLLER: Layout = Layout {
     select: (152.9, 67.1, 8.6),
     guide: (208.3, 86.0, 9.7),
     start: (264.2, 67.1, 8.6),
-    shoulders: (115.8, 304.2),
-    shoulder_w: 68.5,
+    shoulders: (125.0, 295.0),
+    shoulder_w: 66.0,
+    shoulder_y: 53.0,
     marks: &[Mark::Rect(120.4, 137.3, 68.5, 67.3, 9.1), Mark::Rect(231.1, 137.3, 68.5, 67.3, 9.1), Mark::Rect(198.0, 164.1, 20.5, 11.4, 4.6)],
 };
 
@@ -324,11 +361,12 @@ const WII_U_PRO: Layout = Layout {
     start: (240.3, 113.1, 7.8),
     shoulders: (127.9, 283.9),
     shoulder_w: 60.3,
+    shoulder_y: 58.0,
     marks: &[Mark::Circle(213.0, 153.9, 5.7)],
 };
 
 const GENERIC: Layout = Layout {
-    outline: "M110 58 C150 49 270 49 310 58 C350 66 372 90 385 140 C400 200 405 245 375 258 C350 268 325 245 305 215 C290 207 130 207 115 215 C95 245 70 268 45 258 C15 245 20 200 35 140 C48 90 70 66 110 58 Z",
+    outline: "M 78 72 C 88 55 108 52 136 52 L 284 52 C 312 52 332 55 342 72 C 364 110 366 170 357 214 C 350 249 333 266 312 264 C 293 262 281 246 267 230 C 251 212 235 204 210 204 C 185 204 169 212 153 230 C 139 246 127 262 108 264 C 87 266 70 249 63 214 C 54 170 56 110 78 72 Z",
     left_stick: (118.0, 118.0),
     right_stick: (255.0, 168.0),
     stick_r: 27.0,
@@ -341,7 +379,8 @@ const GENERIC: Layout = Layout {
     select: (182.0, 118.0, 7.0),
     guide: (210.0, 88.0, 13.0),
     start: (238.0, 118.0, 7.0),
-    shoulders: (112.0, 308.0),
-    shoulder_w: 80.0,
+    shoulders: (124.0, 296.0),
+    shoulder_w: 72.0,
+    shoulder_y: 52.0,
     marks: &[],
 };

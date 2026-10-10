@@ -1,7 +1,7 @@
 //! Which part of the drawing a point falls on, for the debug window's clickable controller.
 
 use super::{
-    BUMPER_HEIGHT, BUMPER_TOP, TRIGGER_HEIGHT, TRIGGER_TOP, face_positions,
+    BUMPER_HEIGHT, TRIGGER_HEIGHT, face_positions,
     layout::{DpadKind, Dot, Layout},
 };
 use crate::{
@@ -63,8 +63,13 @@ pub fn stick_center(model: Option<PadModel>, stick: Stick) -> (f32, f32) {
 
 /// How far a trigger is pulled when the pointer is at height `y`: the fill rises from the
 /// bottom of the trigger, so the pointer is where the top of it ends up.
-pub fn trigger_value(y: f32) -> f32 {
-    ((TRIGGER_TOP + TRIGGER_HEIGHT - y) / TRIGGER_HEIGHT).clamp(0.0, 1.0)
+pub fn trigger_value(model: Option<PadModel>, y: f32) -> f32 {
+    trigger_value_at(Layout::of(model).trigger_top(), y)
+}
+
+/// The pull at height `y` for a trigger whose top edge is at `top`.
+fn trigger_value_at(top: f32, y: f32) -> f32 {
+    ((top + TRIGGER_HEIGHT - y) / TRIGGER_HEIGHT).clamp(0.0, 1.0)
 }
 
 fn within((cx, cy): (f32, f32), r: f32, x: f32, y: f32) -> bool {
@@ -86,12 +91,13 @@ fn stick_at(l: &Layout, x: f32, y: f32) -> Option<Part> {
 /// Triggers (the outlines above the bumpers) and bumpers.
 fn shoulder(l: &Layout, x: f32, y: f32) -> Option<Part> {
     let w = l.shoulder_w;
+    let (trigger_top, bumper_top) = (l.trigger_top(), l.bumper_top());
     let sides = [(l.shoulders.0, Trigger::Left, Button::LeftBumper), (l.shoulders.1, Trigger::Right, Button::RightBumper)];
     sides.into_iter().find_map(|(cx, trigger, bumper)| {
-        if (cx - w / 4.0..=cx + w / 4.0).contains(&x) && (TRIGGER_TOP..=TRIGGER_TOP + TRIGGER_HEIGHT).contains(&y) {
-            return Some(Part::Trigger(trigger, trigger_value(y)));
+        if (cx - w / 4.0..=cx + w / 4.0).contains(&x) && (trigger_top..=trigger_top + TRIGGER_HEIGHT).contains(&y) {
+            return Some(Part::Trigger(trigger, trigger_value_at(trigger_top, y)));
         }
-        let on_bumper = (cx - w / 2.0..=cx + w / 2.0).contains(&x) && (BUMPER_TOP..=BUMPER_TOP + BUMPER_HEIGHT).contains(&y);
+        let on_bumper = (cx - w / 2.0..=cx + w / 2.0).contains(&x) && (bumper_top..=bumper_top + BUMPER_HEIGHT).contains(&y);
         on_bumper.then_some(Part::Button(bumper))
     })
 }
@@ -164,21 +170,30 @@ mod tests {
     #[test]
     fn bumpers_and_triggers_can_be_hit_on_every_model() {
         for model in models() {
-            let (lx, rx) = Layout::of(model).shoulders;
+            let l = Layout::of(model);
+            let (lx, rx) = l.shoulders;
+            let (trigger_top, bumper_top) = (l.trigger_top(), l.bumper_top());
             let at = |x: f32, y: f32| hit(model, x, y);
-            assert_eq!(at(lx, BUMPER_TOP + 3.0), Some(Part::Button(Button::LeftBumper)), "{model:?}");
-            assert_eq!(at(rx, BUMPER_TOP + 3.0), Some(Part::Button(Button::RightBumper)), "{model:?}");
-            assert!(matches!(at(lx, TRIGGER_TOP + 5.0), Some(Part::Trigger(Trigger::Left, _))), "{model:?}");
-            assert!(matches!(at(rx, TRIGGER_TOP + 5.0), Some(Part::Trigger(Trigger::Right, _))), "{model:?}");
+            assert_eq!(at(lx, bumper_top + 3.0), Some(Part::Button(Button::LeftBumper)), "{model:?}");
+            assert_eq!(at(rx, bumper_top + 3.0), Some(Part::Button(Button::RightBumper)), "{model:?}");
+            assert!(matches!(at(lx, trigger_top + 5.0), Some(Part::Trigger(Trigger::Left, _))), "{model:?}");
+            assert!(matches!(at(rx, trigger_top + 5.0), Some(Part::Trigger(Trigger::Right, _))), "{model:?}");
+            // The bars meet: there is no dead gap between the trigger and its bumper.
+            assert!(matches!(at(lx, trigger_top + TRIGGER_HEIGHT), Some(Part::Trigger(Trigger::Left, _))), "{model:?}");
         }
     }
 
     #[test]
     fn empty_space_hits_nothing_and_triggers_follow_the_pointer() {
         assert_eq!(hit(None, -50.0, 300.0), None);
-        let Some(Part::Trigger(_, top)) = hit(None, Layout::of(None).shoulders.0, TRIGGER_TOP + 1.0) else { panic!("trigger") };
-        let Some(Part::Trigger(_, bottom)) = hit(None, Layout::of(None).shoulders.0, TRIGGER_TOP + TRIGGER_HEIGHT - 1.0) else { panic!("trigger") };
-        assert!(top > 0.9 && bottom < 0.1);
+        let l = Layout::of(None);
+        let top = l.trigger_top();
+        let Some(Part::Trigger(_, pulled)) = hit(None, l.shoulders.0, top + 1.0) else { panic!("trigger") };
+        assert!(pulled > 0.9);
+        let Some(Part::Trigger(_, resting)) = hit(None, l.shoulders.0, top + TRIGGER_HEIGHT - 1.0) else { panic!("trigger") };
+        assert!(resting < 0.1);
+        assert_eq!(trigger_value(None, top), 1.0, "at the top it reads fully pulled");
+        assert_eq!(trigger_value(None, top + TRIGGER_HEIGHT), 0.0, "at the bottom it reads released");
     }
 
     #[test]

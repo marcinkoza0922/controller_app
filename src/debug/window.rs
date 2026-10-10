@@ -124,7 +124,10 @@ impl Window {
                 let value = pad_svg::stick_value(pad.model, s, x, y);
                 pad.set_stick(s, value);
             }
-            Some(Grab::Trigger(t)) => pad.set_trigger(t, pad_svg::trigger_value(y)),
+            Some(Grab::Trigger(t)) => {
+                let model = pad.model;
+                pad.set_trigger(t, pad_svg::trigger_value(model, y));
+            }
             _ => {}
         }
     }
