@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use crate::{motion::MotionSet, sound::SoundSet};
+use crate::{motion::MotionSet, pad_identity::ControllerSupport, sound::SoundSet};
 
 mod guide;
 mod log;
@@ -2400,6 +2400,10 @@ pub struct Game {
     /// applies when unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub motion: Option<MotionSet>,
+    /// Other controllers this game supports. When one of them is connected, the virtual pad
+    /// presents itself as it (see [`crate::pad_identity`]); `None` is an Xbox 360 pad.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub controllers: Option<ControllerSupport>,
 }
 
 impl Game {
@@ -2424,6 +2428,7 @@ impl Game {
             nintendo_layout: None,
             sounds: None,
             motion: None,
+            controllers: None,
         }
     }
 

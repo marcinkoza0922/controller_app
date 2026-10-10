@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::{Button, ButtonAction, GestureKind, Profile, Stick, StickAction, Trigger, TriggerAction, combo_key};
+use super::summary::guide_text;
 
 /// What the Guide tab adds to a profile.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -235,12 +236,12 @@ fn mapped_inputs(profile: &Profile) -> Vec<(GuideInput, String)> {
     let mut inputs = Vec::new();
     for (b, action) in &profile.buttons {
         if *b != Button::Guide && *action != ButtonAction::Disabled {
-            inputs.push((GuideInput::Button(*b), action.summary()));
+            inputs.push((GuideInput::Button(*b), guide_text(&action.pieces())));
         }
     }
     for t in [Trigger::Left, Trigger::Right] {
         if let TriggerAction::Button { action, .. } = profile.trigger(t) {
-            inputs.push((GuideInput::Trigger(t), action.summary()));
+            inputs.push((GuideInput::Trigger(t), guide_text(&action.pieces())));
         }
     }
     for s in [Stick::Left, Stick::Right] {
@@ -287,7 +288,7 @@ pub fn editable_rows(profile: &Profile) -> Vec<EditableRow> {
         for kind in GestureKind::ALL {
             if let Some(action) = gestures.get(kind).filter(|a| **a != ButtonAction::Disabled) {
                 let input = GuideInput::Button(*button);
-                rows.push(row(settings, RowId::Gesture(input, kind), vec![input], action.summary(), RowShape::Gesture(kind)));
+                rows.push(row(settings, RowId::Gesture(input, kind), vec![input], guide_text(&action.pieces()), RowShape::Gesture(kind)));
             }
         }
     }
@@ -296,7 +297,7 @@ pub fn editable_rows(profile: &Profile) -> Vec<EditableRow> {
             continue;
         }
         let inputs: Vec<GuideInput> = combo_key(&combo.buttons).into_iter().map(GuideInput::Button).collect();
-        rows.push(row(settings, RowId::Combo(inputs.clone()), inputs, combo.action.summary(), RowShape::Combo));
+        rows.push(row(settings, RowId::Combo(inputs.clone()), inputs, guide_text(&combo.action.pieces()), RowShape::Combo));
     }
     for (index, custom) in settings.custom.iter().enumerate() {
         let shape = if custom.inputs.len() > 1 { RowShape::Combo } else { RowShape::Input };
@@ -449,7 +450,7 @@ impl GuideSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{Combo, Gestures};
+    use crate::config::{Combo, Gestures, MouseButton};
 
     fn profile() -> Profile {
         let mut p = Profile::passthrough("p");
@@ -481,7 +482,17 @@ mod tests {
     fn rows_follow_the_mappings_and_skip_guide_and_disabled_buttons() {
         let rows = mapping_rows(&profile());
         assert!(rows.iter().all(|r| r.inputs.iter().all(|i| *i != btn(Button::Guide) && *i != btn(Button::Select))));
-        assert_eq!(row_of(&rows, &[btn(Button::South)]).unwrap().text, "E", "default text is the action's description");
+        assert_eq!(row_of(&rows, &[btn(Button::South)]).unwrap().text, "{keyboard:e}", "default text is the action's description");
+    }
+
+    #[test]
+    fn default_text_shows_pad_buttons_and_mouse_clicks_as_glyph_tokens() {
+        let mut p = profile();
+        p.set_button(Button::East, ButtonAction::Gamepad(Button::South));
+        p.set_button(Button::West, ButtonAction::Mouse(MouseButton::Left));
+        let rows = mapping_rows(&p);
+        assert_eq!(row_of(&rows, &[btn(Button::East)]).unwrap().text, "{pad:south}");
+        assert_eq!(row_of(&rows, &[btn(Button::West)]).unwrap().text, "{mouse:leftclick}");
     }
 
     #[test]
@@ -491,7 +502,7 @@ mod tests {
         p.left_trigger.action = TriggerAction::Button { action: ButtonAction::Keys(vec!["KEY_Z".into()]), threshold: 0.5 };
         let rows = mapping_rows(&p);
         assert_eq!(row_of(&rows, &[GuideInput::Stick(Stick::Left)]).unwrap().text, "Move the mouse");
-        assert_eq!(row_of(&rows, &[GuideInput::Trigger(Trigger::Left)]).unwrap().text, "Z");
+        assert_eq!(row_of(&rows, &[GuideInput::Trigger(Trigger::Left)]).unwrap().text, "{keyboard:z}");
         assert!(row_of(&rows, &[GuideInput::Stick(Stick::Right)]).is_none(), "a pass-through stick isn't listed");
     }
 
@@ -547,9 +558,9 @@ mod tests {
         p.combos.push(Combo { buttons: vec![Button::North, Button::West], action: ButtonAction::Keys(vec!["KEY_R".into()]) });
         p.combos.push(Combo { buttons: vec![Button::North, Button::Guide], action: ButtonAction::Keys(vec!["KEY_X".into()]) });
         let rows = mapping_rows(&p);
-        assert_eq!(row_of(&rows, &[btn(Button::South)]).map(|r| r.text), Some("E".into()));
-        assert!(rows.iter().any(|r| r.inputs == [btn(Button::South)] && r.text == "F" && r.shape == RowShape::Gesture(GestureKind::DoubleTap)));
-        assert_eq!(row_of(&rows, &[btn(Button::North), btn(Button::West)]).unwrap().text, "R");
+        assert_eq!(row_of(&rows, &[btn(Button::South)]).map(|r| r.text), Some("{keyboard:e}".into()));
+        assert!(rows.iter().any(|r| r.inputs == [btn(Button::South)] && r.text == "{keyboard:f}" && r.shape == RowShape::Gesture(GestureKind::DoubleTap)));
+        assert_eq!(row_of(&rows, &[btn(Button::North), btn(Button::West)]).unwrap().text, "{keyboard:r}");
         assert_eq!(rows.iter().filter(|r| r.inputs.contains(&btn(Button::Guide))).count(), 0, "Guide is never listed");
         assert_eq!(rows.last().unwrap().inputs.len(), 2, "combos come last");
     }

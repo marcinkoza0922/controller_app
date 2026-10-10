@@ -63,6 +63,9 @@ pub enum Request {
     DebugOutput { path: String, clear: bool },
     /// Debug mode only: removes the injected controller at this path, or every one for `all`.
     DebugDetach(String),
+    /// Debug mode only: the identity every virtual pad presents as, whatever the game and the
+    /// controller say; `None` goes back to choosing.
+    DebugIdentify(Option<crate::pad_identity::PadIdentity>),
 }
 
 /// One input from an injected controller.

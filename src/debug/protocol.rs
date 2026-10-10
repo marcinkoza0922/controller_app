@@ -8,6 +8,7 @@ use crate::{
     config::{Button, Stick, Trigger},
     info::{PadFamily, PadModel},
     ipc::InputSnapshot,
+    pad_identity::PadIdentity,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -24,6 +25,8 @@ pub enum DebugRequest {
     Quit,
     /// Become another model; `None` is the generic controller.
     Model(Option<PadModel>),
+    /// Forces the identity every virtual pad on the daemon presents as; `None` lets it choose.
+    Identify(Option<PadIdentity>),
     Family(PadFamily),
     Press(Vec<Button>),
     Release(Vec<Button>),
@@ -79,6 +82,9 @@ pub const COMMANDS: &str = "\
   reset                          release everything and center the sticks
   quit                           end the session
   model <name|generic>           become another controller model (see `debug models`)
+  identify <name|auto>           make the daemon's virtual pads present as that controller,
+                                 whatever the game and controller say (xbox360, dualshock4,
+                                 dualsense, pro-controller; auto goes back to choosing)
   family <xbox|playstation|nintendo>   draw another family's button letters
   press <button>...              hold buttons down
   release <button>...            let buttons go
@@ -113,6 +119,7 @@ pub fn parse(words: &[&str]) -> Result<Command> {
         ["quit"] => DebugRequest::Quit,
         ["sleep", ms] => return Ok(Command::Sleep(ms.parse().map_err(|_| anyhow!("not a number of milliseconds: {ms}"))?)),
         ["model", name] => DebugRequest::Model(model(name)?),
+        ["identify", name] => DebugRequest::Identify(identity(name)?),
         ["family", name] => DebugRequest::Family(family(name)?),
         ["press", names @ ..] => DebugRequest::Press(buttons(names)?),
         ["release", names @ ..] => DebugRequest::Release(buttons(names)?),
@@ -156,6 +163,17 @@ fn expectation(words: &[&str]) -> Result<Expectation> {
 
 fn number(s: &str) -> Result<f32> {
     s.parse().map_err(|_| anyhow!("not a number: {s}"))
+}
+
+/// A pad identity by its slug, or `auto` for none.
+fn identity(name: &str) -> Result<Option<PadIdentity>> {
+    if name == "auto" {
+        return Ok(None);
+    }
+    PadIdentity::from_slug(name).map(Some).ok_or_else(|| {
+        let all: Vec<&str> = [PadIdentity::Xbox360, PadIdentity::DualShock4, PadIdentity::DualSense, PadIdentity::SwitchPro].iter().map(|i| i.slug()).collect();
+        anyhow!("unknown identity {name}; try auto, {}", all.join(", "))
+    })
 }
 
 fn model(name: &str) -> Result<Option<PadModel>> {
@@ -227,6 +245,14 @@ pub fn button(name: &str) -> Result<Button> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn identify_forces_an_identity_or_goes_back_to_choosing() {
+        assert_eq!(parse(&["identify", "dualsense"]).unwrap(), Command::Request(DebugRequest::Identify(Some(PadIdentity::DualSense))));
+        assert_eq!(parse(&["identify", "pro-controller"]).unwrap(), Command::Request(DebugRequest::Identify(Some(PadIdentity::SwitchPro))));
+        assert_eq!(parse(&["identify", "auto"]).unwrap(), Command::Request(DebugRequest::Identify(None)));
+        assert!(parse(&["identify", "generic"]).is_err());
+    }
 
     fn req(line: &str) -> DebugRequest {
         let words: Vec<&str> = line.split_whitespace().collect();

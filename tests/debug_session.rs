@@ -381,6 +381,29 @@ fn debug_a_normal_daemon_refuses_injected_controllers() {
 
 #[test]
 #[ignore]
+fn debug_identify_needs_a_debug_daemon() {
+    let _serial = serial();
+    let env = Env::new();
+    let _daemon = spawn_daemon(&env.root, Some(&env.run()));
+    wait_for("the daemon to answer", || env.command(&["status"]).output().ok()?.status.success().then_some(()));
+    let _session = env.session(&[]);
+    let reply = env.debug(&["identify", "dualsense"]);
+    assert!(!reply.ok && reply.err.contains("--debug"), "{}", reply.err);
+}
+
+#[test]
+#[ignore]
+fn debug_identify_is_accepted_and_clears_back_to_choosing() {
+    let _serial = serial();
+    let env = Env::new();
+    let _daemon = debug_daemon(&env, &hold_config());
+    let _session = env.session(&[]);
+    env.ok(&["identify", "dualsense"]);
+    env.ok(&["identify", "auto"]);
+}
+
+#[test]
+#[ignore]
 fn debug_an_injected_controller_runs_through_the_active_profile() {
     let _serial = serial();
     let env = Env::new();

@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::motion::MotionSet;
+use crate::{motion::MotionSet, pad_identity::ControllerSupport};
 use crate::sound::SoundSet;
 use crate::config::{
     Button, ButtonAction, Combo, Config, Game, Gestures, GyroMode, Indicator, InfoOverlay, ItemKind, Layer, LogOverlay, Macro,
@@ -64,6 +64,9 @@ pub struct Pack {
     /// How each overlay moves, if the author set it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub motion: Option<MotionSet>,
+    /// Other controllers the game supports, if the author ticked any (see `Game::controllers`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub controllers: Option<ControllerSupport>,
 }
 
 /// What a pack says about itself.
@@ -137,6 +140,7 @@ impl Pack {
             nintendo_layout: self.nintendo_layout,
             sounds: self.sounds,
             motion: self.motion,
+            controllers: self.controllers,
         }
     }
 
@@ -427,6 +431,7 @@ pub fn export(game: &Game, shared: &Shared, info: &PackInfo) -> Export {
         nintendo_layout: pack_game.nintendo_layout,
         sounds: pack_game.sounds,
         motion: pack_game.motion,
+        controllers: pack_game.controllers,
     };
     Export { pack, pulled_in, dangling: dangling.into_iter().collect(), features }
 }
@@ -701,6 +706,7 @@ fn keep_looks(mut game: Game, old: &Game) -> Game {
     game.nintendo_layout = game.nintendo_layout.or(old.nintendo_layout);
     game.sounds = game.sounds.or(old.sounds);
     game.motion = game.motion.or(old.motion);
+    game.controllers = game.controllers.or(old.controllers);
     game
 }
 
@@ -948,6 +954,19 @@ mod tests {
         let out = export(&config.games[0], &config.shared, &draft(&config.games[0], false));
         let pack = parse(&out.pack.to_toml().unwrap()).unwrap();
         assert_eq!(pack.to_game().overlay_font.as_deref(), Some("Comfortaa"));
+    }
+
+    #[test]
+    fn controller_support_travels_in_packs() {
+        use crate::pad_identity::ControllerSupport;
+        let mut config = setup();
+        let plain = export(&config.games[0], &config.shared, &draft(&config.games[0], false)).pack.to_toml().unwrap();
+        assert!(!plain.contains("controllers"), "a game that ticks nothing leaves it out");
+        let support = ControllerSupport { dualsense: true, switch_pro: true, ..Default::default() };
+        config.games[0].controllers = Some(support);
+        let out = export(&config.games[0], &config.shared, &draft(&config.games[0], false));
+        let pack = parse(&out.pack.to_toml().unwrap()).unwrap();
+        assert_eq!(pack.to_game().controllers, Some(support));
     }
 
     #[test]
