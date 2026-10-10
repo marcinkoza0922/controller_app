@@ -1,6 +1,6 @@
 //! The Guide tab of the profile editor: the notes for the Notes overlay, and the list behind the
 //! Mapping guide (the Mappings box on the Guide overlay): each row's text, showing or hiding it,
-//! and sharing a row with other inputs.
+//! sharing a row with other inputs, and rows the author writes.
 
 use iced::{
     Alignment, Length,
@@ -8,10 +8,10 @@ use iced::{
 };
 
 use super::{App, Message, pieces, widgets::{dropdown, field, section}};
+use crate::config::{Button, GuideInput, Profile, RowId, RowKey, Stick, Trigger, default_text, editable_rows};
 use crate::info::PadFamily;
-use crate::config::{GuideInput, Profile, RowId, RowKey, default_text, editable_rows};
 
-/// The Guide tab's notes editor, which the app keeps.
+/// The Guide tab's notes editor, which the app keeps, and how the glyphs are drawn.
 #[derive(Clone, Copy)]
 pub(super) struct GuideView<'a> {
     pub(super) notes: &'a text_editor::Content,
@@ -25,13 +25,15 @@ pub(super) enum GuideMsg {
     Notes(text_editor::Action),
     Text(RowKey, String),
     Hidden(RowKey, bool),
-    /// Starts a merged row with the row's input and another, or adds that other to the row's
-    /// merged row if the input is on one.
+    /// Starts a merged row with the row's input and another, adds that other to the row's merged
+    /// row, or adds it to a custom row.
     Share(RowKey, GuideInput),
     Split(usize),
+    AddCustom,
+    RemoveCustom(usize),
 }
 
-/// An input offered in a "share with" choice: its label, and the input.
+/// An input offered in a choice: its label, and the input.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct Choice(GuideInput, String);
 
@@ -65,6 +67,7 @@ impl App {
                 if let Some(p) = self.profile_mut() {
                     match key {
                         RowKey::Merged(i) => p.guide.add_to_merge(i, other),
+                        RowKey::Custom(i) => p.guide.add_custom_input(i, other),
                         RowKey::Row(RowId::Input(input)) => {
                             let text = default_text(p, input);
                             p.guide.merge(vec![input, other], text);
@@ -78,6 +81,16 @@ impl App {
                     p.guide.split(i);
                 }
             }
+            GuideMsg::AddCustom => {
+                if let Some(p) = self.profile_mut() {
+                    p.guide.add_custom(String::new());
+                }
+            }
+            GuideMsg::RemoveCustom(i) => {
+                if let Some(p) = self.profile_mut() {
+                    p.guide.remove_custom(i);
+                }
+            }
         }
     }
 
@@ -86,6 +99,14 @@ impl App {
         let notes = self.profile().map(|p| p.guide.notes.clone()).unwrap_or_default();
         self.guide_notes = text_editor::Content::with_text(&notes);
     }
+}
+
+/// Every input a row can name: the buttons (Guide excepted), the triggers and the sticks.
+fn all_inputs() -> Vec<GuideInput> {
+    let mut inputs: Vec<GuideInput> = Button::ALL.into_iter().filter(|b| *b != Button::Guide).map(GuideInput::Button).collect();
+    inputs.extend([Trigger::Left, Trigger::Right].map(GuideInput::Trigger));
+    inputs.extend([Stick::Left, Stick::Right].map(GuideInput::Stick));
+    inputs
 }
 
 /// The Guide tab's sections for `p`. Inside a layer the tab is shown but not editable, since the
@@ -103,24 +124,27 @@ pub(super) fn sections<'a>(p: &'a Profile, guide: GuideView<'a>, in_layer: bool)
         .on_action(|action| Message::Guide(GuideMsg::Notes(action)))
         .height(Length::Fixed(140.0));
     let rows = editable_rows(p);
+    let label = |input: GuideInput| pieces::input_text(input, guide.family, guide.nintendo_layout);
     // Inputs with a row of their own, which another row can share.
     let free: Vec<Choice> = rows
         .iter()
         .filter_map(|r| match r.key {
-            RowKey::Row(RowId::Input(input)) => {
-                let label = pieces::input_text(input, guide.family, guide.nintendo_layout);
-                Some(Choice(input, format!("{label} {}", r.default_text)))
-            }
-            RowKey::Row(_) | RowKey::Merged(_) => None,
+            RowKey::Row(RowId::Input(input)) => Some(Choice(input, format!("{} {}", label(input), r.default_text))),
+            RowKey::Row(_) | RowKey::Merged(_) | RowKey::Custom(_) => None,
         })
         .collect();
-    let list: Vec<iced::Element<'a, Message>> = rows
+    let every: Vec<Choice> = all_inputs().into_iter().map(|input| Choice(input, label(input))).collect();
+    let mut list: Vec<iced::Element<'a, Message>> = rows
         .iter()
         .map(|r| {
-            let others: Vec<Choice> = free.iter().filter(|c| !r.inputs.contains(&c.0)).cloned().collect();
-            mapping_row(r, others, guide)
+            let others: Vec<Choice> = match r.key {
+                RowKey::Custom(_) => every.iter().filter(|c| !r.inputs.contains(&c.0)).cloned().collect(),
+                _ => free.iter().filter(|c| !r.inputs.contains(&c.0)).cloned().collect(),
+            };
+            mapping_row(r, &others, guide)
         })
         .collect();
+    list.push(button(text("Add a row").size(13)).on_press(Message::Guide(GuideMsg::AddCustom)).into());
     vec![
         section(
             "Notes",
@@ -129,14 +153,14 @@ pub(super) fn sections<'a>(p: &'a Profile, guide: GuideView<'a>, in_layer: bool)
         ),
         section(
             "Mapping guide",
-            Some("The list behind the Mappings box on the right of the Guide overlay. Each row says what an input, gesture or combo does: change its text, or show or hide it (the mapping still works). Inputs can also share a row with another input, such as both D-pad sides for \"Lean\". Sharing with a shared row adds to it. Split takes a shared row apart.".into()),
+            Some("The list behind the Mappings box on the right of the Guide overlay. Each row says what an input, gesture or combo does: change its text, or show or hide it (the mapping still works). Inputs can share a row with another input, such as both D-pad sides for \"Lean\". \"Add a row\" writes a row of your own, for things the mappings don't show, such as what a layer's chord does: choose its inputs, then its text.".into()),
             list,
         ),
     ]
 }
 
 /// One row of the list: its glyphs, its text, and its controls.
-fn mapping_row<'a>(r: &crate::config::EditableRow, others: Vec<Choice>, guide: GuideView<'_>) -> iced::Element<'a, Message> {
+fn mapping_row<'a>(r: &crate::config::EditableRow, others: &[Choice], guide: GuideView<'_>) -> iced::Element<'a, Message> {
     let glyphs = pieces::row_glyphs(&r.inputs, r.shape, guide.family, guide.nintendo_layout);
     let key = r.key.clone();
     let placeholder = if r.default_text.is_empty() { "Text" } else { r.default_text.as_str() };
@@ -145,31 +169,40 @@ fn mapping_row<'a>(r: &crate::config::EditableRow, others: Vec<Choice>, guide: G
         move |t| Message::Guide(GuideMsg::Text(key.clone(), t))
     })
     .width(Length::Fill);
-    let shown = checkbox(!r.hidden).label("Show").on_toggle({
-        let key = key.clone();
-        move |on| Message::Guide(GuideMsg::Hidden(key.clone(), !on))
-    });
-    let share: iced::Element<'a, Message> = match r.key.clone() {
+    // Custom rows aren't hidden: they're removed instead.
+    let shown: iced::Element<'a, Message> = match r.key {
+        RowKey::Custom(_) => text("").into(),
+        _ => checkbox(!r.hidden)
+            .label("Show")
+            .on_toggle({
+                let key = key.clone();
+                move |on| Message::Guide(GuideMsg::Hidden(key.clone(), !on))
+            })
+            .into(),
+    };
+    let share = |placeholder: &'static str, key: RowKey| {
+        dropdown(others.to_vec(), None::<Choice>, move |c: Choice| Message::Guide(GuideMsg::Share(key.clone(), c.0)))
+            .placeholder(placeholder)
+    };
+    let controls: iced::Element<'a, Message> = match r.key.clone() {
         RowKey::Merged(i) => {
             let split = button(text("Split").size(13)).on_press(Message::Guide(GuideMsg::Split(i)));
             if others.is_empty() {
                 split.into()
             } else {
-                row![
-                    dropdown(others, None::<Choice>, move |c: Choice| Message::Guide(GuideMsg::Share(key.clone(), c.0)))
-                        .placeholder("Add an input"),
-                    split
-                ]
-                .spacing(8)
-                .into()
+                row![share("Add an input", key.clone()), split].spacing(8).into()
             }
         }
-        RowKey::Row(RowId::Input(_)) if !others.is_empty() => {
-            dropdown(others, None::<Choice>, move |c: Choice| Message::Guide(GuideMsg::Share(key.clone(), c.0)))
-                .placeholder("Share with")
-                .into()
+        RowKey::Custom(i) => {
+            let remove = button(text("Remove").size(13)).on_press(Message::Guide(GuideMsg::RemoveCustom(i)));
+            if others.is_empty() {
+                remove.into()
+            } else {
+                row![share("Add an input", key.clone()), remove].spacing(8).into()
+            }
         }
+        RowKey::Row(RowId::Input(_)) if !others.is_empty() => share("Share with", key.clone()).into(),
         RowKey::Row(_) => text("").into(),
     };
-    row![container(glyphs).width(Length::Fixed(140.0)), edit, shown, share].spacing(10).align_y(Alignment::Center).into()
+    row![container(glyphs).width(Length::Fixed(140.0)), edit, shown, controls].spacing(10).align_y(Alignment::Center).into()
 }

@@ -20,6 +20,9 @@ pub struct GuideSettings {
     /// Inputs that share one row on the Mappings overlay, such as both D-pad sides for "Lean".
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub merged: Vec<MergedRow>,
+    /// Rows the author wrote, for what the profile's mappings don't show, such as a layer's chord.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub custom: Vec<CustomRow>,
 }
 
 impl GuideSettings {
@@ -187,6 +190,14 @@ impl RowShape {
     }
 }
 
+/// A row the author wrote: the inputs it names, and the text after them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CustomRow {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<GuideInput>,
+    pub text: String,
+}
+
 /// One line of the Mappings overlay: the inputs it names, and the text after them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MappingRow {
@@ -201,6 +212,7 @@ pub struct MappingRow {
 pub enum RowKey {
     Row(RowId),
     Merged(usize),
+    Custom(usize),
 }
 
 /// A row of the Guide tab: the mapping it stands for, the text it shows, and whether it's shown.
@@ -286,6 +298,18 @@ pub fn editable_rows(profile: &Profile) -> Vec<EditableRow> {
         let inputs: Vec<GuideInput> = combo_key(&combo.buttons).into_iter().map(GuideInput::Button).collect();
         rows.push(row(settings, RowId::Combo(inputs.clone()), inputs, combo.action.summary(), RowShape::Combo));
     }
+    for (index, custom) in settings.custom.iter().enumerate() {
+        let shape = if custom.inputs.len() > 1 { RowShape::Combo } else { RowShape::Input };
+        rows.push(EditableRow {
+            key: RowKey::Custom(index),
+            inputs: custom.inputs.clone(),
+            text: custom.text.clone(),
+            default_text: String::new(),
+            shape,
+            overridden: true,
+            hidden: false,
+        });
+    }
     rows
 }
 
@@ -323,6 +347,11 @@ impl GuideSettings {
     /// Sets the text a row shows. Empty text goes back to the default.
     pub fn set_text(&mut self, key: RowKey, text: String) {
         match key {
+            RowKey::Custom(i) => {
+                if let Some(custom) = self.custom.get_mut(i) {
+                    custom.text = text;
+                }
+            }
             RowKey::Row(id) => {
                 let edit = self.edits.entry(id.clone()).or_default();
                 edit.text = (!text.is_empty()).then_some(text);
@@ -339,6 +368,8 @@ impl GuideSettings {
     /// Shows or hides a row on the Mappings overlay.
     pub fn set_hidden(&mut self, key: RowKey, hidden: bool) {
         match key {
+            // Custom rows aren't hidden: they're removed.
+            RowKey::Custom(_) => {}
             RowKey::Row(id) => {
                 self.edits.entry(id.clone()).or_default().hidden = hidden;
                 self.prune(&id);
@@ -377,6 +408,27 @@ impl GuideSettings {
             merge.inputs.push(input);
         }
         self.merged.retain(|m| m.inputs.len() >= 2);
+    }
+
+    /// Adds a row the author wrote, with no inputs yet.
+    pub fn add_custom(&mut self, text: String) {
+        self.custom.push(CustomRow { inputs: Vec::new(), text });
+    }
+
+    /// Adds `input` to the custom row at `index`.
+    pub fn add_custom_input(&mut self, index: usize, input: GuideInput) {
+        if let Some(custom) = self.custom.get_mut(index)
+            && !custom.inputs.contains(&input)
+        {
+            custom.inputs.push(input);
+        }
+    }
+
+    /// Removes the custom row at `index`.
+    pub fn remove_custom(&mut self, index: usize) {
+        if index < self.custom.len() {
+            self.custom.remove(index);
+        }
     }
 
     /// Takes a merged row apart, so its inputs are listed on their own again.
@@ -595,6 +647,36 @@ mod tests {
         p.guide.add_to_merge(0, south);
         assert_eq!(p.guide.merged.len(), 1, "the other row is left with one input, so it goes");
         assert_eq!(p.guide.merged[0].inputs, [left, right, south]);
+    }
+
+    #[test]
+    fn custom_rows_list_after_everything_else_and_take_inputs() {
+        let mut p = profile();
+        p.guide.add_custom("Assign group instead".into());
+        p.guide.add_custom_input(0, btn(Button::LeftBumper));
+        p.guide.add_custom_input(0, btn(Button::RightBumper));
+        p.guide.add_custom_input(0, btn(Button::RightBumper));
+        let rows = mapping_rows(&p);
+        let custom = rows.last().unwrap();
+        assert_eq!(custom.text, "Assign group instead");
+        assert_eq!(custom.inputs, [btn(Button::LeftBumper), btn(Button::RightBumper)], "each input once");
+        assert_eq!(editable_rows(&p).last().unwrap().shape, RowShape::Combo);
+        p.guide.set_text(RowKey::Custom(0), "Groups".into());
+        assert_eq!(mapping_rows(&p).last().unwrap().text, "Groups");
+        p.guide.set_hidden(RowKey::Custom(0), true);
+        assert!(p.guide.custom.len() == 1, "a custom row isn't hidden, only removed");
+        p.guide.remove_custom(0);
+        assert!(p.guide.custom.is_empty());
+    }
+
+    #[test]
+    fn custom_rows_roundtrip_through_the_file() {
+        let mut p = profile();
+        p.guide.add_custom("Assign group instead".into());
+        p.guide.add_custom_input(0, btn(Button::LeftBumper));
+        let text = toml::to_string_pretty(&p.guide).unwrap();
+        let back: GuideSettings = toml::from_str(&text).unwrap();
+        assert_eq!(back, p.guide);
     }
 
     #[test]

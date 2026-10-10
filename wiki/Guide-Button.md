@@ -68,6 +68,8 @@ Each profile has a **Guide** tab in the profile editor. It holds two things:
   - show or hide it. A hidden row leaves the overlay, but the mapping still works;
   - share a row with another input, so "Lean" can be one row for both D-pad sides. Choose the other input in **Share with**. A shared row takes more inputs with **Add an input**, and **Split** takes it apart.
 
+  - write a row of your own with **Add a row**, for things the mappings don't show, such as what a layer's chord does. Choose its inputs in the row's dropdown, then type its text. **Remove** takes it out.
+
 Rows follow the profile's mappings. If you change what A does, the row updates, unless you've written its text yourself. Gestures and combos are listed as well, with their own text and visibility, marked ×2 for a double tap, ×3 for a triple tap and "hold" for a long press. Combos show their buttons joined with "+", and shared rows with commas.
 
 The overlay's Notes and Mappings boxes show only while the overlay is open.
