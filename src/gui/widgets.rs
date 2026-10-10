@@ -297,7 +297,7 @@ pub(super) fn section<'a>(title: &'a str, help_text: Option<String>, rows: Vec<E
         .into()
 }
 
-/// An ⓘ that explains a section on hover, instead of a paragraph of grey text.
+/// An ⓘ that explains a section on hover, instead of a paragraph of gray text.
 pub(super) fn help<'a>(explanation: String) -> Element<'a, Message> {
     tooltip(
         text("ⓘ").size(16).color(style_accent()),
@@ -326,6 +326,13 @@ pub(super) fn fill_x<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a
     container(content).width(Length::Fill).into()
 }
 
+/// A slider's value and unit: "250 ms", but "45°" and "120°/s turning", since a degree sign
+/// goes against its number.
+fn slider_value(value: f32, step: f32, unit: &str) -> String {
+    let number = if step >= 1.0 { format!("{value:.0}") } else { format!("{value:.2}") };
+    if unit.is_empty() || unit.starts_with('°') { format!("{number}{unit}") } else { format!("{number} {unit}") }
+}
+
 #[expect(clippy::too_many_arguments, reason = "predates the size lints")]
 pub(super) fn value_slider<'a>(
     label: &'a str,
@@ -335,12 +342,25 @@ pub(super) fn value_slider<'a>(
     unit: &'a str,
     on_change: impl Fn(f32) -> Message + 'a,
 ) -> Element<'a, Message> {
-    let shown = if step >= 1.0 { format!("{value:.0} {unit}") } else { format!("{value:.2} {unit}") };
     labeled(
         label,
-        row![slider(range, value, on_change).step(step).width(300), text(shown).size(13)]
+        row![slider(range, value, on_change).step(step).width(300), text(slider_value(value, step, unit)).size(13)]
             .spacing(10)
             .align_y(Alignment::Center)
             .into(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::slider_value;
+
+    #[test]
+    fn units_are_spaced_but_degrees_are_not() {
+        assert_eq!(slider_value(250.0, 10.0, "ms"), "250 ms");
+        assert_eq!(slider_value(0.0, 15.0, "° from up"), "0° from up");
+        assert_eq!(slider_value(120.0, 10.0, "°/s turning"), "120°/s turning");
+        assert_eq!(slider_value(0.5, 0.1, "°/s"), "0.50°/s");
+        assert_eq!(slider_value(8.0, 1.0, ""), "8");
+    }
 }

@@ -5,7 +5,7 @@ macros = []
 id = "83de13c0-9832-4676-b3ef-438915c1feda"
 name = "RollerCoaster Tycoon 2"
 version = "1.0"
-author = "padwight"
+author = "Padwight"
 description = "RollerCoaster Tycoon 2 (Triple Thrill Pack, Windows build run through Heroic or Proton) on an Xbox-style pad. Left stick scrolls the map with the arrow keys, the right stick moves the cursor, A and RT left-click, LT right-click, B is Escape. Start pauses. Hold LB for a radial menu of Pause and Close window. This is a starting point: check the bindings against the game's own keys."
 made_with = "Xbox controller"
 

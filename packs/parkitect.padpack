@@ -5,7 +5,7 @@ macros = []
 id = "eab999a4-c909-43e5-83d3-f1b292474d72"
 name = "Parkitect"
 version = "1.0"
-author = "padwight"
+author = "Padwight"
 description = "Parkitect on an Xbox-style pad (native Linux build, or the Windows build through Proton). Left stick moves the camera with WASD, the right stick moves the cursor, A and RT left-click, LT right-click, B is Escape. Q and E rotate the camera. Start pauses. Hold LB for a radial menu of Pause, rotation and Close. This is a starting point: check the bindings against the game's own keys."
 made_with = "Xbox controller"
 

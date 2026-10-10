@@ -1,4 +1,4 @@
-//! The Guide overlay's centre menu: Quick Settings, Edit Controls, the keyboard and numpad, mouse
+//! The Guide overlay's center menu: Quick Settings, Edit Controls, the keyboard and numpad, mouse
 //! mode, media controls, the next profile and, while Steam runs, the Steam overlay. The daemon keeps the
 //! cursor and runs the chosen item; the engine delivers the presses.
 

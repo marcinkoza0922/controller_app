@@ -3,7 +3,7 @@
 A list of visual inconsistencies, polish points and improvements found by going through every
 page of the settings window (Overview, App settings, Manual, a setup's tabs and profile
 sub-tabs, the add, import, export and delete dialogs, and dark mode). Work through it one item
-at a time, with a before and after screenshot for each.
+at a time, with a before and after screenshot for each. Screenshots should fall in an untracked directory inside the repository.
 
 Tick an item when it's done and merged.
 
@@ -30,34 +30,51 @@ Tick an item when it's done and merged.
 - [x] 6. The "Remapping enabled" toggle is greyed out while the daemon is down, so it looks off,
   but its label still says "enabled". It now reads "Remapping on" or "Remapping off", and is off
   while the daemon is down, since nothing is remapped then.
-- [ ] 7. "Revert" looks clickable when there is nothing to revert, while "Save & apply" is greyed
-  out next to it.
-- [ ] 8. The disabled "Save & apply" is a pale blue that is hard to read, and "Find by pressing"
-  barely looks different when disabled.
-- [ ] 9. The sidebar says "No setups yet. Use + Add setup…" while General is listed just above
-  it. The search box shows even when there is nothing to search.
-- [ ] 10. On a profile with no bindings, the controller picture shows a lone "Layer "Guide""
-  callout and nothing else.
+- [x] 7. "Revert" looks clickable when there is nothing to revert, while "Save & apply" is greyed
+  out next to it. Every disabled button now has one look, whatever its style: no fill, a faint
+  edge and grey text.
+- [x] 8. The disabled "Save & apply" is a pale blue that is hard to read, and "Find by pressing"
+  barely looks different when disabled. Both use the disabled look from item 7, which keeps the
+  text readable.
+- [x] 9. The sidebar says "No setups yet. Use + Add setup…" while General is listed just above
+  it. The search box shows even when there is nothing to search. It now says "No game setups
+  yet", and the search box shows only once there is a game setup.
+- [x] 10. On a profile with no bindings, the controller picture shows a lone "Layer "Guide""
+  callout and nothing else. Guide's usual mapping (which the engine ignores) is no longer drawn,
+  and a picture with no callouts says "Every input passes through unchanged" under it.
 
 ## The same thing worded differently
 
-- [ ] 11. "Needs the daemon" has four wordings in two sizes: "Live input needs the daemon",
+- [x] 11. "Needs the daemon" has four wordings in two sizes: "Live input needs the daemon",
   "Needs the daemon.", "Unavailable while the daemon is not running." and "Automatic switching
-  needs the daemon to be running." The Controllers one is in a larger font.
-- [ ] 12. An unbound input is "(nothing)" in the picture callouts but "Disabled" in the button
-  list (`src/gui/profile.rs`).
-- [ ] 13. The same key is written three ways: "SPACE", "Space" and "“;”".
-- [ ] 14. Button names follow different patterns: "A (South)", "Left Bumper (LB)", "Back (View)",
+  needs the daemon to be running." The Controllers one is in a larger font. All four now say
+  "Needs the daemon." in small grey text.
+- [x] 12. An unbound input is "(nothing)" in the picture callouts but "Disabled" in the button
+  list (`src/gui/profile.rs`). The callouts say "Disabled" too.
+- [x] 13. The same key is written three ways: "SPACE", "Space" and "“;”". The key field now
+  shows the keyboard names the summaries use ("Space", "Left Ctrl+C") and takes them typed in,
+  as well as the old code names. Arrows read "Up", "Left" and so on, and keys whose name has a
+  "+" (Vol +) keep their code name, so the field can be typed back. Summaries still quote a lone
+  punctuation key (“;”) so it stays visible in a sentence.
+- [x] 14. Button names follow different patterns: "A (South)", "Left Bumper (LB)", "Back (View)",
   "Left Stick Click", then "L3" and "R3" on the Guide tab and "Stick clicks" in log overlays.
-- [ ] 15. Stick names are capitalised differently: "Left Stick" in lists, "right stick" in hints.
-- [ ] 16. The app name has two casings: "Padwight" in the window title and page header,
-  "padwight" in the manual and in "by padwight" and "Exported by padwight".
-- [ ] 17. The settings page has two names: "Same as Settings" on the Details tab, and
-  "App settings" in the sidebar and hints.
-- [ ] 18. British and American spelling are mixed: "Menu colours" and "Colour-blind mode" in the
-  UI, "color" in `src/gui/widgets.rs` and `src/gui/tab_icons.rs`.
-- [ ] 19. Unit spacing varies: "250 ms" on sliders, "40ms" in the log preview, and "0 ° from up"
-  with a space before the degree sign.
+  Names follow "Name (abbreviation)": "Left Stick Click (L3)", and "Stick clicks (L3, R3)" in log
+  overlays. Glyphs stay short, like every other glyph.
+- [x] 15. Stick names are capitalised differently: "Left Stick" in lists, "right stick" in hints.
+  Sticks, bumpers, triggers and D-pad directions are capitalized everywhere in the window, the
+  overlays, the controller editor and the manual.
+- [x] 16. The app name has two casings: "Padwight" in the window title and page header,
+  "padwight" in the manual and in "by padwight" and "Exported by padwight". It is "Padwight" in
+  prose, the library packs' author included, and `padwight` only as a command.
+- [x] 17. The settings page has two names: "Same as Settings" on the Details tab, and
+  "App settings" in the sidebar and hints. It is "App settings" everywhere.
+- [x] 18. British and American spelling are mixed: "Menu colours" and "Colour-blind mode" in the
+  UI, "color" in `src/gui/widgets.rs` and `src/gui/tab_icons.rs`. Everything is American now
+  (color, center, gray, labeled), in the UI, the docs and the code. The config file keeps its
+  `colourblind_tones` key, so existing files still load.
+- [x] 19. Unit spacing varies: "250 ms" on sliders, "40ms" in the log preview, and "0 ° from up"
+  with a space before the degree sign. Units take a space ("40 ms") and the degree sign doesn't
+  ("0° from up", "120°/s").
 
 ## Controls that look or behave differently for the same job
 

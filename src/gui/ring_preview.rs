@@ -30,8 +30,8 @@ pub(super) fn render(sectors: u8, start_angle: f32, inner_radius: f32, active: O
     let width = 360.0 / n as f32;
     let mut out = format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="{SIZE}" height="{SIZE}" viewBox="0 0 {SIZE} {SIZE}">"#);
     for i in 0..n {
-        let centre = start_angle + i as f32 * width;
-        let ((x0, y0), (x1, y1)) = (polar(centre - width / 2.0, 1.0), polar(centre + width / 2.0, 1.0));
+        let center = start_angle + i as f32 * width;
+        let ((x0, y0), (x1, y1)) = (polar(center - width / 2.0, 1.0), polar(center + width / 2.0, 1.0));
         let fill = if active == Some(i) { ACTIVE } else { IDLE };
         let large = u8::from(width > 180.0);
         let c = SIZE / 2.0;

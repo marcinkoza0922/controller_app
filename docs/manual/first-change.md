@@ -11,7 +11,7 @@
 
 General comes with two profiles:
 
-- **Gamepad** passes your controller straight through, as if padwight weren't there.
-- **Desktop** moves the mouse with the left stick, scrolls with the right stick, makes A and B click, and sends Alt+Tab with LB and RB.
+- **Gamepad** passes your controller straight through, as if Padwight weren't there.
+- **Desktop** moves the mouse with the Left Stick, scrolls with the Right Stick, makes A and B click, and sends Alt+Tab with LB and RB.
 
 > **Tip:** **Save & apply** is only active when something has changed.

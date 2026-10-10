@@ -3,8 +3,8 @@
 
 use crate::config::Keyword;
 
-/// The colour a keyword is drawn in: one per kind of item, readable on light and dark.
-pub fn colour(k: Keyword) -> [u8; 3] {
+/// The color a keyword is drawn in: one per kind of item, readable on light and dark.
+pub fn color(k: Keyword) -> [u8; 3] {
     match k {
         Keyword::Toggle => [0x2a, 0x9d, 0x8f],
         Keyword::Turbo => [0xe7, 0x6f, 0x20],
@@ -16,13 +16,13 @@ pub fn colour(k: Keyword) -> [u8; 3] {
     }
 }
 
-/// The keyword's icon as SVG, in its colour: a hamburger for a menu, a circled "i" for info, and
+/// The keyword's icon as SVG, in its color: a hamburger for a menu, a circled "i" for info, and
 /// a picture of the idea for the rest.
 pub fn svg(k: Keyword) -> String {
-    svg_in(k, colour(k))
+    svg_in(k, color(k))
 }
 
-/// The same icon in another colour, for the places that draw it neutral (the editor's tabs).
+/// The same icon in another color, for the places that draw it neutral (the editor's tabs).
 pub fn svg_in(k: Keyword, [r, g, b]: [u8; 3]) -> String {
     let c = format!("#{r:02x}{g:02x}{b:02x}");
     let body = match k {
@@ -63,11 +63,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_keyword_has_an_svg_in_its_colour() {
+    fn every_keyword_has_an_svg_in_its_color() {
         for k in [Keyword::Toggle, Keyword::Turbo, Keyword::Macro, Keyword::Menu, Keyword::Layer, Keyword::Info, Keyword::Log] {
             let svg = svg(k);
             assert!(svg.starts_with("<svg") && svg.ends_with("</svg>"));
-            let [r, g, b] = colour(k);
+            let [r, g, b] = color(k);
             assert!(svg.contains(&format!("#{r:02x}{g:02x}{b:02x}")));
         }
     }

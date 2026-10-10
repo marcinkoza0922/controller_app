@@ -11,7 +11,7 @@
 ## Tuning
 
 - **Deadzone**: how far the stick must move before it counts. Raise it if the stick drifts when resting.
-- **Response curve**: how quickly the output grows as you push further. A gentler curve gives finer control near the centre.
+- **Response curve**: how quickly the output grows as you push further. A gentler curve gives finer control near the center.
 - **Invert Y**: flips up and down.
 
 ## Stick directions as buttons

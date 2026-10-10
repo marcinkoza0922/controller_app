@@ -153,7 +153,7 @@ fn item_boxes<'a>(kind: MenuKind, boxes: Vec<Element<'a, Message>>) -> Element<'
     rows.into()
 }
 
-/// "+ Add item", greyed out with a note once a grid is full.
+/// "+ Add item", grayed out with a note once a grid is full.
 fn add_menu_item_row<'a>(mi: usize, menu: &Menu) -> Element<'a, Message> {
     let full = item_limit(menu.kind).is_some_and(|limit| menu.items.len() >= limit);
     let mut add = row![button(text("+ Add item").size(13)).style(style::secondary).on_press_maybe((!full).then_some(Message::AddMenuItem(mi)))]
@@ -367,7 +367,7 @@ pub(super) fn unreleased_holds(m: &Macro) -> usize {
 pub(super) const MENUS_HELP: &str = "On-screen menus you open with the \"Open menu…\" action from any button, \
     gesture, combo or trigger. A menu is up while that input is held and closes when you let go; wrap the \
     action in \"Toggle\" to keep it up until pressed again. Radial: aim a stick, let go to choose. \
-    Directional: four slots on the D-pad or face buttons. List: move with the D-pad or left stick, A \
+    Directional: four slots on the D-pad or face buttons. List: move with the D-pad or Left Stick, A \
     chooses. Button menu: a list where items also have their own button. Carousel: cycle with the chosen \
     controls, A chooses. Grid: a list laid out in up to 6 columns and 6 rows, moved through in all four \
     directions. Items tap their action like a button press; an item can open another menu of the \

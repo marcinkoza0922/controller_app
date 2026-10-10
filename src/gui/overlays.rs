@@ -75,23 +75,23 @@ impl App {
         )
     }
 
-    /// How menu previews are drawn: the colour-blind setting, and the controller the info
+    /// How menu previews are drawn: the color-blind setting, and the controller the info
     /// glyphs are drawn for when none is detected.
     pub(super) fn menu_look(&self) -> crate::overlay::draw::MenuLook {
         crate::overlay::draw::MenuLook {
             anim: Default::default(),
-            colourblind: self.config.colourblind_tones,
+            colorblind: self.config.colorblind_tones,
             family: self.config.info_glyphs,
             nintendo_layout: self.nintendo_layout(),
         }
     }
 
-    /// The App settings page's colour card: the tints of added and removed rows.
-    pub(super) fn view_colour_card(&self) -> Element<'_, Message> {
+    /// The App settings page's color card: the tints of added and removed rows.
+    pub(super) fn view_color_card(&self) -> Element<'_, Message> {
         section(
-            "Menu colours",
-            Some("Rows that add to a list are tinted, and rows that remove from one are tinted red. Colour-blind mode uses blue and orange instead, and puts a + or − in front of each row.".into()),
-            vec![iced::widget::toggler(self.config.colourblind_tones).label("Colour-blind mode").on_toggle(Message::SetColourblindTones).into()],
+            "Menu colors",
+            Some("Rows that add to a list are tinted, and rows that remove from one are tinted red. Color-blind mode uses blue and orange instead, and puts a + or − in front of each row.".into()),
+            vec![iced::widget::toggler(self.config.colorblind_tones).label("Color-blind mode").on_toggle(Message::SetColorblindTones).into()],
         )
     }
 
@@ -110,7 +110,7 @@ impl App {
             Some(FONT_HELP.into()),
             vec![labeled(
                 "Font",
-                font_picker("Same as Settings", self.game().overlay_font.as_deref(), Message::SetGameOverlayFont),
+                font_picker("Same as App settings", self.game().overlay_font.as_deref(), Message::SetGameOverlayFont),
             )],
         )
     }

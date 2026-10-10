@@ -183,7 +183,7 @@ pub const INPUT_GROUPS: [(&str, &[TrackedInput]); 7] = [
     ("Triggers", &[TrackedInput::Trigger(Trigger::Left), TrackedInput::Trigger(Trigger::Right)]),
     ("D-pad", &[TrackedInput::Dpad]),
     ("Sticks", &[TrackedInput::Stick(Stick::Left), TrackedInput::Stick(Stick::Right)]),
-    ("Stick clicks", &[TrackedInput::Button(Button::LeftStick), TrackedInput::Button(Button::RightStick)]),
+    ("Stick clicks (L3, R3)", &[TrackedInput::Button(Button::LeftStick), TrackedInput::Button(Button::RightStick)]),
     (
         "Start, Select, Guide",
         &[TrackedInput::Button(Button::Start), TrackedInput::Button(Button::Select), TrackedInput::Button(Button::Guide)],

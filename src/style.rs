@@ -111,22 +111,50 @@ pub fn segment(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Sty
     }
 }
 
-/// Ordinary buttons. iced's own secondary is a flat mid-grey that looks the same as a
+/// Ordinary buttons. iced's own secondary is a flat mid-gray that looks the same as a
 /// disabled button; this one is a light field-like surface with an edge, so it reads as
-/// clickable, and fades out when disabled.
+/// clickable.
 pub fn secondary(theme: &Theme, status: button::Status) -> button::Style {
     let p = theme.extended_palette();
     let (background, border_color) = match status {
         button::Status::Active => (p.background.weak.color, p.background.strong.color),
         button::Status::Hovered => (p.background.strong.color, p.primary.base.color),
         button::Status::Pressed => (p.background.stronger.color, p.primary.base.color),
-        button::Status::Disabled => (p.background.weakest.color, p.background.weak.color),
+        button::Status::Disabled => return disabled(theme),
     };
-    let text_color = if status == button::Status::Disabled { muted(p.background.weak.text) } else { p.background.weak.text };
     button::Style {
         background: Some(background.into()),
-        text_color,
+        text_color: p.background.weak.text,
         border: Border { width: 1.0, radius: 5.0.into(), color: border_color },
+        ..button::Style::default()
+    }
+}
+
+/// The main action of a page or dialog (Save & apply): iced's primary, with the shared
+/// disabled look instead of its pale, hard-to-read blue.
+pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
+    match status {
+        button::Status::Disabled => disabled(theme),
+        _ => button::primary(theme, status),
+    }
+}
+
+/// A destructive action (Delete): iced's danger, with the shared disabled look.
+pub fn danger(theme: &Theme, status: button::Status) -> button::Style {
+    match status {
+        button::Status::Disabled => disabled(theme),
+        _ => button::danger(theme, status),
+    }
+}
+
+/// Every disabled button, whatever its style: no fill and a faint edge, so it doesn't read as
+/// clickable, with gray text that stays readable.
+fn disabled(theme: &Theme) -> button::Style {
+    let p = theme.extended_palette();
+    button::Style {
+        background: None,
+        text_color: muted(p.background.base.text),
+        border: Border { width: 1.0, radius: 5.0.into(), color: p.background.weak.color },
         ..button::Style::default()
     }
 }

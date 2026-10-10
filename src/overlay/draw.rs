@@ -46,10 +46,10 @@ fn keyboard_body_width(numpad: bool) -> f32 {
 const EDGE_MARGIN: f32 = 40.0;
 
 /// What a menu is drawn with besides its own style: the controller in use (for its button
-/// glyphs), the colour-blind tints, and how the menu is moving.
+/// glyphs), the color-blind tints, and how the menu is moving.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MenuLook {
-    pub colourblind: bool,
+    pub colorblind: bool,
     pub family: crate::info::PadFamily,
     pub nintendo_layout: bool,
     pub anim: Anim,
@@ -69,8 +69,8 @@ pub struct Colors {
     family: crate::info::PadFamily,
     /// Face buttons drawn with the Nintendo layout's labels.
     nintendo_layout: bool,
-    /// Tints for added and removed rows in colours colour-blind people can tell apart.
-    colourblind: bool,
+    /// Tints for added and removed rows in colors color-blind people can tell apart.
+    colorblind: bool,
     background: Color,
     background_text: Color,
     muted: Color,
@@ -102,7 +102,7 @@ impl Colors {
         self.anim.lit(m.selected == Some(i), self.anim.timing.from == Some(i as u32))
     }
 
-    /// These colours for item `i`: its highlight blended in, its pick flashed, and its stagger fade.
+    /// These colors for item `i`: its highlight blended in, its pick flashed, and its stagger fade.
     pub fn lit_item(&self, m: &MenuView, i: usize) -> Colors {
         let lit = self.lit(m, i);
         let flash = if m.selected == Some(i) { self.anim.flash() } else { 0.0 };
@@ -123,7 +123,7 @@ impl Colors {
             font: self.font,
             family: self.family,
             nintendo_layout: self.nintendo_layout,
-            colourblind: self.colourblind,
+            colorblind: self.colorblind,
             background: f(self.background),
             background_text: f(self.background_text),
             muted: f(self.muted),
@@ -146,7 +146,7 @@ fn colors(style: &OverlayStyle, font: Font) -> Colors {
         font,
         family: crate::info::PadFamily::default(),
     nintendo_layout: false,
-        colourblind: false,
+        colorblind: false,
         background,
         background_text,
         muted: Color { a: 0.75, ..background_text },
@@ -178,17 +178,17 @@ pub fn place<'a, M: 'a>(panel: Element<'a, M>, style: &OverlayStyle, fit: &Fit, 
 }
 
 /// The padding on the two sides of a panel, for a panel `shift` pixels off where it sits in
-/// `slot` (0 start, 1 centre, 2 end) of a `margin` from the edge.
+/// `slot` (0 start, 1 center, 2 end) of a `margin` from the edge.
 fn sides(margin: f32, shift: f32, slot: usize) -> (f32, f32) {
     match slot {
         0 => ((margin + shift).max(0.0), margin),
         2 => (margin, (margin - shift).max(0.0)),
-        // A centred panel sits halfway between its two paddings.
+        // A centered panel sits halfway between its two paddings.
         _ => (margin + (2.0 * shift).max(0.0), margin + (-2.0 * shift).max(0.0)),
     }
 }
 
-/// A panel's box: its colours and padding, at the size `fit` gives. The contents scroll, so a
+/// A panel's box: its colors and padding, at the size `fit` gives. The contents scroll, so a
 /// box held to its max length scrolls rather than spilling, and the box clips anything wider.
 fn framed<'a, M: 'a>(body: Element<'a, M>, c: Colors, padding: impl Into<Padding>, fit: &Fit) -> Element<'a, M> {
     let height = if fit.height.is_some() { Length::Fill } else { Length::Shrink };
@@ -218,11 +218,11 @@ fn panel_style(c: Colors) -> impl Fn(&iced::Theme) -> container::Style {
     }
 }
 
-/// The colours of a row of this kind: adding rows are tinted green and removing ones red, so
+/// The colors of a row of this kind: adding rows are tinted green and removing ones red, so
 /// they stand out from the items they act on.
 fn toned(c: Colors, tone: crate::menu::Tone) -> Colors {
     // Lime with white text stays readable at this mix (about 4.7:1 on the default items).
-    let (tint, share) = match (tone, c.colourblind) {
+    let (tint, share) = match (tone, c.colorblind) {
         (crate::menu::Tone::Normal, _) => return c,
         (crate::menu::Tone::Add, false) => (Color::from_rgb8(0x5a, 0x9a, 0x1a), 0.75),
         (crate::menu::Tone::Remove, false) => (Color::from_rgb8(0xd0, 0x64, 0x64), 0.4),
@@ -236,7 +236,7 @@ fn toned(c: Colors, tone: crate::menu::Tone) -> Colors {
 
 /// An item's box, `height` tall: its corners round by half of that at full corners, so a
 /// square cell becomes a circle.
-/// A cell whose colours already include its highlight (see `Colors::lit_item`).
+/// A cell whose colors already include its highlight (see `Colors::lit_item`).
 fn lit_cell_style(c: Colors, selected: bool, height: f32) -> impl Fn(&iced::Theme) -> container::Style {
     move |_| container::Style {
         background: Some(c.item.into()),
@@ -669,7 +669,7 @@ pub fn menu_panel<'a, M: 'a>(m: &MenuView, font: Font, look: MenuLook, fit: &Fit
         anim: look.anim,
         family: look.family,
         nintendo_layout: look.nintendo_layout,
-        colourblind: look.colourblind,
+        colorblind: look.colorblind,
         ..colors(&m.style, font)
     };
     let c = c.faded(look.anim.opacity());
@@ -699,7 +699,7 @@ pub fn menu_panel<'a, M: 'a>(m: &MenuView, font: Font, look: MenuLook, fit: &Fit
     framed(contents.into(), c, 22.0 * s, fit)
 }
 
-/// An item's label, its colours (highlighted, and faded in under Stagger) and whether the
+/// An item's label, its colors (highlighted, and faded in under Stagger) and whether the
 /// cursor is on it.
 fn item_cell<'a, M: 'a>(m: &MenuView, i: usize, c: Colors, size: f32) -> (Element<'a, M>, Colors, bool) {
     let item = &m.items[i];
@@ -755,7 +755,7 @@ fn list<'a, M: 'a>(m: &MenuView, c: Colors, s: f32) -> Element<'a, M> {
         let item = &m.items[i];
         let selected = m.selected == Some(i);
         let lit = toned(c, item.tone).lit_item(m, i);
-        let label = match (c.colourblind, item.tone) {
+        let label = match (c.colorblind, item.tone) {
             (true, crate::menu::Tone::Add) => format!("+ {}", item.label),
             (true, crate::menu::Tone::Remove) => format!("− {}", item.label),
             _ => item.label.clone(),

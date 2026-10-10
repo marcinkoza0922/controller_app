@@ -6,7 +6,7 @@ overlay_font = "Source Code Pro"
 id = "7b1d3c52-4f0a-4c1e-9a64-2e8f5d0b9a11"
 name = "Max Payne"
 version = "1.1"
-author = "padwight"
+author = "Padwight"
 description = "Max Payne (2001) on an Xbox-style pad, for the game's default keys. LT is bullet time, RB shoot-dodge (move + RB), LB opens a radial menu of weapon groups (aim with the right stick), L3 toggles crouch, North takes painkillers. Hold Guide to see every control and the system shortcuts."
 made_with = "Xbox controller"
 

@@ -6,7 +6,7 @@ overlay_font = "Source Code Pro"
 id = "a3e96f08-81c7-4d2b-b5f3-6c0d47e9128a"
 name = "Max Payne 2"
 version = "1.1"
-author = "padwight"
+author = "Padwight"
 description = "Max Payne 2: The Fall of Max Payne (2003) on an Xbox-style pad, for the game's default keys. LT is bullet time, RB shoot-dodge (move + RB), LB opens a radial menu of weapon groups (aim with the right stick), R3 is the secondary attack, L3 toggles crouch, North takes painkillers. Hold Guide to see every control and the system shortcuts."
 made_with = "Xbox controller"
 

@@ -10,7 +10,7 @@ pub fn rgba(size: u32) -> Vec<u8> {
     let mut pixmap = tiny_skia::Pixmap::new(size, size).expect("icon sizes are non-zero");
     let scale = size as f32 / tree.size().width();
     resvg::render(&tree, tiny_skia::Transform::from_scale(scale, scale), &mut pixmap.as_mut());
-    // The rasterizer leaves colour premultiplied by alpha; window and tray hosts expect straight.
+    // The rasterizer leaves color premultiplied by alpha; window and tray hosts expect straight.
     let mut rgba = pixmap.take();
     for px in rgba.as_chunks_mut::<4>().0 {
         let a = u32::from(px[3]);
@@ -38,8 +38,8 @@ mod tests {
         let px = rgba(size);
         assert_eq!(px.len(), (size * size * 4) as usize);
         assert_eq!(px[3], 0, "corner is outside the rounded tile");
-        let centre = ((size / 2 * size + size / 2) * 4) as usize;
-        assert_eq!(px[centre + 3], 255, "centre is inside the tile");
+        let center = ((size / 2 * size + size / 2) * 4) as usize;
+        assert_eq!(px[center + 3], 255, "center is inside the tile");
     }
 
     #[test]

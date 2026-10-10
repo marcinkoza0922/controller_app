@@ -6,7 +6,7 @@ overlay_font = "Rajdhani"
 id = "744efa38-f5b0-4a49-bc95-126809ef6fc2"
 name = "Deus Ex"
 version = "1.1"
-author = "padwight"
+author = "Padwight"
 description = "The original Deus Ex (2000) on an Xbox-style pad, for the game's default keys. Belt slots and augmentations on radial menus (hold LB / RB, aim with the right stick), crouch toggle on L3, quick save and load on Start. Hold Guide to see every control and the system shortcuts (Guide + Y opens the numpad for keypads, Guide + X the keyboard)."
 made_with = "Xbox controller"
 

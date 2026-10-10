@@ -25,10 +25,10 @@ fn radial_arcs<'a, M: 'a>(m: &MenuView, c: Colors, s: f32) -> Element<'a, M> {
     let outer = arc_outer_radius(&arcs, inner, s);
     let size = 2.0 * outer + 16.0 * s;
     let svg = arcs_svg(m, c, s, &arcs, (inner, outer));
-    let centre = size / 2.0;
+    let center = size / 2.0;
     let point = |degrees: f32, r: f32| {
         let (sin, cos) = degrees.to_radians().sin_cos();
-        (centre + sin * r, centre - cos * r)
+        (center + sin * r, center - cos * r)
     };
     let (cell_w, cell_h) = (120.0 * s, 44.0 * s);
     let mut layers: Vec<Element<'a, M>> = vec![
@@ -58,10 +58,10 @@ fn arcs_svg(
     (inner, outer): (f32, f32),
 ) -> String {
     let size = 2.0 * outer + 16.0 * s;
-    let centre = size / 2.0;
+    let center = size / 2.0;
     let point = |degrees: f32, r: f32| {
         let (sin, cos) = degrees.to_radians().sin_cos();
-        (centre + sin * r, centre - cos * r)
+        (center + sin * r, center - cos * r)
     };
     let mut svg = format!(
         r#"<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" viewBox="0 0 {size} {size}">"#
@@ -71,7 +71,7 @@ fn arcs_svg(
         let fill = fill_of(0);
         let r = (inner + outer) / 2.0;
         svg.push_str(&format!(
-            r#"<circle cx="{centre}" cy="{centre}" r="{r}" fill="none" stroke="{}" stroke-opacity="{:.3}" stroke-width="{:.1}"/>"#,
+            r#"<circle cx="{center}" cy="{center}" r="{r}" fill="none" stroke="{}" stroke-opacity="{:.3}" stroke-width="{:.1}"/>"#,
             hex(fill),
             fill.a,
             outer - inner

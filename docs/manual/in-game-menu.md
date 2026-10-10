@@ -1,10 +1,10 @@
 # Changing controls while you play
 
-Press Guide and Start together to open the in-game menu over the game you're playing. It's built into padwight, so it works for every game. Move with the left stick or D-pad, press A to choose, and press B to go back or close it.
+Press Guide and Start together to open the in-game menu over the game you're playing. It's built into Padwight, so it works for every game. Move with the Left Stick or D-pad, press A to choose, and press B to go back or close it.
 
 ## Quick Settings
 
-- left and right stick speed, for sticks that move the mouse
+- Left Stick and Right Stick speed, for sticks that move the mouse
 - gyro sensitivity, when gyro moves the mouse
 - Invert Y, which flips every up-and-down setting in the profile at once
 - profile, to change to another profile of the setup

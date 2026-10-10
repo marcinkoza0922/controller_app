@@ -54,5 +54,5 @@ Conventions for choosing where actions go when setting up a game's controller bi
 
 ## Presentation
 
-- Keyboard, numpad, and menu overlays should be coloured and styled to match the game's theme as closely as possible.
+- Keyboard, numpad, and menu overlays should be colored and styled to match the game's theme as closely as possible.
 - Animations and sounds should be assigned to match the game as well.

@@ -19,11 +19,11 @@ pub fn controller_drawing<'a, M: 'a>(
     model: Option<PadModel>,
     glyphs: Glyphs,
     labels: &[(Spot, String)],
-    greyed: bool,
+    grayed: bool,
 ) -> Element<'a, M> {
     let handle = svg::Handle::from_memory(pad_svg::render(input, model, glyphs, labels).into_bytes());
     let mut layers: Vec<Element<'a, M>> =
-        vec![svg(handle).width(pad_svg::WIDTH).height(pad_svg::HEIGHT).opacity(if greyed { 0.3_f32 } else { 1.0 }).into()];
+        vec![svg(handle).width(pad_svg::WIDTH).height(pad_svg::HEIGHT).opacity(if grayed { 0.3_f32 } else { 1.0 }).into()];
 
     for o in pad_svg::overlays(input, model, glyphs) {
         let [r, g, b] = o.color;

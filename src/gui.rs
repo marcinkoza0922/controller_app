@@ -46,6 +46,7 @@ mod checks;
 mod games;
 mod guide_tab;
 mod items;
+mod keys;
 mod layers;
 mod logs;
 mod manual;
@@ -54,19 +55,26 @@ mod pieces;
 mod packs;
 mod profile;
 mod ring_preview;
+mod settings;
+mod sticks;
 mod tab_icons;
 mod tracking;
+mod triggers;
 mod widgets;
 
 use actions::*;
 use checks::*;
 use games::*;
 use items::*;
+use keys::*;
 use layers::IndicatorChoice;
 use packs::{BrowseSource, Dialog, PackField};
 use pieces::*;
 use profile::*;
+use settings::*;
+use sticks::*;
 use tracking::*;
+use triggers::*;
 use widgets::*;
 
 pub fn run() -> iced::Result {
@@ -89,6 +97,10 @@ pub fn run() -> iced::Result {
         });
     crate::font::BUNDLED.iter().fold(app, |app, b| app.font(b.bytes)).run()
 }
+
+/// What every part of the window that needs the daemon says while it isn't running, in small
+/// gray text.
+const NEEDS_DAEMON: &str = "Needs the daemon.";
 
 /// How many edits Ctrl+Z can take back.
 const UNDO_STEPS: usize = 100;
@@ -447,7 +459,7 @@ enum Message {
     SetKeyboardStyle(OverlayStyle),
     /// The font of all overlays (`None`: the system's), or the shown game's own.
     SetOverlayFont(Option<String>),
-    SetColourblindTones(bool),
+    SetColorblindTones(bool),
     /// A kind of overlay's motion, in the global set.
     SetMotion(OverlayKind, MotionStyle),
     /// A kind of overlay's motion in the shown game's own set, which starts as the global one.
@@ -1123,7 +1135,7 @@ impl App {
         }
         actions = actions
             .push(button(text("Revert")).style(style::secondary).on_press_maybe(dirty.then_some(Message::Revert)))
-            .push(button(text("Save & apply")).on_press_maybe(dirty.then_some(Message::Save)));
+            .push(button(text("Save & apply")).style(style::primary).on_press_maybe(dirty.then_some(Message::Save)));
         // Only a rule on top: a box would add a second line beside the sidebar's divider.
         column![
             rule::horizontal(1),

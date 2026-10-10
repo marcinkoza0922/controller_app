@@ -1,8 +1,8 @@
-# What padwight does
+# What Padwight does
 
-padwight runs in the background and changes what your controller does. It can make a gamepad act like a keyboard and mouse, remap buttons, and switch to a different set of controls when you start a game.
+Padwight runs in the background and changes what your controller does. It can make a gamepad act like a keyboard and mouse, remap buttons, and switch to a different set of controls when you start a game.
 
-Each game you play can have its own setup. padwight uses it whenever that game has focus.
+Each game you play can have its own setup. Padwight uses it whenever that game has focus.
 
 ## You can
 
@@ -11,4 +11,4 @@ Each game you play can have its own setup. padwight uses it whenever that game h
 - add macros, layers and on-screen menus for harder controls
 - show an on-screen keyboard, or info overlays such as a cheat sheet, over a game
 
-> **Tip:** games see padwight's virtual controller, keyboard and mouse, not your real controller. That's why a game may list two controllers. See [Troubleshooting](troubleshooting.md).
+> **Tip:** games see Padwight's virtual controller, keyboard and mouse, not your real controller. That's why a game may list two controllers. See [Troubleshooting](troubleshooting.md).

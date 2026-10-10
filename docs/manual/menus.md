@@ -12,6 +12,6 @@ Wrap **Open menu…** in **Toggle**. The menu then stays up until you press the 
 
 ## Choosing
 
-Move with the left stick or D-pad, and press A to choose. B goes back one level, or closes the menu at the top. Some items have a quick button, which you can press to choose them without moving.
+Move with the Left Stick or D-pad, and press A to choose. B goes back one level, or closes the menu at the top. Some items have a quick button, which you can press to choose them without moving.
 
 > **Tip:** a list with more than eight rows is shown in two columns.

@@ -16,7 +16,7 @@ controllers = { dualsense = true } # optional, other controllers the game suppor
 id = "744efa38-…"                # required, stable across versions
 name = "Deus Ex"                 # required, becomes the game's name
 version = "1.1"
-author = "padwight"
+author = "Padwight"
 description = "…"
 made_with = "Xbox controller"
 
@@ -257,7 +257,7 @@ steps = [
 ]
 ```
 
-Steps: `tap` (press, hold `hold_ms`, release), `press` (keep held until a matching `release` or the macro's end), `release`, `wait` (milliseconds), and `stick` (move a virtual stick to `x`, `y` in −1..1, y positive down; it recentres when the macro ends). Macros are referenced from buttons with `macro = { name = "…" }`.
+Steps: `tap` (press, hold `hold_ms`, release), `press` (keep held until a matching `release` or the macro's end), `release`, `wait` (milliseconds), and `stick` (move a virtual stick to `x`, `y` in −1..1, y positive down; it recenters when the macro ends). Macros are referenced from buttons with `macro = { name = "…" }`.
 
 ## Info overlays
 

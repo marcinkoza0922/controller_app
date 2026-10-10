@@ -1,6 +1,6 @@
 # Layers
 
-A layer is a second set of mappings that applies only while you hold a button. For example, hold LB and the face buttons type F1 to F4, while the right stick scrolls. Anything the layer doesn't change keeps its normal mapping.
+A layer is a second set of mappings that applies only while you hold a button. For example, hold LB and the face buttons type F1 to F4, while the Right Stick scrolls. Anything the layer doesn't change keeps its normal mapping.
 
 ## Turning a layer on
 

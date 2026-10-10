@@ -2,7 +2,7 @@
 
 ## The game sees my controller twice
 
-If Steam Input manages the controller, the game sees Steam's virtual controller as well as padwight's. Turn off Steam Input for that controller.
+If Steam Input manages the controller, the game sees Steam's virtual controller as well as Padwight's. Turn off Steam Input for that controller.
 
 PlayStation and Switch controllers can also be read directly, so for those you may need to turn off Steam Input, or set `SDL_JOYSTICK_HIDAPI=0` for the game.
 
@@ -12,7 +12,7 @@ Run `padwight status` in a terminal to see what the daemon has found. Your user 
 
 ## Why did my profile change?
 
-The Overview page's **What's happening** section lists the last few profile switches, newest first. Each one says what made it, such as the rule that matched the window in front, the default profile taking over when a game lost focus, or a profile you picked yourself. Under the controller picture, the same section shows your latest presses and what each did, next to the buttons padwight sent for them. If the two differ, the mapping is doing something other than what the label says.
+The Overview page's **What's happening** section lists the last few profile switches, newest first. Each one says what made it, such as the rule that matched the window in front, the default profile taking over when a game lost focus, or a profile you picked yourself. Under the controller picture, the same section shows your latest presses and what each did, next to the buttons Padwight sent for them. If the two differ, the mapping is doing something other than what the label says.
 
 ## The profile didn't switch when I opened a game
 
