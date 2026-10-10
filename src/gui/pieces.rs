@@ -9,7 +9,7 @@ use iced::{
 use super::*;
 use crate::{
     config::{Button, GuideInput, Keyword, Piece, RowShape, Stick},
-    info::{PadFamily, Segment, button_glyph, glyph, trigger_glyph},
+    info::{PadFamily, Segment, button_glyph, glyph, key_glyph, mouse_glyph, trigger_glyph},
     keyword_icon,
 };
 
@@ -33,6 +33,8 @@ pub(super) fn piece_line<'a>(pieces: Vec<Piece>, family: PadFamily, swapped: boo
             Piece::Keyword(k) => keyword(k),
             Piece::Pad(b) if swapped && is_face(b) => row![chip(pad_glyph(b, family, swapped)), swap_marker()].spacing(2).align_y(Alignment::Center).into(),
             Piece::Pad(b) => chip(pad_glyph(b, family, swapped)),
+            Piece::Key(code) => chip(key_glyph(&code)),
+            Piece::Mouse(m) => chip(mouse_glyph(m)),
         })
         .collect();
     row(items).align_y(Alignment::Center).into()

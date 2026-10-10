@@ -69,6 +69,7 @@ impl Session {
             DebugRequest::Quit => self.quit(),
             DebugRequest::Expect(e) => return Ok(self.expect(&e)),
             DebugRequest::Output { clear } => return Ok(DebugResponse::Text(self.output(clear)?.join("\n"))),
+            DebugRequest::Identify(identity) => self.identify(identity)?,
             DebugRequest::Tap { buttons, ms } => {
                 buttons.iter().for_each(|&b| self.pad().press(b));
                 self.flush()?;

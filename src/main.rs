@@ -24,6 +24,7 @@ mod motion;
 mod output;
 mod overlay;
 mod pack;
+mod pad_identity;
 mod pad_svg;
 mod pad_widget;
 mod radial;

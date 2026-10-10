@@ -35,7 +35,8 @@ use crate::{
     inputlog::LogView,
     keyboard::Layout,
     monitor::{self, InputView, OutputView, log},
-    output::{FfCaps, OutEvent, VIRTUAL_PREFIX, VirtualKbm, VirtualPad},
+    output::{OutEvent, VIRTUAL_PREFIX, VirtualKbm, VirtualPad},
+    pad_identity::{ControllerSupport, PadIdentity},
     media::{MediaOutcome, MediaSession, MediaState},
     offer::{OfferOutcome, OfferSession},
     menu::{MenuOutcome, MenuSession},
@@ -48,12 +49,15 @@ use crate::{
 mod activity;
 mod inject;
 mod logs;
+mod pads;
 
 /// Why a profile changed when someone picked it.
 const BY_HAND: &str = "Chosen by hand (GUI or command line)";
 #[cfg(test)]
 mod kernel_tests;
 mod touchpad;
+
+use pads::{FfSpec, virtual_pad_for};
 
 const TICK: Duration = Duration::from_millis(4);
 /// How often a fading info overlay is redrawn.
@@ -113,6 +117,10 @@ struct Managed {
     /// The virtual pad it feeds. `None` for an injected controller that stays off the real
     /// virtual devices (see [`Request::DebugAttach`]).
     pad: Option<VirtualPad>,
+    /// The controller's force-feedback support, which a rebuilt virtual pad advertises too.
+    ff: Option<FfSpec>,
+    /// Stops the rumble thread of the current virtual pad; set on its own when the pad is rebuilt.
+    rumble_stop: Arc<AtomicBool>,
     /// What an injected controller's mappings have output, newest last.
     recorded: Option<Vec<String>>,
     stop: Arc<AtomicBool>,
@@ -180,6 +188,29 @@ impl PairedNode {
 }
 
 impl Managed {
+    /// Makes the virtual pad present itself as `identity`. A pad already like that stays; another
+    /// is rebuilt, and its rumble thread follows the new one.
+    fn present_as(&mut self, identity: PadIdentity) {
+        let Some(pad) = &self.pad else { return };
+        if pad.identity() == identity {
+            return;
+        }
+        let Some(new) = virtual_pad_for(self.ff.as_ref(), identity) else { return };
+        log!("{} now presents as {identity:?}", self.name);
+        self.rumble_stop.store(true, Ordering::Relaxed);
+        self.rumble_stop = Arc::new(AtomicBool::new(false));
+        if self.ff.is_some() {
+            rumble::spawn(new.shared(), self.path.clone(), self.rumble_stop.clone());
+        }
+        self.pad = Some(new);
+    }
+
+    /// Stops the threads that follow this controller: its reader, and its rumble.
+    fn stop_threads(&self) {
+        self.stop.store(true, Ordering::Relaxed);
+        self.rumble_stop.store(true, Ordering::Relaxed);
+    }
+
     /// Sends what the mappings output to the virtual devices; an injected controller's output
     /// is also recorded, and without a pad it goes no further.
     fn dispatch(&mut self, kbm: &mut VirtualKbm, out: Vec<OutEvent>) {
@@ -318,6 +349,8 @@ struct Daemon {
     next_id: u64,
     /// Whether injected controllers are accepted, and how many there have been (see `inject.rs`).
     injection: inject::Injection,
+    /// The identity a debug session forced on the virtual pads (see [`Request::DebugIdentify`]).
+    identity_override: Option<PadIdentity>,
     /// Nodes already checked that we never manage (not a gamepad, or a virtual device).
     skipped: HashSet<NodeKey>,
     /// Gamepads we have seen, managed or not, for status reporting.
@@ -437,6 +470,7 @@ pub fn run(debug: bool) -> Result<()> {
         devices: HashMap::new(),
         next_id: 0,
         injection: inject::Injection::new(debug)?,
+        identity_override: None,
         skipped: HashSet::new(),
         gamepads: HashMap::new(),
         motion_nodes: HashMap::new(),
@@ -1334,6 +1368,7 @@ impl Daemon {
             controller: pad.map(|d| d.name.clone()).unwrap_or_default(),
             layers: self.active_layers(),
             family: pad.and_then(|d| d.family).unwrap_or(self.config.info_glyphs),
+            pad_family: PadIdentity::resolve(self.identity_override, pad.and_then(|d| d.model), self.active_support()).family(),
             nintendo_layout: self.config.active_nintendo_layout(),
             system: self.sampler.stats.clone(),
             controller_battery: pad.and_then(|d| d.parent.as_deref()).and_then(crate::info::controller_battery),
@@ -1555,7 +1590,7 @@ impl Daemon {
     fn device_gone(&mut self, id: u64) {
         if let Some(mut dev) = self.devices.remove(&id) {
             // Its motion and rumble threads follow it out.
-            dev.stop.store(true, Ordering::Relaxed);
+            dev.stop_threads();
             monitor::clear();
             log!("device gone: {} ({})", dev.name, dev.path.display());
             self.forget_active(id);
@@ -2260,7 +2295,11 @@ impl Daemon {
                 Response::Ok
             }
             Request::WatchOverlay => Response::Error("WatchOverlay must be the only request".into()),
-            Request::DebugAttach { .. } | Request::DebugInput { .. } | Request::DebugOutput { .. } | Request::DebugDetach(_) => {
+            Request::DebugAttach { .. }
+            | Request::DebugInput { .. }
+            | Request::DebugOutput { .. }
+            | Request::DebugDetach(_)
+            | Request::DebugIdentify(_) => {
                 self.debug_request(req)
             }
             Request::CalibrateGyro(path) => {
@@ -2331,6 +2370,20 @@ impl Daemon {
         for dev in self.devices.values_mut() {
             dev.engine.set_macros(&self.scope.macros);
         }
+        self.sync_identities();
+    }
+
+    /// The controllers the active game supports, which decide what the virtual pads present as.
+    fn active_support(&self) -> ControllerSupport {
+        self.config.active_game().controllers.unwrap_or_default()
+    }
+
+    /// Makes every controller's virtual pad present the identity the active game asks for.
+    fn sync_identities(&mut self) {
+        let (forced, support) = (self.identity_override, self.active_support());
+        for dev in self.devices.values_mut() {
+            dev.present_as(PadIdentity::resolve(forced, dev.model, support));
+        }
     }
 
     /// Switches profile, showing the new one in a toast. `why` says what made the switch.
@@ -2398,7 +2451,7 @@ impl Daemon {
         let ids: Vec<u64> = self.devices.iter().filter(|(_, d)| pred(d)).map(|(id, _)| *id).collect();
         for id in ids {
             let Some(mut dev) = self.devices.remove(&id) else { continue };
-            dev.stop.store(true, Ordering::Relaxed);
+            dev.stop_threads();
             monitor::clear();
             self.forget_active(id);
             let mut out = Vec::new();
@@ -2604,6 +2657,8 @@ impl Daemon {
             model: None,
             engine,
             pad,
+            ff: None,
+            rumble_stop: Arc::new(AtomicBool::new(false)),
             recorded: None,
             stop,
             view: InputView::default(),
@@ -2642,7 +2697,9 @@ impl Daemon {
             log!("cannot grab {name} ({}): {e}", path.display());
             return;
         }
-        let Some((pad, has_rumble)) = virtual_pad_for(&dev) else { return };
+        let ff = FfSpec::of(&dev);
+        let identity = PadIdentity::resolve(self.identity_override, model, self.active_support());
+        let Some(pad) = virtual_pad_for(ff.as_ref(), identity) else { return };
         log!("managing {name} ({})", path.display());
         let id = self.next_id;
         self.next_id += 1;
@@ -2653,33 +2710,19 @@ impl Daemon {
             let xbox_labels = input::uses_xbox_labels(&path);
             thread::spawn(move || read_device(id, dev, xbox_labels, &stop, &tx));
         }
-        if has_rumble {
-            rumble::spawn(pad.shared(), path.clone(), stop.clone());
+        let rumble_stop = Arc::new(AtomicBool::new(false));
+        if ff.is_some() {
+            rumble::spawn(pad.shared(), path.clone(), rumble_stop.clone());
         }
         let mut managed = self.new_managed(path, name, Some(pad), stop);
+        managed.ff = ff;
+        managed.rumble_stop = rumble_stop;
         managed.family = family;
         managed.model = model;
         managed.parent = parent;
         managed.uniq = uniq;
         managed.paddles = paddles;
         self.add_managed(id, managed);
-    }
-}
-
-/// The virtual pad a controller feeds, and whether it rumbles: it mirrors the controller's
-/// rumble support so games see it exactly when it exists.
-fn virtual_pad_for(dev: &Device) -> Option<(VirtualPad, bool)> {
-    let ff = dev
-        .supported_ff()
-        .filter(|ff| ff.iter().next().is_some() && dev.max_ff_effects() > 0)
-        .map(|effects| FfCaps { effects, max_effects: dev.max_ff_effects() as u32 });
-    let has_rumble = ff.is_some();
-    match VirtualPad::new(ff) {
-        Ok(pad) => Some((pad, has_rumble)),
-        Err(e) => {
-            log!("cannot create virtual pad: {e:#}");
-            None
-        }
     }
 }
 

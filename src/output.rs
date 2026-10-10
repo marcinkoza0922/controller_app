@@ -15,6 +15,7 @@ use evdev::{
 use crate::{
     config::{Button, MouseButton},
     input::Axis,
+    pad_identity::PadIdentity,
 };
 
 /// Prefix of every device we create, so the daemon never grabs its own output.
@@ -36,6 +37,7 @@ pub struct VirtualPad {
     /// Shared with the rumble thread, which reads force-feedback requests from it.
     dev: Arc<Mutex<VirtualDevice>>,
     dpad: HashSet<Button>,
+    identity: PadIdentity,
 }
 
 /// Force-feedback support to advertise, copied from the physical controller.
@@ -45,7 +47,13 @@ pub struct FfCaps<'a> {
 }
 
 impl VirtualPad {
+    /// An Xbox 360 pad, the identity every pad had before games could ask for another.
     pub fn new(ff: Option<FfCaps>) -> Result<Self> {
+        Self::with_identity(ff, PadIdentity::Xbox360)
+    }
+
+    /// A pad that presents itself as `identity`: its USB IDs, name and button labels.
+    pub fn with_identity(ff: Option<FfCaps>, identity: PadIdentity) -> Result<Self> {
         let mut keys = AttributeSet::<KeyCode>::new();
         for k in [
             KeyCode::BTN_SOUTH,
@@ -66,11 +74,12 @@ impl VirtualPad {
         let trigger = AbsInfo::new(0, 0, 255, 0, 0, 0);
         let hat = AbsInfo::new(0, -1, 1, 0, 0, 0);
 
-        // Present as an Xbox 360 pad so SDL/Steam/games pick the right mapping out of the box.
-        let name = format!("{VIRTUAL_PREFIX} Pad");
+        // An Xbox 360 pad by default, so SDL/Steam/games pick the right mapping out of the box.
+        let name = format!("{VIRTUAL_PREFIX} {}", identity.name());
+        let (vendor, product, version) = identity.usb_id();
         let mut builder = VirtualDevice::builder()?
             .name(&name)
-            .input_id(InputId::new(BusType::BUS_USB, 0x045e, 0x028e, 0x0110))
+            .input_id(InputId::new(BusType::BUS_USB, vendor, product, version))
             .with_keys(&keys)?;
         for (code, info) in [
             (Abs::ABS_X, stick),
@@ -87,7 +96,12 @@ impl VirtualPad {
         if let Some(ff) = ff {
             builder = builder.with_ff(ff.effects)?.with_ff_effects_max(ff.max_effects);
         }
-        Ok(VirtualPad { dev: Arc::new(Mutex::new(builder.build()?)), dpad: HashSet::new() })
+        Ok(VirtualPad { dev: Arc::new(Mutex::new(builder.build()?)), dpad: HashSet::new(), identity })
+    }
+
+    /// The controller this pad presents itself as.
+    pub fn identity(&self) -> PadIdentity {
+        self.identity
     }
 
     pub fn shared(&self) -> Arc<Mutex<VirtualDevice>> {
@@ -104,10 +118,9 @@ impl VirtualPad {
         let code = match b {
             Button::South => KeyCode::BTN_SOUTH,
             Button::East => KeyCode::BTN_EAST,
-            // We present as an xpad device, so use its label convention: BTN_X (== BTN_NORTH)
-            // is the west button and BTN_Y (== BTN_WEST) the north one. SDL and games expect this.
-            Button::North => KeyCode::BTN_WEST,
-            Button::West => KeyCode::BTN_NORTH,
+            // Labels depend on the identity (see `north_code`).
+            Button::North => self.north_code(),
+            Button::West => self.west_code(),
             Button::LeftBumper => KeyCode::BTN_TL,
             Button::RightBumper => KeyCode::BTN_TR,
             Button::Select => KeyCode::BTN_SELECT,
@@ -134,6 +147,16 @@ impl VirtualPad {
             | Button::RightPaddle2 => return Ok(()),
         };
         self.emit(&[key_event(code, pressed)])
+    }
+
+    /// The xpad driver's labels are swapped (its BTN_X is the west button), and the other pads
+    /// use the gamepad spec's positions.
+    fn north_code(&self) -> KeyCode {
+        if self.identity.xpad_labels() { KeyCode::BTN_WEST } else { KeyCode::BTN_NORTH }
+    }
+
+    fn west_code(&self) -> KeyCode {
+        if self.identity.xpad_labels() { KeyCode::BTN_NORTH } else { KeyCode::BTN_WEST }
     }
 
     fn dpad(&mut self, b: Button, pressed: bool) -> Result<()> {

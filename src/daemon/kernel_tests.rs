@@ -13,9 +13,11 @@ use std::{
 use evdev::{Device, EventType, KeyCode};
 
 use crate::{
+    config::Button,
     engine::release_tests,
     monitor::OutputView,
-    output::{OutEvent, VirtualKbm, VirtualPad, mouse_code},
+    output::{OutEvent, VIRTUAL_PREFIX, VirtualKbm, VirtualPad, mouse_code},
+    pad_identity::PadIdentity,
 };
 
 /// What the kernel should show as pressed. The virtual keyboard counts presses per key, so a
@@ -155,5 +157,42 @@ fn nothing_stays_pressed_in_the_kernel() {
         super::dispatch(&mut pad, &mut view, &mut kbm, out);
         kernel.read();
         assert!(kernel.pressed.is_empty(), "seed {seed}: still pressed at the end: {:?}", kernel.pressed);
+    }
+}
+
+#[test]
+#[ignore]
+fn a_pad_presents_the_identity_it_was_given() {
+    for identity in [PadIdentity::Xbox360, PadIdentity::DualShock4, PadIdentity::DualSense, PadIdentity::SwitchPro] {
+        let mut pad = VirtualPad::with_identity(None, identity).unwrap();
+        let node = {
+            let shared = pad.shared();
+            let mut vdev = shared.lock().unwrap();
+            vdev.enumerate_dev_nodes_blocking().unwrap().flatten().next().unwrap()
+        };
+        // Give udev a moment to grant the seat user access to the new node.
+        let mut dev = open_when_granted(&node);
+        let (vendor, product, _) = identity.usb_id();
+        assert_eq!((dev.input_id().vendor(), dev.input_id().product()), (vendor, product), "{identity:?}");
+        assert_eq!(dev.name(), Some(format!("{VIRTUAL_PREFIX} {}", identity.name()).as_str()), "{identity:?}");
+        // Button::North is the top button. The xpad driver's labels put the top button at BTN_WEST.
+        let want = if identity.xpad_labels() { KeyCode::BTN_WEST } else { KeyCode::BTN_NORTH };
+        pad.button(Button::North, true).unwrap();
+        let pressed: Vec<u16> = dev.fetch_events().unwrap().filter(|e| e.event_type() == EventType::KEY && e.value() == 1).map(|e| e.code()).collect();
+        assert_eq!(pressed, vec![want.0], "{identity:?}");
+    }
+}
+
+/// Opens an event node once udev has granted access to it, which takes a moment.
+fn open_when_granted(node: &std::path::Path) -> Device {
+    let start = Instant::now();
+    loop {
+        match Device::open(node) {
+            Ok(dev) => return dev,
+            Err(e) if e.kind() == ErrorKind::PermissionDenied && start.elapsed() < Duration::from_secs(5) => {
+                thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => panic!("cannot open {}: {e}", node.display()),
+        }
     }
 }

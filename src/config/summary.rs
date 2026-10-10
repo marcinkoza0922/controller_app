@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{Button, ButtonAction};
+use super::{Button, ButtonAction, MouseButton};
 
 impl Button {
     /// A short name on Xbox terms, for one-line summaries.
@@ -73,6 +73,10 @@ pub enum Piece {
     Keyword(Keyword),
     /// A controller button, drawn as its glyph for the controller in use.
     Pad(Button),
+    /// A keyboard key, by its evdev code, drawn as a keycap.
+    Key(String),
+    /// A mouse button, drawn as its glyph.
+    Mouse(MouseButton),
 }
 
 /// The pieces as plain text: a controller button or trigger by its name.
@@ -83,6 +87,29 @@ pub fn plain_text(pieces: &[Piece]) -> String {
             Piece::Text(text) => text.clone(),
             Piece::Keyword(k) => k.word().to_string(),
             Piece::Pad(b) => b.short_name().to_string(),
+            Piece::Key(code) => key_name(code),
+            Piece::Mouse(m) => format!("{m} click"),
+        })
+        .collect()
+}
+
+/// The text a Mappings row shows for an output by default. A pad button, a key and a mouse
+/// button are glyph tokens (`{pad:south}`, `{keyboard:a}`, `{mouse:leftclick}`), drawn as the
+/// controller the daemon presents itself as or as the key or button they are. The rest is plain.
+pub fn guide_text(pieces: &[Piece]) -> String {
+    pieces
+        .iter()
+        .map(|piece| match piece {
+            Piece::Pad(b) => match crate::info::button_token(*b) {
+                Some(token) => format!("{{pad:{token}}}"),
+                None => b.short_name().to_string(),
+            },
+            Piece::Key(code) => match crate::keyboard::token_name(code) {
+                Some(name) => format!("{{keyboard:{name}}}"),
+                None => key_name(code),
+            },
+            Piece::Mouse(m) => format!("{{mouse:{}}}", crate::info::mouse_token(*m)),
+            other => plain_text(std::slice::from_ref(other)),
         })
         .collect()
 }
@@ -109,8 +136,8 @@ impl ButtonAction {
             ButtonAction::Disabled => vec![text("Disabled")],
             ButtonAction::Gamepad(b) => vec![Piece::Pad(*b)],
             ButtonAction::Keys(keys) if keys.is_empty() => vec![text("(no key)")],
-            ButtonAction::Keys(keys) => vec![text(&keys.iter().map(|k| key_name(k)).collect::<Vec<_>>().join(" + "))],
-            ButtonAction::Mouse(m) => vec![text(&format!("{m} click"))],
+            ButtonAction::Keys(keys) => keys.iter().enumerate().flat_map(|(i, k)| [text(if i > 0 { " + " } else { "" }), Piece::Key(k.clone())]).collect(),
+            ButtonAction::Mouse(m) => vec![Piece::Mouse(*m)],
             ButtonAction::Wheel(d) => vec![text(&d.to_string())],
             ButtonAction::ToggleOverlay => vec![text("On-screen keyboard")],
             ButtonAction::ToggleNumpad => vec![text("On-screen numpad")],

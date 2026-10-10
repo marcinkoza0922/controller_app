@@ -16,10 +16,10 @@ mod pad_model;
 
 pub use pad_model::PadModel;
 
-use crate::config::{Button, CurrentInput, InfoOverlay, Layer, OverlayStyle, ScreenPosition, Stick, Trigger};
+use crate::config::{Button, CurrentInput, InfoOverlay, Layer, MouseButton, OverlayStyle, ScreenPosition, Stick, Trigger};
 
 /// The `{token}` that draws `b`'s glyph, for buttons the pad has.
-fn button_token(b: Button) -> Option<&'static str> {
+pub fn button_token(b: Button) -> Option<&'static str> {
     Some(match b {
         Button::South => "south",
         Button::East => "east",
@@ -217,6 +217,12 @@ pub enum IconToken {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Token {
     Button(Button),
+    /// A face or other button, drawn as the controller the daemon presents itself as (`{pad:south}`).
+    PadButton(Button),
+    /// A keyboard key, by its evdev code (`{keyboard:a}`).
+    Key(&'static str),
+    /// A mouse button (`{mouse:leftclick}`).
+    Mouse(MouseButton),
     Trigger(Trigger),
     /// The stick itself (for "move"), not its click.
     Stick(Stick),
@@ -235,6 +241,9 @@ pub enum Token {
 /// Every token, with a description, for the editor's "Insert…" list.
 pub const TOKENS: &[(&str, &str)] = &[
     ("south", "Bottom face button (A / ✕ / B)"),
+    ("pad:south", "Bottom face button as the controller the daemon presents itself as"),
+    ("keyboard:a", "A keyboard key, by name: keyboard:esc, keyboard:leftshift, keyboard:f1…"),
+    ("mouse:leftclick", "A mouse button: leftclick, rightclick, middleclick, backclick, forwardclick"),
     ("east", "Right face button (B / ○ / A)"),
     ("west", "Left face button (X / □ / Y)"),
     ("north", "Top face button (Y / △ / X)"),
@@ -315,10 +324,56 @@ fn token(inner: &str) -> Option<Token> {
     if name == "controller" && args == ["name"] {
         return Some(Token::Stat(Stat::Controller));
     }
+    match (name.as_str(), args.as_slice()) {
+        ("pad", [button]) => return pad_button(button).map(Token::PadButton),
+        ("keyboard", [key]) => return crate::keyboard::code_for_token(&key.to_lowercase()).map(Token::Key),
+        ("mouse", [button]) => return mouse_button(button).map(Token::Mouse),
+        _ => {}
+    }
     if !args.is_empty() {
         return None;
     }
     plain_token(&name)
+}
+
+/// The buttons a `{pad:…}` token can name: the ones with a button token.
+const PAD_BUTTONS: [Button; 15] = [
+    Button::South,
+    Button::East,
+    Button::West,
+    Button::North,
+    Button::LeftBumper,
+    Button::RightBumper,
+    Button::Select,
+    Button::Start,
+    Button::Guide,
+    Button::LeftStick,
+    Button::RightStick,
+    Button::DpadUp,
+    Button::DpadDown,
+    Button::DpadLeft,
+    Button::DpadRight,
+];
+
+fn pad_button(name: &str) -> Option<Button> {
+    let name = name.to_lowercase();
+    PAD_BUTTONS.into_iter().find(|b| button_token(*b) == Some(name.as_str()))
+}
+
+/// The `{mouse:…}` token name of a mouse button.
+pub fn mouse_token(m: MouseButton) -> &'static str {
+    match m {
+        MouseButton::Left => "leftclick",
+        MouseButton::Right => "rightclick",
+        MouseButton::Middle => "middleclick",
+        MouseButton::Back => "backclick",
+        MouseButton::Forward => "forwardclick",
+    }
+}
+
+fn mouse_button(name: &str) -> Option<MouseButton> {
+    let name = name.to_lowercase();
+    MouseButton::ALL.into_iter().find(|m| mouse_token(*m) == name)
 }
 
 /// A token with no arguments.
@@ -611,6 +666,18 @@ pub fn glyph(label: &str, fill: Option<[u8; 3]>, round: bool) -> Segment {
     Segment::Glyph { label: label.to_string(), fill, round }
 }
 
+/// A keyboard key as a keycap: its label, in a slate colour that tells it from a controller's.
+pub fn key_glyph(code: &str) -> Segment {
+    const KEY: [u8; 3] = [0x4a, 0x52, 0x5c];
+    glyph(&crate::keyboard::label(code), Some(KEY), false)
+}
+
+/// A mouse button, in a teal that tells it from a key or a controller's button.
+pub fn mouse_glyph(m: MouseButton) -> Segment {
+    const MOUSE: [u8; 3] = [0x2f, 0x7a, 0x7a];
+    glyph(&format!("{m} click"), Some(MOUSE), false)
+}
+
 /// The badge shown while the screen is being recorded: a red "● REC" in the top left.
 pub fn recording_view() -> InfoView {
     const RED: [u8; 3] = [0xc8, 0x3c, 0x3c];
@@ -714,6 +781,8 @@ pub struct Live {
     /// Active layers, oldest first.
     pub layers: Vec<String>,
     pub family: PadFamily,
+    /// The family of the controller the daemon presents itself as, for `{pad:…}` tokens.
+    pub pad_family: PadFamily,
     /// Face buttons drawn with the Nintendo layout's labels (see [`nintendo_face`]).
     pub nintendo_layout: bool,
     pub system: SystemStats,
@@ -735,6 +804,7 @@ impl Live {
             controller: format!("{family} controller"),
             layers: vec!["Hotkeys".into()],
             family,
+            pad_family: family,
             nintendo_layout: false,
             system: SystemStats {
                 cpu: Some(23.0),
@@ -793,6 +863,9 @@ fn cell_segments(overlay: &InfoOverlay, cell: &str, live: &Live) -> Vec<Segment>
             }
             Ok(text) => Segment::Text(text),
             Err(Token::Button(b)) => button_glyph(b, live.family, live.nintendo_layout),
+            Err(Token::PadButton(b)) => button_glyph(b, live.pad_family, live.nintendo_layout),
+            Err(Token::Key(code)) => key_glyph(code),
+            Err(Token::Mouse(m)) => mouse_glyph(m),
             Err(Token::Trigger(t)) => trigger_glyph(t, live.family),
             Err(Token::Stick(Stick::Left)) => glyph("LS", None, true),
             Err(Token::Stick(Stick::Right)) => glyph("RS", None, true),
@@ -1010,7 +1083,7 @@ mod tests {
         let overlays = super::guide_overlays(&p);
         assert_eq!(overlays.len(), 1, "no notes, so only the mappings");
         assert_eq!(overlays[0].name, "guide mappings");
-        assert!(overlays[0].rows.iter().any(|r| r == &vec!["{south}".to_string(), "E".to_string()]));
+        assert!(overlays[0].rows.iter().any(|r| r == &vec!["{south}".to_string(), "{keyboard:e}".to_string()]));
         p.guide.notes = "Hold LB for the radial menu.\nEsc is Start.".into();
         let overlays = super::guide_overlays(&p);
         assert_eq!(overlays[0].name, "guide notes");
@@ -1099,6 +1172,27 @@ mod tests {
         assert!(matches!(&ps.rows[0][1][0], Segment::Glyph { label, .. } if label == "L2"), "tokens are case-insensitive");
         let switch = resolve(&o, &Live::sample(PadFamily::Nintendo));
         assert!(matches!(&switch.rows[0][1][2], Segment::Glyph { label, .. } if label == "B"), "Nintendo's bottom button is B");
+    }
+
+    #[test]
+    fn pad_keyboard_and_mouse_tokens_draw_their_glyphs() {
+        let o = overlay(&[&["{pad:south}", "{keyboard:leftshift}", "{mouse:leftclick}", "{keyboard:nope}"]]);
+        let mut live = Live::sample(PadFamily::Xbox);
+        live.pad_family = PadFamily::PlayStation;
+        let view = resolve(&o, &live);
+        let cells = &view.rows[0];
+        assert_eq!(cells[0], vec![button_glyph(Button::South, PadFamily::PlayStation, false)], "the pad the daemon presents");
+        assert_eq!(cells[1], vec![key_glyph("KEY_LEFTSHIFT")]);
+        assert_eq!(cells[2], vec![mouse_glyph(MouseButton::Left)]);
+        assert_eq!(cells[3], vec![Segment::Text("{keyboard:nope}".into())], "a key no layout draws stays text");
+    }
+
+    #[test]
+    fn plain_buttons_still_follow_the_controller_in_use() {
+        let o = overlay(&[&["{south}"]]);
+        let mut live = Live::sample(PadFamily::Xbox);
+        live.pad_family = PadFamily::Nintendo;
+        assert_eq!(resolve(&o, &live).rows[0][0], vec![button_glyph(Button::South, PadFamily::Xbox, false)]);
     }
 
     #[test]

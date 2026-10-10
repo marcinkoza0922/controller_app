@@ -16,6 +16,7 @@ use super::server::Session;
 use crate::{
     info::PadModel,
     ipc::{self, DebugEvent, Request, Response},
+    pad_identity::PadIdentity,
 };
 
 /// The controller the daemon runs for this session.
@@ -111,6 +112,17 @@ impl Session {
         let Some(path) = self.attached() else { bail!("not attached to the daemon (start the session with --attach)") };
         match ask(&Request::DebugOutput { path, clear })? {
             Response::Lines(lines) => Ok(lines),
+            _ => bail!("unexpected reply from the daemon"),
+        }
+    }
+
+    /// Makes every virtual pad on the daemon present as `identity` (`None` lets it choose). This
+    /// is daemon-wide, so it doesn't need the session to be attached. The daemon must run with
+    /// `--debug`.
+    pub fn identify(&self, identity: Option<PadIdentity>) -> Result<()> {
+        match ask(&Request::DebugIdentify(identity))? {
+            Response::Ok => Ok(()),
+            Response::Error(e) => bail!(e),
             _ => bail!("unexpected reply from the daemon"),
         }
     }

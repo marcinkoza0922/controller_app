@@ -10,6 +10,7 @@ The easiest way to write a pack is in the app, then **Details → Export…**. R
 format = 10                      # pack format version (required)
 macros = []                      # optional, see Macros
 overlay_font = "Rajdhani"        # optional, font for overlays, menus and keyboards
+controllers = { dualsense = true } # optional, other controllers the game supports (see Controller identity)
 
 [pack]                           # required
 id = "744efa38-…"                # required, stable across versions
@@ -190,6 +191,12 @@ button = "DpadUp"                   # or: "always", while_held, toggle
 - `activation`: `"always"`, `while_held = { button = … }`, `unless_held = { button = … }` (a clutch: off while held), or `toggle = { button = … }`. The input can also be `left_trigger` or `right_trigger`, as in `while_held = "left_trigger"`.
 - `recenter` (optional): an input that sets the current tilt as straight ahead.
 
+## Controller identity
+
+`controllers` says which other controllers the game has explicit support for: `dualshock` (DualShock 4), `dualsense` and `switch_pro` (Switch Pro Controller). Each is optional and off by default. While the game is active, a physical controller of a ticked kind makes the virtual pad present itself as that kind: its USB IDs, name and button labels, so the game sees a DualShock, DualSense or Pro controller. Any other controller, or a kind left unticked, is seen as an Xbox 360 pad, as before.
+
+The Mappings overlay draws each mapped output as the controller the pad presents itself as. Default text for a pad button is `{pad:south}` and so on (see Overlay info below), so an output that is a DualSense's bottom button shows ✕ in a DualSense game and A elsewhere.
+
 ## Requirements
 
 A profile says what it cannot be played without, so the app can offer only profiles a player's controller supports:
@@ -273,6 +280,7 @@ scale = 0.9
 
 - Each row is a list of cells, and cells line up in columns. A cell is text with `{tokens}`.
 - Button glyphs: `{south} {east} {west} {north} {lb} {rb} {lt} {rt} {select} {start} {guide} {ls} {rs} {l3} {r3} {dpad} {up} {down} {left} {right}`. They are drawn for the controller in use.
+- Output glyphs: `{pad:south}` (any button name from the list above, after `pad:`) is drawn for the controller the pad presents itself as, `{keyboard:a}` is a key by its name without `KEY_` in lower case (`{keyboard:leftshift}`, `{keyboard:f1}`), and `{mouse:leftclick}` is `rightclick`, `middleclick`, `backclick` or `forwardclick`. A key or mouse token that names nothing stays as text.
 - Live values: `{time} {time12} {date} {profile} {layer} {app} {title} {pid} {cpu} {ram} {gpu} {wifi} {system_battery} {controller_battery}`, plus `{current_input}` (with the `current_input` settings).
 - An overlay is shown by a `show_info` action, or always when `always = true`.
 

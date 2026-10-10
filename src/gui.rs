@@ -404,6 +404,8 @@ enum Message {
     SetAppearance(Appearance),
     SetNintendoLayout(bool),
     SetGameNintendoLayout(Option<bool>),
+    /// The other controllers a setup supports (its Details tab).
+    SetGameControllers(crate::pad_identity::ControllerSupport),
     /// The shown game's own overlay sounds, replacing its set.
     SetGameSounds(SoundSet),
     /// The App settings' sounds, which every setup without its own set uses.

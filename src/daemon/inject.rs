@@ -71,12 +71,21 @@ impl Daemon {
             Request::DebugInput { path, events } => self.debug_input(&path, events),
             Request::DebugOutput { path, clear } => self.debug_output(&path, clear),
             Request::DebugDetach(path) => self.debug_detach(&path),
+            Request::DebugIdentify(identity) => self.debug_identify(identity),
             _ => Response::Error("not a debug request".into()),
         }
     }
 
     fn injected_id(&self, path: &str) -> Option<u64> {
         self.devices.iter().find(|(_, d)| d.recorded.is_some() && d.path.as_os_str() == path).map(|(id, _)| *id)
+    }
+
+    /// Forces every virtual pad to present as `identity`, or lets the game and controller decide.
+    fn debug_identify(&mut self, identity: Option<crate::pad_identity::PadIdentity>) -> Response {
+        log!("debug: identity forced to {identity:?}");
+        self.identity_override = identity;
+        self.sync_identities();
+        Response::Ok
     }
 
     fn debug_attach(&mut self, model: Option<crate::info::PadModel>, live: bool) -> Response {

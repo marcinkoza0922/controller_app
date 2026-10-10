@@ -149,6 +149,7 @@ impl App {
             Message::SetAppearance(appearance) => self.config.appearance = appearance,
             Message::SetNintendoLayout(on) => self.config.nintendo_layout = on,
             Message::SetGameNintendoLayout(choice) => self.game_mut().nintendo_layout = choice,
+            Message::SetGameControllers(support) => self.game_mut().controllers = Some(support),
             Message::SetGameSounds(sounds) => self.game_mut().sounds = Some(sounds),
             Message::SetSounds(sounds) => self.config.sounds = sounds,
             Message::ClearGameSounds => self.game_mut().sounds = None,
@@ -443,6 +444,28 @@ impl App {
             "Overlay motion",
             Some(format!("How this setup's overlays move, while it is active. Each kind of overlay has its own style; any this setup doesn't set use the global motion from Settings. {}", motion_guide())),
             rows,
+        )
+    }
+
+    /// Which other controllers a setup supports: a physical one of a ticked kind makes the pad
+    /// present itself as that kind while the setup is active.
+    fn view_game_controllers(&self) -> Element<'_, Message> {
+        let support = self.game().controllers.unwrap_or_default();
+        let toggle = |label: &'static str, on: bool, set: fn(&mut crate::pad_identity::ControllerSupport, bool)| {
+            toggler(on).label(label).on_toggle(move |value| {
+                let mut next = support;
+                set(&mut next, value);
+                Message::SetGameControllers(next)
+            })
+        };
+        section(
+            "Controllers this setup supports",
+            Some("Tick a kind when the game has explicit support for it. While the game is active, a controller of that kind is seen by the game as that kind, with its own buttons and glyphs. Other controllers, and kinds left unticked, are seen as an Xbox controller.".into()),
+            vec![
+                toggle("DualShock 4", support.dualshock, |s, on| s.dualshock = on).into(),
+                toggle("DualSense", support.dualsense, |s, on| s.dualsense = on).into(),
+                toggle("Switch Pro Controller", support.switch_pro, |s, on| s.switch_pro = on).into(),
+            ],
         )
     }
 
@@ -744,6 +767,7 @@ impl App {
             ),
             self.view_game_overlays(),
             self.view_game_nintendo_layout(),
+            self.view_game_controllers(),
             self.view_game_sounds(),
             self.view_game_motion(),
             section("Pack", None, pack_rows),

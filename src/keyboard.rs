@@ -196,6 +196,22 @@ pub fn label(code: &str) -> String {
     }
 }
 
+/// Every key the layouts draw, spacers left out.
+fn drawn_keys() -> impl Iterator<Item = &'static Key> {
+    MAIN.iter().chain(NAV.iter()).chain(NUMPAD.iter()).chain(PAD.iter()).flat_map(|r| r.iter()).chain(MEDIA).filter(|k| !k.code.is_empty())
+}
+
+/// The name a `{keyboard:…}` token uses for an evdev key: its code without `KEY_`, in lower case
+/// (`KEY_A` is `a`, `KEY_LEFTSHIFT` is `leftshift`). `None` for a key no layout draws.
+pub fn token_name(code: &str) -> Option<String> {
+    drawn_keys().any(|k| k.code == code).then(|| code.trim_start_matches("KEY_").to_lowercase())
+}
+
+/// The evdev code a `{keyboard:…}` token names, ignoring case.
+pub fn code_for_token(name: &str) -> Option<&'static str> {
+    drawn_keys().find(|k| k.code.trim_start_matches("KEY_").eq_ignore_ascii_case(name)).map(|k| k.code)
+}
+
 /// A key position in a layout for controller navigation (gaps skipped).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct Cursor {
@@ -267,6 +283,17 @@ mod tests {
 
     fn all_keys() -> impl Iterator<Item = &'static Key> {
         MAIN.iter().chain(NAV.iter()).chain(NUMPAD.iter()).chain(PAD.iter()).flat_map(|r| r.iter()).chain(MEDIA)
+    }
+
+    #[test]
+    fn key_tokens_name_keys_by_code_without_the_prefix() {
+        assert_eq!(token_name("KEY_A").as_deref(), Some("a"));
+        assert_eq!(token_name("KEY_LEFTSHIFT").as_deref(), Some("leftshift"));
+        assert_eq!(token_name("KEY_NOPE"), None);
+        assert_eq!(code_for_token("LeftShift"), Some("KEY_LEFTSHIFT"));
+        assert_eq!(code_for_token("f1"), Some("KEY_F1"));
+        assert_eq!(code_for_token(""), None, "spacers aren't keys");
+        assert_eq!(code_for_token("nope"), None);
     }
 
     #[test]
