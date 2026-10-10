@@ -393,6 +393,21 @@ fn turbo_editor<'a>(
     .into()
 }
 
+/// An empty picker's note, with a link to the tab that makes what it would pick. `after` is any
+/// text that follows the link.
+fn tab_link<'a>(before: &str, link: &str, tab: GameTab, after: &str) -> Element<'a, Message> {
+    let mut line = row![
+        text(before.to_string()).size(12).color(MUTED_COLOR),
+        button(text(link.to_string()).size(12)).style(button::text).padding(0).on_press(Message::SelectGameTab(tab)),
+    ]
+    .spacing(6)
+    .align_y(Alignment::Center);
+    if !after.is_empty() {
+        line = line.push(text(after.to_string()).size(12).color(MUTED_COLOR));
+    }
+    line.into()
+}
+
 /// The settings to the right of an action's kind picker.
 #[expect(clippy::too_many_lines, reason = "predates the size lints")]
 pub(super) fn action_value<'a>(
@@ -462,7 +477,7 @@ pub(super) fn action_value<'a>(
             turbo_editor((inner, *rate, *every_ms), default_button, on_change, &field, names)
         }
         ButtonAction::Macro { .. } if names.macros.is_empty() => {
-            text("No macros yet. Create one on the Macros tab.").size(12).color(MUTED_COLOR).into()
+            tab_link("No macros yet.", "Create one on the Macros tab", GameTab::Macros, "")
         }
         ButtonAction::Macro { name, repeat } => {
             let repeat = *repeat;
@@ -503,10 +518,12 @@ pub(super) fn action_value<'a>(
             text("Hold B on the controller to close it.").size(12).color(MUTED_COLOR).into()
         }
         ButtonAction::ShowInfo(_) if names.infos.is_empty() => {
-            text("No info overlays to show. Create one on the Info overlays tab, and turn off Always so an action can show it.")
-                .size(12)
-                .color(MUTED_COLOR)
-                .into()
+            tab_link(
+                "No info overlays to show.",
+                "Create one on the Info overlays tab",
+                GameTab::Info,
+                ", and turn off Always so an action can show it.",
+            )
         }
         ButtonAction::ShowInfo(name) => {
             let mut line = row![dropdown(names.infos.clone(), Some(name.clone()), move |n| on_change(ButtonAction::ShowInfo(n))).width(200)]
@@ -520,10 +537,12 @@ pub(super) fn action_value<'a>(
             line.into()
         }
         ButtonAction::ShowLog(_) if names.logs.is_empty() => {
-            text("No log overlays to show. Create one on the Log overlays tab, and turn off Always so an action can show it.")
-                .size(12)
-                .color(MUTED_COLOR)
-                .into()
+            tab_link(
+                "No log overlays to show.",
+                "Create one on the Log overlays tab",
+                GameTab::Logs,
+                ", and turn off Always so an action can show it.",
+            )
         }
         ButtonAction::ShowLog(name) => {
             let mut line = row![dropdown(names.logs.clone(), Some(name.clone()), move |n| on_change(ButtonAction::ShowLog(n))).width(200)]
@@ -537,7 +556,7 @@ pub(super) fn action_value<'a>(
             line.into()
         }
         ButtonAction::OpenMenu(_) if names.menus.is_empty() => {
-            text("No menus to open. Create one on the Menus tab.").size(12).color(MUTED_COLOR).into()
+            tab_link("No menus to open.", "Create one on the Menus tab", GameTab::Menus, "")
         }
         ButtonAction::Layer(name) => {
             let mut options = names.layers.clone();

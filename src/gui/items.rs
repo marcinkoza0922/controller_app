@@ -136,6 +136,23 @@ fn menu_kind_row<'a>(mi: usize, menu: &Menu) -> Element<'a, Message> {
 kind_row.into()
 }
 
+/// A menu's item boxes, one under another, or for a grid, grouped by row under a "Row N" heading
+/// so the cells that sit side by side on screen read as one row.
+fn item_boxes<'a>(kind: MenuKind, boxes: Vec<Element<'a, Message>>) -> Element<'a, Message> {
+    let Some(per_row) = kind.grid_columns() else {
+        return column(boxes).spacing(8).into();
+    };
+    let mut rest = boxes;
+    let mut rows = column![].spacing(8);
+    for r in 0..rest.len().div_ceil(per_row) {
+        let tail = rest.split_off(per_row.min(rest.len()));
+        let group = std::mem::replace(&mut rest, tail);
+        let heading = text(format!("Row {}", r + 1)).size(12).color(MUTED_COLOR);
+        rows = rows.push(container(column![heading, column(group).spacing(6)].spacing(6)).padding(8).style(style::card));
+    }
+    rows.into()
+}
+
 /// "+ Add item", greyed out with a note once a grid is full.
 fn add_menu_item_row<'a>(mi: usize, menu: &Menu) -> Element<'a, Message> {
     let full = item_limit(menu.kind).is_some_and(|limit| menu.items.len() >= limit);
@@ -375,7 +392,7 @@ impl App {
                 let cells = |a: &str, b: &str| vec![a.to_string(), b.to_string()];
                 let overlay = InfoOverlay {
                     name,
-                    always: true, on_start: None, linger: None, title: None, current_input: Default::default(),
+                    always: false, on_start: None, linger: None, title: None, current_input: Default::default(),
                     style: OverlayStyle::info(),
                     rows: vec![cells("{south}", "Jump"), cells("{west}", "Reload")],
                 };
@@ -1055,17 +1072,22 @@ impl App {
         for (r, cells) in o.rows.iter().enumerate() {
             let mut line = row![].spacing(10);
             for (c, cell) in cells.iter().enumerate() {
+                // Each cell gets its own box, so neighbours on the same row read as separate.
                 line = line.push(
-                    row![
-                        field("Text or {token}", cell).on_input(move |v| Message::SetInfoCell(i, r, c, v)).width(170),
-                        dropdown(tokens.clone(), None::<TokenChoice>, move |t| Message::InsertInfoToken(i, r, c, t))
-                            .placeholder("Insert…")
-                            .menu_height(320)
-                            .width(110),
-                        small("✕", Some(Message::RemoveInfoCell(i, r, c))),
-                    ]
-                    .spacing(4)
-                    .align_y(Alignment::Center),
+                    container(
+                        row![
+                            field("Text or {token}", cell).on_input(move |v| Message::SetInfoCell(i, r, c, v)).width(170),
+                            dropdown(tokens.clone(), None::<TokenChoice>, move |t| Message::InsertInfoToken(i, r, c, t))
+                                .placeholder("Insert…")
+                                .menu_height(320)
+                                .width(110),
+                            small("✕", Some(Message::RemoveInfoCell(i, r, c))),
+                        ]
+                        .spacing(4)
+                        .align_y(Alignment::Center),
+                    )
+                    .padding([6, 8])
+                    .style(style::card),
                 );
             }
             line = line.push(small("+ Cell", Some(Message::AddInfoCell(i, r))));
@@ -1205,6 +1227,7 @@ impl App {
         };
         let last = menu.items.len().saturating_sub(1);
         let mut items = column![text("Items").size(16)].spacing(8);
+        let mut boxes: Vec<Element<'a, Message>> = Vec::new();
         for (i, item) in menu.items.iter().enumerate() {
             let target = Target::MenuItem(mi, i);
             let name: String = match direction_slots {
@@ -1247,8 +1270,9 @@ impl App {
             if let Some(problem) = item_problem(menu, &item.action, reachable, names) {
                 boxed = boxed.push(text(format!("⚠ {problem}")).size(12).color(ERROR_COLOR));
             }
-            items = items.push(container(boxed).padding(8).style(style::inset));
+            boxes.push(container(boxed).padding(8).style(style::inset).into());
         }
+        items = items.push(item_boxes(menu.kind, boxes));
         if direction_slots.is_none() {
             items = items.push(add_menu_item_row(mi, menu));
         } else {
@@ -1485,6 +1509,7 @@ mod tests {
         let mut app = app();
         let _ = app.update(Message::NewInfo);
         assert!(app.open_infos.contains(&0));
+        assert!(!app.config.general.info[0].always, "off by default, so actions can show it");
         let _ = app.update(Message::AddInfoRow(0));
         let _ = app.update(Message::SetInfoCell(0, 2, 0, "Time".into()));
         let _ = app.update(Message::InsertInfoToken(0, 2, 0, TokenChoice("time", "")));
@@ -1499,7 +1524,10 @@ mod tests {
         app.config.general.profiles[0].set_button(Button::Select, ButtonAction::ShowInfo("Info".into()));
         let _ = app.update(Message::RenameInfo(0, "Controls".into()));
         assert_eq!(app.config.general.profiles[0].button(Button::Select), &ButtonAction::ShowInfo("Controls".into()));
-        // New overlays always show, so no action can show them; shown sometimes, one can.
+        // New overlays are shown by an action, so one can show them; always-shown ones can't be.
+        assert_eq!(app.validate(), None);
+        assert!(app.names().infos.contains(&"Controls".to_string()));
+        let _ = app.update(Message::SetInfoAlways(0, true));
         assert!(app.validate().unwrap().contains("always shown, so an action can't show it"), "{:?}", app.validate());
         assert!(!app.names().infos.contains(&"Controls".to_string()), "not offered in pickers");
         let _ = app.update(Message::SetInfoAlways(0, false));
