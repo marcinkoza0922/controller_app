@@ -1,6 +1,6 @@
 //! The profile editor (buttons, sticks and triggers, combos, gyro), also used for layers, and the controller drawing.
 
-use iced::widget::{Column, column, rich_text, row, span};
+use iced::widget::{Column, column, row};
 
 use super::*;
 use crate::config::{FlickVertical, MouseResponse};
@@ -747,31 +747,23 @@ pub(super) fn button_row<'a>(p: &'a Profile, b: Button, ui: &Ui) -> Vec<Element<
     }
     rows.push(labeled(
         "    Press",
-        scroll_x(action_editor(p.button(b), b, &ACTION_KINDS, set_action(target), KeyField::root(target), ui.names)),
+        fill_x(action_editor(p.button(b), b, &ACTION_KINDS, set_action(target), KeyField::root(target), ui.names)),
     ));
 
     for (kind, action) in set_gestures {
         rows.push(rule::horizontal(1).into());
-        // The name and its remove button stay in the fixed label column, so they don't scroll with the editor.
-        let label = column![
-            text(kind.to_string()),
-            button(rich_text([span::<(), _>("Remove").underline(true).color(ERROR_COLOR).size(13)]))
-                .style(button::text)
-                .padding(0)
-                .on_press(Message::RemoveGesture(b, kind)),
-        ]
-        .width(LABEL_WIDTH)
-        .spacing(6)
-        .align_x(Alignment::Center);
-        rows.push(
+        // Laid out like the Press row, with a ✕ at the end as other removable rows have.
+        let target = Target::Gesture(b, kind);
+        rows.push(labeled(
+            format!("    {kind}"),
             row![
-                label,
-                scroll_x(action_editor(action, b, &ACTION_KINDS, set_action(Target::Gesture(b, kind)), KeyField::root(Target::Gesture(b, kind)), ui.names)),
+                fill_x(action_editor(action, b, &ACTION_KINDS, set_action(target), KeyField::root(target), ui.names)),
+                button(text("✕").size(13)).style(style::secondary).on_press(Message::RemoveGesture(b, kind)),
             ]
-            .spacing(10)
+            .spacing(8)
             .align_y(Alignment::Start)
             .into(),
-        );
+        ));
     }
     // Adding a gesture sits under the rows it extends, one click per kind.
     if !missing.is_empty() {
@@ -854,7 +846,7 @@ pub(super) fn combo_rows<'a>(p: &'a Profile, ui: &Ui) -> Vec<Element<'a, Message
             ]
             .spacing(10)
             .align_y(Alignment::Center),
-            labeled("    Action", scroll_x(action_editor(&combo.action, Button::South, &ACTION_KINDS, set_action(target), KeyField::root(target), ui.names))),
+            labeled("    Action", fill_x(action_editor(&combo.action, Button::South, &ACTION_KINDS, set_action(target), KeyField::root(target), ui.names))),
         ]
         .spacing(8);
         if let Some(problem) = problem {
@@ -1069,7 +1061,7 @@ fn ring_rows<'a>(
         let target = Target::RingSector(s, i);
         rows = rows.push(labeled(
             format!("    {arrow} Sector {}", i + 1),
-            container(scroll_x(action_editor(action, Button::South, &ACTION_KINDS, set_action(target), KeyField::root(target), names)))
+            container(fill_x(action_editor(action, Button::South, &ACTION_KINDS, set_action(target), KeyField::root(target), names)))
                 .padding(10)
                 .style(style::inset)
                 .into(),
@@ -1217,7 +1209,7 @@ pub(super) fn zone_editor<'a>(analog: Analog, zones: &'a [Zone], names: &Names) 
         .align_y(Alignment::Center);
         let mut body = column![
             range,
-            scroll_x(action_editor(&zone.action, Button::South, &ACTION_KINDS, set_action(Target::Zone(analog, i)), KeyField::root(Target::Zone(analog, i)), names)),
+            fill_x(action_editor(&zone.action, Button::South, &ACTION_KINDS, set_action(Target::Zone(analog, i)), KeyField::root(Target::Zone(analog, i)), names)),
         ]
         .spacing(8);
         if min >= max {

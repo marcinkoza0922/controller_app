@@ -802,7 +802,7 @@ impl App {
                     let hold_ms = *hold_ms;
                     let held = action.clone();
                     column![
-                        scroll_x(action_editor(action, Button::South, MACRO_STEP_KINDS, set_action(Target::MacroStep(mi, i)), KeyField::root(Target::MacroStep(mi, i)), names)),
+                        fill_x(action_editor(action, Button::South, MACRO_STEP_KINDS, set_action(Target::MacroStep(mi, i)), KeyField::root(Target::MacroStep(mi, i)), names)),
                         row![
                             text("held for").size(13),
                             slider(10.0..=1000.0, hold_ms as f32, move |v| {
@@ -857,7 +857,7 @@ impl App {
                     }
                     body.into()
                 }
-                MacroStep::Press(action) | MacroStep::Release(action) => scroll_x(action_editor(
+                MacroStep::Press(action) | MacroStep::Release(action) => fill_x(action_editor(
                     action,
                     Button::South,
                     MACRO_STEP_KINDS,
@@ -874,8 +874,7 @@ impl App {
                     row![
                         container(text(format!("{}.", i + 1))).width(28).padding(iced::Padding::ZERO.top(6)),
                         kind,
-                        body,
-                        space::horizontal(),
+                        fill_x(body),
                         small("↑", (i > 0).then_some(Message::MoveMacroStep(mi, i, true))),
                         small("↓", (i < last).then_some(Message::MoveMacroStep(mi, i, false))),
                         small("✕", Some(Message::RemoveMacroStep(mi, i))),
@@ -1256,7 +1255,7 @@ impl App {
                     tooltip::Position::Top,
                 ));
             }
-            line = line.push(action_editor(&item.action, Button::South, item_kinds, set_action(target), KeyField::root(target), &item_names));
+            line = line.push(fill_x(action_editor(&item.action, Button::South, item_kinds, set_action(target), KeyField::root(target), &item_names)));
             if direction_slots.is_none() {
                 let small = |label: &'static str, msg: Option<Message>| {
                     button(text(label).size(13)).style(style::secondary).on_press_maybe(msg)
@@ -1266,7 +1265,7 @@ impl App {
                     .push(small("↓", (i < last).then_some(Message::MoveMenuItem(mi, i, false))))
                     .push(small("✕", Some(Message::RemoveMenuItem(mi, i))));
             }
-            let mut boxed = column![scroll_x(line)].spacing(4);
+            let mut boxed = column![line].spacing(4);
             if let Some(problem) = item_problem(menu, &item.action, reachable, names) {
                 boxed = boxed.push(text(format!("⚠ {problem}")).size(12).color(ERROR_COLOR));
             }

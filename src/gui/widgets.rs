@@ -320,13 +320,10 @@ pub(super) fn labeled<'a>(label: impl text::IntoFragment<'a>, editor: Element<'a
         .into()
 }
 
-/// Lets a wide row scroll sideways, with its bar below, instead of running off screen.
-/// Fills the row's free width, so buttons placed after it (such as a remove button) keep their space.
-pub(super) fn scroll_x<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
-    scrollable(content)
-        .width(Length::Fill)
-        .direction(scrollable::Direction::Horizontal(scrollable::Scrollbar::new().spacing(4)))
-        .into()
+/// Gives an action editor the row's free width, so it wraps onto a second line there instead of
+/// running off screen, and buttons placed after it (such as a remove button) line up at the right.
+pub(super) fn fill_x<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    container(content).width(Length::Fill).into()
 }
 
 #[expect(clippy::too_many_arguments, reason = "predates the size lints")]
