@@ -10,8 +10,9 @@
 
 ## Tuning
 
-- **Deadzone**: how far the stick must move before it counts. Raise it if the stick drifts when resting.
+- **Deadzone**: how far the stick must move before it counts. Raise it if the stick drifts when resting. The two pictures under it show the dead middle of the stick's travel, and how the response starts only past it.
 - **Response curve**: how quickly the output grows as you push further. A gentler curve gives finer control near the center.
+- **Response graphs**: under the curve, the mouse speed against how far the stick is pushed, and the speed in each direction. Hover the graph to read the speed at any push; the picture on the right follows it.
 - **Invert Y**: flips up and down.
 
 ## Stick directions as buttons

@@ -51,9 +51,11 @@ mod layers;
 mod logs;
 mod manual;
 mod overlays;
+mod deadzone_graph;
 mod pieces;
 mod packs;
 mod profile;
+mod response_graph;
 mod ring_preview;
 mod settings;
 mod sticks;
@@ -183,6 +185,8 @@ struct App {
     picture_hidden: bool,
     /// Rows showing their full editor instead of a one-line summary.
     expanded: HashSet<Target>,
+    /// How far the mouse stick's response graphs show the stick pushed (0..1), set by hovering them.
+    stick_probe: f32,
     /// Waiting for a controller button press to jump to its row.
     finding: bool,
     found: Option<Button>,
@@ -393,6 +397,8 @@ enum Message {
     SetZoneRange(Analog, usize, f32, f32),
     SelectProfileTab(ProfileTab),
     ToggleExpanded(Target),
+    /// The push (0..1) the mouse stick's response graphs show.
+    ProbeStick(f32),
     TogglePicture,
     /// Expand (true) or collapse every row in the current profile section.
     ExpandAll(bool),
@@ -589,6 +595,7 @@ impl App {
             export_description: iced::widget::text_editor::Content::new(),
             picture_hidden: false,
             expanded: HashSet::new(),
+            stick_probe: 1.0,
             finding: false,
             found: None,
             open_macros: HashSet::new(),
@@ -818,7 +825,7 @@ impl App {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         // Polling and live input don't change the config, and arrive many times a second.
-        let edits = !matches!(message, Message::Poll | Message::LiveInput(_) | Message::LiveFeed(_) | Message::StatusLoaded(_));
+        let edits = !matches!(message, Message::Poll | Message::LiveInput(_) | Message::LiveFeed(_) | Message::ProbeStick(_) | Message::StatusLoaded(_));
         let message = self.new_layer_for(message);
         // Loading the config and undoing aren't edits to take back.
         let undoable = edits && !matches!(message, Message::ConfigLoaded(..) | Message::Undo);
@@ -875,6 +882,7 @@ impl App {
     #[expect(clippy::too_many_lines, reason = "predates the size lints")]
     fn handle(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::ProbeStick(push) => self.stick_probe = push,
             Message::Poll => {
                 // Polling is the only tick, so a picture waiting out its hold is put up here.
                 self.settle_pad(Instant::now());

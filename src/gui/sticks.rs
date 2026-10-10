@@ -46,13 +46,9 @@ impl fmt::Display for StickKind {
 }
 
 #[expect(clippy::too_many_lines, reason = "predates the size lints")]
-pub(super) fn stick_editor<'a>(
-    s: Stick,
-    cfg: &'a StickConfig,
-    names: &Names,
-    expanded: &HashSet<Target>,
-    live: Option<(f32, f32)>,
-) -> Element<'a, Message> {
+pub(super) fn stick_editor<'a>(s: Stick, cfg: &'a StickConfig, ui: &Ui<'_>) -> Element<'a, Message> {
+    let (names, expanded) = (ui.names, ui.expanded);
+    let live = ui.live_sticks.map(|l| l[usize::from(s == Stick::Right)]);
     let kind = match cfg.action {
         StickAction::Disabled => StickKind::Disabled,
         StickAction::Gamepad { .. } => StickKind::Gamepad,
@@ -140,6 +136,7 @@ pub(super) fn stick_editor<'a>(
             c.deadzone = v;
             Message::SetStick(s, c)
         }));
+        rows = rows.push(deadzone_graph::view(cfg.deadzone, live));
     }
     if matches!(cfg.action, StickAction::Mouse { .. } | StickAction::Scroll { .. }) {
         rows = rows.push(value_slider("    Curve", 1.0..=3.0, cfg.curve, 0.1, "(1 = linear)", move |v| {
@@ -147,6 +144,10 @@ pub(super) fn stick_editor<'a>(
             c.curve = v;
             Message::SetStick(s, c)
         }));
+    }
+    if let StickAction::Mouse { speed, response, .. } = cfg.action {
+        let shown = response_graph::Shown { speed, curve: cfg.curve, response, deadzone: cfg.deadzone, probe: ui.stick_probe, live };
+        rows = rows.push(response_graph::view(shown));
     }
     // Used by the stick's direction buttons.
     rows = rows.push(value_slider("    Directions press at", 0.05..=0.95, cfg.key_threshold, 0.05, "", move |v| {
@@ -222,6 +223,26 @@ fn ring_rows<'a>(
     rows
 }
 
+/// The space between an "Advanced" box's edge and the rows in it.
+const BOX_PADDING: f32 = 12.0;
+
+/// The disclosure that opens an "Advanced" fold, in the stick's label column.
+fn advanced_toggle<'a>(label: &str, s: Stick, open: bool) -> Element<'a, Message> {
+    disclosure(label, open, Message::ToggleExpanded(Target::StickResponse(s)))
+}
+
+/// The rows of an open "Advanced" fold, in an inset box under its disclosure, so it's clear
+/// which rows it holds.
+fn advanced_box<'a>(rows: Column<'a, Message>) -> Element<'a, Message> {
+    container(rows.spacing(8)).padding(BOX_PADDING).width(Length::Fill).style(style::inset).into()
+}
+
+/// A row in an "Advanced" box. Its label column is narrower by the box's padding, so its editor
+/// lines up with the editors outside the box.
+fn boxed_row<'a>(label: &'a str, editor: Element<'a, Message>) -> Element<'a, Message> {
+    labeled_in(LABEL_WIDTH - BOX_PADDING, label, editor)
+}
+
 /// A flick stick's settings: the turn size and trigger point, and the rest behind "Advanced".
 fn flick_rows<'a>(
     mut rows: Column<'a, Message>,
@@ -267,24 +288,24 @@ fn flick_rows<'a>(
             .into(),
         ))
         .push(value_slider("    Flick at", 0.5..=1.0, flick_threshold, 0.05, "of the way out", move |v| field!(flick_threshold, v)));
-    rows = rows.push(labeled("    ", row_toggle("Advanced flick", Target::StickResponse(s), open, false)));
+    rows = rows.push(advanced_toggle("Advanced flick", s, open));
     if open {
-        rows = rows
-            .push(value_slider("        Flick time", 0.0..=300.0, flick_time_ms as f32, 10.0, "ms", move |v| field!(flick_time_ms, v as u32)))
-            .push(value_slider("        Turning smoothing", 0.0..=200.0, rotate_smoothing_ms as f32, 5.0, "ms", move |v| {
-                field!(rotate_smoothing_ms, v as u32)
-            }))
-            .push(value_slider("        Forward dead angle", 0.0..=30.0, forward_deadzone, 1.0, "°", move |v| field!(forward_deadzone, v)))
-            .push(labeled(
-                "        ",
+        let mut advanced = column![
+            boxed_row("Flick time", slider_editor(0.0..=300.0, flick_time_ms as f32, 10.0, "ms", move |v| field!(flick_time_ms, v as u32))),
+            boxed_row("Turning smoothing", slider_editor(0.0..=200.0, rotate_smoothing_ms as f32, 5.0, "ms", move |v| field!(rotate_smoothing_ms, v as u32))),
+            boxed_row("Forward dead angle", slider_editor(0.0..=30.0, forward_deadzone, 1.0, "°", move |v| field!(forward_deadzone, v))),
+            boxed_row(
+                "",
                 checkbox(vertical == FlickVertical::Look)
                     .label("Also look up and down with the stick")
                     .on_toggle(move |on| field!(vertical, if on { FlickVertical::Look } else { FlickVertical::Off }))
                     .into(),
-            ));
+            ),
+        ];
         if vertical == FlickVertical::Look {
-            rows = rows.push(value_slider("        Vertical speed", 100.0..=4000.0, vertical_speed, 50.0, "px/s", move |v| field!(vertical_speed, v)));
+            advanced = advanced.push(boxed_row("Vertical speed", slider_editor(100.0..=4000.0, vertical_speed, 50.0, "px/s", move |v| field!(vertical_speed, v))));
         }
+        rows = rows.push(advanced_box(advanced));
     }
     rows
 }
@@ -313,22 +334,25 @@ fn mouse_rows<'a>(
             .on_toggle(move |inv| with(StickAction::Mouse { speed, response, invert_y: inv }))
             .into(),
     ));
-    rows = rows.push(labeled("    ", row_toggle("Advanced response", Target::StickResponse(s), open, false)));
+    rows = rows.push(advanced_toggle("Advanced response", s, open));
     if open {
         let set = move |r: MouseResponse| with(StickAction::Mouse { speed, response: r, invert_y });
-        rows = rows
-            .push(value_slider("        Ramp time", 100.0..=2000.0, response.accel_ramp_ms as f32, 50.0, "ms", move |v| {
-                set(MouseResponse { accel_ramp_ms: v as u32, ..response })
-            }))
-            .push(value_slider("        Outer boost", 0.0..=1.0, response.outer_boost, 0.05, "", move |v| {
-                set(MouseResponse { outer_boost: v, ..response })
-            }))
-            .push(value_slider("        Vertical speed", 0.25..=2.0, response.y_scale, 0.05, "× horizontal", move |v| {
-                set(MouseResponse { y_scale: v, ..response })
-            }))
-            .push(value_slider("        Smoothing", 0.0..=200.0, response.smoothing_ms as f32, 5.0, "ms", move |v| {
-                set(MouseResponse { smoothing_ms: v as u32, ..response })
-            }));
+        rows = rows.push(advanced_box(
+            column![
+                boxed_row("Ramp time", slider_editor(100.0..=2000.0, response.accel_ramp_ms as f32, 50.0, "ms", move |v| {
+                    set(MouseResponse { accel_ramp_ms: v as u32, ..response })
+                })),
+                boxed_row("Outer boost", slider_editor(0.0..=1.0, response.outer_boost, 0.05, "", move |v| {
+                    set(MouseResponse { outer_boost: v, ..response })
+                })),
+                boxed_row("Vertical speed", slider_editor(0.25..=2.0, response.y_scale, 0.05, "× horizontal", move |v| {
+                    set(MouseResponse { y_scale: v, ..response })
+                })),
+                boxed_row("Smoothing", slider_editor(0.0..=200.0, response.smoothing_ms as f32, 5.0, "ms", move |v| {
+                    set(MouseResponse { smoothing_ms: v as u32, ..response })
+                })),
+            ],
+        ));
     }
     rows
 }

@@ -21,6 +21,8 @@ pub(super) enum ProfileTab {
 pub(super) struct Ui<'a> {
     pub(super) names: &'a Names,
     pub(super) expanded: &'a HashSet<Target>,
+    /// The push the mouse stick's response graphs show (see `App::stick_probe`).
+    pub(super) stick_probe: f32,
     /// Row picked by "Find by pressing", highlighted and open.
     pub(super) found: Option<Button>,
     pub(super) analog_triggers: bool,
@@ -236,7 +238,7 @@ pub(super) fn view_profile<'a>(p: &'a Profile, ui: &Ui, tab: ProfileTab, guide: 
             let mut sticks = Vec::new();
             for s in [Stick::Left, Stick::Right] {
                 let base = ui.layer.map_or(p.stick(s), |m| m.base.stick(s));
-                sticks.extend(layer_part(ui, LayerPart::Stick(s), s.to_string(), stick_summary(base), || vec![stick_editor(s, p.stick(s), names, ui.expanded, ui.live_sticks.map(|l| l[usize::from(s == Stick::Right)]))]));
+                sticks.extend(layer_part(ui, LayerPart::Stick(s), s.to_string(), stick_summary(base), || vec![stick_editor(s, p.stick(s), ui)]));
             }
             let mut triggers = Vec::new();
             for t in [Trigger::Left, Trigger::Right] {
@@ -1121,19 +1123,7 @@ impl App {
             .align_y(Alignment::Center)
             .into()
         };
-        let family = self.glyph_family();
-        let sub_tab = |t: ProfileTab| {
-            let label = if section_has_problem(p, t, names) { format!("{t}  ⚠") } else { t.to_string() };
-            button(row![t.glyph(family), text(label).size(14)].spacing(6).align_y(Alignment::Center))
-                .style(style::segment(self.profile_tab == t))
-                .padding([5, 14])
-                .on_press(Message::SelectProfileTab(t))
-        };
-        let mut segments = row![].spacing(2);
-        for t in ProfileTab::ALL {
-            segments = segments.push(sub_tab(t));
-        }
-        let mut tabs = row![container(segments).padding(3).style(style::segments), space::horizontal()]
+        let mut tabs = row![self.profile_segments(p, names), space::horizontal()]
             .spacing(6)
             .align_y(Alignment::Center);
         // Only where there are rows that open: every button, and the combos once there is one.
@@ -1152,6 +1142,7 @@ impl App {
         let ui = Ui {
             names,
             expanded: &self.expanded,
+            stick_probe: self.stick_probe,
             found: self.found,
             analog_triggers: self.analog_triggers(),
             any_gyro: self.any_gyro(),
@@ -1164,6 +1155,24 @@ impl App {
         };
         let guide = GuideView { notes: &self.guide_notes, family: ui.family, swap: ui.swap };
         col.push(view_profile(p, &ui, self.profile_tab, guide)).into()
+    }
+
+    /// The profile's tabs (Buttons, Sticks & triggers, Combos, Gyro, Guide) as one segmented
+    /// control, with a ⚠ on a tab that has a problem.
+    fn profile_segments<'a>(&self, p: &Profile, names: &Names) -> Element<'a, Message> {
+        let family = self.glyph_family();
+        let sub_tab = |t: ProfileTab| {
+            let label = if section_has_problem(p, t, names) { format!("{t}  ⚠") } else { t.to_string() };
+            button(row![t.glyph(family), text(label).size(14)].spacing(6).align_y(Alignment::Center))
+                .style(style::segment(self.profile_tab == t))
+                .padding([5, 14])
+                .on_press(Message::SelectProfileTab(t))
+        };
+        let mut segments = row![].spacing(2);
+        for t in ProfileTab::ALL {
+            segments = segments.push(sub_tab(t));
+        }
+        container(segments).padding(3).style(style::segments).into()
     }
 
     /// The live controller drawing, labeled with `labels_from`'s mappings.
@@ -1367,7 +1376,7 @@ mod tests {
         assert!(!app.finding, "one press ends find mode");
         assert_eq!((app.game_tab, app.profile_tab, app.found), (GameTab::Profiles, ProfileTab::Buttons, Some(Button::West)));
         let names = Names::default();
-        let ui = Ui { names: &names, expanded: &app.expanded, found: app.found, analog_triggers: true, any_gyro: false, any_paddles: false, live_sticks: None, family: PadFamily::default(), in_use: PadFamily::default(), swap: Swap::Off, layer: None };
+        let ui = Ui { names: &names, expanded: &app.expanded, found: app.found, analog_triggers: true, any_gyro: false, any_paddles: false, live_sticks: None, stick_probe: 1.0, family: PadFamily::default(), in_use: PadFamily::default(), swap: Swap::Off, layer: None };
         assert!(ui.is_open(Target::Button(Button::West)));
         // Presses while not finding don't move the editor.
         let _ = app.update(Message::LiveInput(Some(snapshot(&[Button::West, Button::North], (0.0, 0.0)))));

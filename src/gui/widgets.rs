@@ -377,7 +377,12 @@ pub(super) fn style_accent() -> Color {
 }
 
 pub(super) fn labeled<'a>(label: impl text::IntoFragment<'a>, editor: Element<'a, Message>) -> Element<'a, Message> {
-    row![text(label).width(LABEL_WIDTH), editor]
+    labeled_in(LABEL_WIDTH, label, editor)
+}
+
+/// A labeled row whose label column is `width` wide, for rows in a narrower column than the rest.
+pub(super) fn labeled_in<'a>(width: f32, label: impl text::IntoFragment<'a>, editor: Element<'a, Message>) -> Element<'a, Message> {
+    row![text(label).width(width), editor]
         .spacing(10)
         .align_y(Alignment::Center)
         .into()
@@ -405,13 +410,21 @@ pub(super) fn value_slider<'a>(
     unit: &'a str,
     on_change: impl Fn(f32) -> Message + 'a,
 ) -> Element<'a, Message> {
-    labeled(
-        label,
-        row![slider(range, value, on_change).step(step).width(300), text(slider_value(value, step, unit)).size(13)]
-            .spacing(10)
-            .align_y(Alignment::Center)
-            .into(),
-    )
+    labeled(label, slider_editor(range, value, step, unit, on_change))
+}
+
+/// A slider with its value and unit: the editor part of a `value_slider` row.
+pub(super) fn slider_editor<'a>(
+    range: std::ops::RangeInclusive<f32>,
+    value: f32,
+    step: f32,
+    unit: &'a str,
+    on_change: impl Fn(f32) -> Message + 'a,
+) -> Element<'a, Message> {
+    row![slider(range, value, on_change).step(step).width(300), text(slider_value(value, step, unit)).size(13)]
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .into()
 }
 
 #[cfg(test)]
