@@ -132,6 +132,10 @@ noise_threshold = 1.0
 "button:Select" = { text = "Jump to last alert" }
 "button:Start" = { text = "Game menu" }
 "gesture:button:Select:long_press" = { text = "Menus layer on / off" }
+[[profiles.guide.custom]]
+inputs = ["button:LeftBumper", "button:RightBumper"]
+text = "Assign group instead"
+
 
 
 
@@ -254,6 +258,10 @@ sensitivity = 20.0
 "button:Select" = { text = "Jump to last alert" }
 "button:Start" = { text = "Game menu" }
 "gesture:button:Select:long_press" = { text = "Menus layer on / off" }
+[[profiles.guide.custom]]
+inputs = ["button:LeftBumper", "button:RightBumper"]
+text = "Assign group instead"
+
 
 
 

@@ -14,6 +14,7 @@ Stage 3 is implemented:
 - The Guide button's own mapping is ignored by the engine. Templates no longer add a Guide double-tap gesture, and the Buttons tab has no Guide row.
 - The manual page and README describe the new behaviour.
 - Packs no longer have Controls info overlays. Each pack's controls text moved into its profiles' Mapping guide (text edits, gesture texts and the Lean merge). The older sections below that mention the Controls overlay are history.
+- The Mapping guide also takes rows the author writes (`GuideSettings::custom`, `RowKey::Custom`). They're for what a profile's mappings don't show, such as a layer's chord. StarCraft's "LB + RB: Assign group" is one.
 - The Mapping guide draws each input with its controller glyph (the overlay's glyphs, via `pieces::row_glyphs`), and its share and choice menus use the same labels as text.
 - Not verified on a real controller, or visually in the overlay window. The Steam overlay sends press and release in one batch; check that Steam reacts to it.
 
