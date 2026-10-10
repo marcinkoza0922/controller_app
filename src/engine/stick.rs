@@ -5,9 +5,26 @@ use super::*;
 use crate::config::{MouseResponse, StickConfig};
 
 /// Deflection above which a mouse stick counts as fully pushed, for the outer boost and acceleration.
-const OUTER_EDGE: f32 = 0.9;
+pub(crate) const OUTER_EDGE: f32 = 0.9;
 /// A smoothed stick this close to rest snaps to it.
 const SMOOTH_REST: f32 = 0.002;
+
+/// How far into the outer edge a push of `mag` is: 0 below `OUTER_EDGE`, 1 at full push.
+fn edge_share(mag: f32) -> f32 {
+    ((mag - OUTER_EDGE) / (1.0 - OUTER_EDGE)).clamp(0.0, 1.0)
+}
+
+/// The speed multiplier from the outer boost at deflection `mag`.
+fn outer_gain(mag: f32, outer_boost: f32) -> f32 {
+    1.0 + outer_boost * edge_share(mag)
+}
+
+/// A mouse stick's speed as a share of its full speed at deflection `mag` (0..1, after the
+/// deadzone), before acceleration: the power curve and the outer boost. The settings page draws
+/// its response graphs from this too.
+pub(crate) fn steady_speed(mag: f32, curve: f32, outer_boost: f32) -> f32 {
+    mag.powf(curve.max(0.1)) * outer_gain(mag, outer_boost)
+}
 
 impl Engine {
     pub(super) fn stick_pos(&self, s: Stick, deadzone: f32) -> (f32, f32) {
@@ -112,10 +129,9 @@ impl Engine {
         next
     }
 
-    /// Speed multiplier from acceleration and the outer boost at deflection `mag`; advances the
-    /// stick's time at full deflection.
-    fn response_gain(&mut self, s: Stick, mag: f32, r: &MouseResponse, dt: f32) -> f32 {
-        let edge = ((mag - OUTER_EDGE) / (1.0 - OUTER_EDGE)).clamp(0.0, 1.0);
+    /// Speed multiplier from acceleration at deflection `mag`; advances the stick's time at full
+    /// deflection.
+    fn accel_gain(&mut self, s: Stick, mag: f32, r: &MouseResponse, dt: f32) -> f32 {
         if mag < OUTER_EDGE {
             self.stick_ramp.remove(&s);
         } else if r.accel > 0.0 {
@@ -125,7 +141,7 @@ impl Engine {
             Some(held) => (held * 1000.0 / r.accel_ramp_ms.max(1) as f32).min(1.0),
             None => 0.0,
         };
-        (1.0 + r.outer_boost * edge) * (1.0 + r.accel * ramp)
+        1.0 + r.accel * ramp
     }
 
     /// Advances the sticks' continuous outputs (mouse motion, scrolling) by `dt` seconds.
@@ -149,7 +165,7 @@ impl Engine {
                 self.stick_ramp.remove(&s);
                 continue;
             }
-            let gain = mag.powf(cfg.curve.max(0.1)) / mag * self.response_gain(s, mag, &response, dt);
+            let gain = steady_speed(mag, cfg.curve, response.outer_boost) / mag * self.accel_gain(s, mag, &response, dt);
             let (x, y) = (x * gain, y * gain);
             match cfg.action {
                 StickAction::Mouse { speed, invert_y, .. } => {

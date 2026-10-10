@@ -154,6 +154,19 @@ flick not yet sent.
 - The stick kind picker in `src/gui/profile.rs` gains **Ring** and **Flick stick**.
 - **Mouse** keeps its speed and curve controls. A new "Response" section holds the acceleration
   slider, with ramp time and boost under **Advanced**, plus vertical scale and smoothing.
+- Under the Deadzone slider, on every stick that isn't disabled (`src/gui/deadzone_graph.rs`): the
+  stick's travel with the dead middle shaded, and the response along one push, flat up to the
+  deadzone. With a controller connected, a hollow dot is the raw stick and a filled one where the
+  deadzone puts it.
+- Under the curve control, two pictures of the response (`src/gui/response_graph.rs`, drawn as
+  SVG like the ring preview): the pointer's speed against how far the stick is pushed, with a
+  dotted linear reference and the accelerated part past the outer edge, and the pointer's speed
+  in every direction as an ellipse (wide as the speed, tall as that times vertical scale). The
+  live stick's speed is a dot on the ellipse when a controller is connected. Hovering the curve
+  sets the push both show (`App::stick_probe`, reset on leaving it). The graphs read the same
+  `steady_speed` the engine uses, so they can't drift from the output.
+- The **Advanced** folds open with the shared `disclosure` control, in the stick's label column. The
+  rows they hold sit in an inset box under it, with their editors in the same column as the rest.
 - **Ring** ("Button ring" in the picker): a sector count picker, the first sector's angle, the
   inner radius and hysteresis, and one action editor per sector, labeled with its direction.
   A radial preview above them draws the sectors and inner radius and highlights the sector the
