@@ -198,6 +198,13 @@ scripts/kernel-test-docker.sh gui_            # U-0, the settings window under X
 scripts/kernel-test-docker.sh socket_fallback # I-9
 ```
 
+Performance (not a pass/fail check). `scripts/profile.sh` runs `tests/profile` in a release build and writes one JSON file per measurement to `target/profile/`: press-to-output latency for the daemon's virtual pad, idle and under a 1 kHz stick flood; daemon CPU and memory, idle and under flood; daemon start-up, cold (no config, binary evicted from the page cache) and warm; and settings-window start-up with the daemon running. The latency figure excludes USB polling and the controller's own scan, since the test uses a uhid pad. When the run ends, `scripts/plot_profile.py` draws the charts (`target/profile/charts/*.png`) and `target/profile/report.html`, which pairs each chart with its numbers.
+
+```sh
+scripts/profile.sh                        # everything
+scripts/profile.sh profile_input_latency  # one measurement
+```
+
 Desktop sessions (need test VMs, see below; not run in CI). Rerun them when the daemon's
 interaction with the system changes (focus tracking, input, the GNOME extension), and when a
 desktop, the kernel or the input stack gets a new release:
