@@ -35,6 +35,16 @@ pub enum Outcome {
     Save,
     /// Put the config back as it was when the menu opened, then close.
     Discard(Box<Config>),
+    /// Back to the Guide overlay, which the menu was opened from.
+    ReturnToGuide,
+}
+
+/// The page a menu opens on. The Guide overlay opens Quick Settings or Edit Controls directly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Page {
+    Main,
+    Quick,
+    EditControls,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,6 +88,8 @@ pub struct SystemMenu {
     /// Stick pushes already counted, so holding a stick moves one step, not a run of them.
     latch_x: bool,
     latch_y: bool,
+    /// Opened from the Guide overlay: leaving the page goes back to it.
+    from_guide: bool,
     /// The config as it was when the menu opened: what Discard goes back to, and what counts as
     /// unsaved.
     saved: Box<Config>,
@@ -91,7 +103,19 @@ impl SystemMenu {
 
     /// A menu over a config that is currently saved as `saved`.
     pub fn new(saved: &Config) -> Self {
-        SystemMenu { screen: Screen::Main, cursor: 0, latch_x: false, latch_y: false, saved: Box::new(saved.clone()) }
+        SystemMenu { screen: Screen::Main, cursor: 0, latch_x: false, latch_y: false, from_guide: false, saved: Box::new(saved.clone()) }
+    }
+
+    /// This menu, opened on `page`. Edit Controls still needs the daemon's checks (see
+    /// [`Outcome::EditControls`]).
+    pub fn on_page(mut self, page: Page) -> Self {
+        self.from_guide = page != Page::Main;
+        self.screen = match page {
+            Page::Main => Screen::Main,
+            Page::Quick => Screen::Quick,
+            Page::EditControls => Screen::Editor(LayoutEditor::new()),
+        };
+        self
     }
 
     /// Handles one controller event. `None` when nothing needs the daemon.
@@ -149,14 +173,19 @@ impl SystemMenu {
                     Some(Outcome::EditControls)
                 }
             },
-            Step::Back if *self.saved == *config => Some(Outcome::Close),
-            Step::Back => {
-                self.screen = Screen::Confirm;
-                self.cursor = 0;
-                None
-            }
+            Step::Back => self.leave(config),
             Step::Left | Step::Right => None,
         }
+    }
+
+    /// Leaves the menu's top page: back to the Guide overlay, or closes. Unsaved changes ask first.
+    fn leave(&mut self, config: &Config) -> Option<Outcome> {
+        if *self.saved == *config {
+            return Some(if self.from_guide { Outcome::ReturnToGuide } else { Outcome::Close });
+        }
+        self.screen = Screen::Confirm;
+        self.cursor = 0;
+        None
     }
 
     fn confirm_step(&mut self, step: Step) -> Option<Outcome> {
@@ -194,6 +223,7 @@ impl SystemMenu {
                 self.cursor = wrap(self.cursor, step, rows.len());
                 None
             }
+            Step::Back if self.from_guide => self.leave(config),
             Step::Back => {
                 self.screen = Screen::Main;
                 self.cursor = 0;
@@ -218,6 +248,9 @@ impl SystemMenu {
             Step::Pick => return (editor.choose(config) == EditStep::Changed).then_some(Outcome::Changed),
             Step::Back => {
                 if editor.back() == EditStep::Leave {
+                    if self.from_guide {
+                        return self.leave(config);
+                    }
                     self.screen = Screen::Main;
                     self.cursor = 1;
                 }
@@ -484,6 +517,23 @@ mod tests {
         // Guide let go before Start goes down is not a chord.
         assert!(!chord(&none, &[press(Button::Guide), InputEvent::Button(Button::Guide, false), press(Button::Start)]));
         assert!(!chord(&HashSet::from([Button::Guide]), &[press(Button::South)]));
+    }
+
+    #[test]
+    fn the_guide_rows_open_their_page_directly() {
+        let config = mouse_config();
+        assert_eq!(SystemMenu::new(&config).on_page(Page::Quick).screen, Screen::Quick);
+        assert!(matches!(SystemMenu::new(&config).on_page(Page::EditControls).screen, Screen::Editor(_)));
+        assert_eq!(SystemMenu::new(&config).on_page(Page::Main).screen, Screen::Main);
+    }
+
+    #[test]
+    fn b_on_a_page_opened_from_the_guide_goes_back_to_the_guide() {
+        let mut config = mouse_config();
+        let mut quick = SystemMenu::new(&config).on_page(Page::Quick);
+        assert_eq!(quick.handle(press(Button::East), &mut config), Some(Outcome::ReturnToGuide));
+        let mut editor = SystemMenu::new(&config).on_page(Page::EditControls);
+        assert_eq!(editor.handle(press(Button::East), &mut config), Some(Outcome::ReturnToGuide));
     }
 
     #[test]

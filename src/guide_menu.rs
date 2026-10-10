@@ -1,5 +1,5 @@
-//! The Guide overlay's centre menu: Quick Settings, the keyboard and numpad, mouse mode, media
-//! controls, the next profile and, while Steam runs, the Steam overlay. The daemon keeps the
+//! The Guide overlay's centre menu: Quick Settings, Edit Controls, the keyboard and numpad, mouse
+//! mode, media controls, the next profile and, while Steam runs, the Steam overlay. The daemon keeps the
 //! cursor and runs the chosen item; the engine delivers the presses.
 
 use crate::{
@@ -11,6 +11,8 @@ use crate::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Item {
     QuickSettings,
+    /// Opens the Edit Controls editor directly, not through Quick Settings.
+    EditControls,
     Keyboard,
     Numpad,
     MouseMode,
@@ -24,6 +26,7 @@ pub enum Item {
 pub fn items(steam: bool) -> Vec<Item> {
     let mut items = vec![
         Item::QuickSettings,
+        Item::EditControls,
         Item::Keyboard,
         Item::Numpad,
         Item::MouseMode,
@@ -39,6 +42,7 @@ pub fn items(steam: bool) -> Vec<Item> {
 fn label(item: Item, profile: &str) -> String {
     match item {
         Item::QuickSettings => "Quick Settings".into(),
+        Item::EditControls => "Edit Controls".into(),
         Item::Keyboard => "On-screen keyboard".into(),
         Item::Numpad => "On-screen numpad".into(),
         Item::MouseMode => "Mouse mode".into(),
@@ -90,6 +94,11 @@ mod tests {
     fn the_steam_overlay_is_listed_only_while_steam_runs() {
         assert!(!items(false).contains(&Item::Steam));
         assert_eq!(items(true).last(), Some(&Item::Steam));
+    }
+
+    #[test]
+    fn quick_settings_leads_the_menu_and_edit_controls_follows_it() {
+        assert_eq!(&items(false)[..2], &[Item::QuickSettings, Item::EditControls]);
     }
 
     #[test]
