@@ -12,9 +12,10 @@ Tick an item when it's done and merged.
 - [x] 1. Rows overflow their cards on the Sticks tab, Macros and Menus. Wide action editors ran
   off the card edge into a sideways scrollbar, and the right-hand controls were cut off. Editors
   now wrap onto a second line instead.
-- [ ] 2. The Mapping guide's columns don't line up. The D-pad row's text field is wider than the
+- [x] 2. The Mapping guide's columns don't line up. The D-pad row's text field is wider than the
   others, the "Lean" row has an "Add an input" list and a blue "Split" button, and the hold and
-  ×2 rows have no "Share with" column.
+  ×2 rows have no "Share with" column. The Show and controls columns now have fixed widths on
+  every row, and Split and Remove are grey buttons of one size.
 - [ ] 3. The "daemon not running" note on the Overview prints the backticks around
   `systemctl --user start padwight` and `padwight daemon` (`src/gui.rs`).
 - [ ] 4. The Guide tab shows the raw token `{keyboard:apostrophe}` as the label for "X hold".

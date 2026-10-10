@@ -4,10 +4,10 @@
 
 use iced::{
     Alignment, Length,
-    widget::{button, checkbox, container, row, text, text_editor},
+    widget::{button, checkbox, container, row, space, text, text_editor},
 };
 
-use super::{App, Message, pieces::{self, Swap}, widgets::{dropdown, field, section}};
+use super::{App, Message, style, pieces::{self, Swap}, widgets::{dropdown, field, section}};
 use crate::config::{Button, GuideInput, Profile, RowId, RowKey, Stick, Trigger, default_text, editable_rows};
 use crate::info::PadFamily;
 
@@ -159,6 +159,12 @@ pub(super) fn sections<'a>(p: &'a Profile, guide: GuideView<'a>, in_layer: bool)
     ]
 }
 
+/// Widths of the columns after a row's text, the same on every row so the columns line up.
+const SHOW_WIDTH: f32 = 70.0;
+const CONTROLS_WIDTH: f32 = 280.0;
+/// Width of the Split and Remove buttons, so dropdowns beside them line up too.
+const SMALL_WIDTH: f32 = 70.0;
+
 /// One row of the list: its glyphs, its text, and its controls.
 fn mapping_row<'a>(r: &crate::config::EditableRow, others: &[Choice], guide: GuideView<'_>) -> iced::Element<'a, Message> {
     let glyphs = pieces::row_glyphs(&r.inputs, r.shape, guide.family, guide.swap);
@@ -171,7 +177,7 @@ fn mapping_row<'a>(r: &crate::config::EditableRow, others: &[Choice], guide: Gui
     .width(Length::Fill);
     // Custom rows aren't hidden: they're removed instead.
     let shown: iced::Element<'a, Message> = match r.key {
-        RowKey::Custom(_) => text("").into(),
+        RowKey::Custom(_) => space().into(),
         _ => checkbox(!r.hidden)
             .label("Show")
             .on_toggle({
@@ -180,29 +186,35 @@ fn mapping_row<'a>(r: &crate::config::EditableRow, others: &[Choice], guide: Gui
             })
             .into(),
     };
-    let share = |placeholder: &'static str, key: RowKey| {
+    let share = |placeholder: &'static str, key: RowKey| -> iced::Element<'a, Message> {
+        if others.is_empty() {
+            return space().width(Length::Fill).into();
+        }
         dropdown(others.to_vec(), None::<Choice>, move |c: Choice| Message::Guide(GuideMsg::Share(key.clone(), c.0)))
             .placeholder(placeholder)
+            .width(Length::Fill)
+            .into()
     };
+    let small = |label: &'static str, msg: GuideMsg| {
+        button(text(label).size(13).width(Length::Fill).align_x(Alignment::Center))
+            .style(style::secondary)
+            .width(Length::Fixed(SMALL_WIDTH))
+            .on_press(Message::Guide(msg))
+    };
+    // Every row keeps the same columns, so the text fields line up whatever controls a row has.
     let controls: iced::Element<'a, Message> = match r.key.clone() {
-        RowKey::Merged(i) => {
-            let split = button(text("Split").size(13)).on_press(Message::Guide(GuideMsg::Split(i)));
-            if others.is_empty() {
-                split.into()
-            } else {
-                row![share("Add an input", key.clone()), split].spacing(8).into()
-            }
-        }
-        RowKey::Custom(i) => {
-            let remove = button(text("Remove").size(13)).on_press(Message::Guide(GuideMsg::RemoveCustom(i)));
-            if others.is_empty() {
-                remove.into()
-            } else {
-                row![share("Add an input", key.clone()), remove].spacing(8).into()
-            }
-        }
-        RowKey::Row(RowId::Input(_)) if !others.is_empty() => share("Share with", key.clone()).into(),
-        RowKey::Row(_) => text("").into(),
+        RowKey::Merged(i) => row![share("Add an input", key.clone()), small("Split", GuideMsg::Split(i))].spacing(8).align_y(Alignment::Center).into(),
+        RowKey::Custom(i) => row![share("Add an input", key.clone()), small("Remove", GuideMsg::RemoveCustom(i))].spacing(8).align_y(Alignment::Center).into(),
+        RowKey::Row(RowId::Input(_)) => share("Share with", key.clone()),
+        RowKey::Row(_) => space().into(),
     };
-    row![container(glyphs).width(Length::Fixed(140.0)), edit, shown, controls].spacing(10).align_y(Alignment::Center).into()
+    row![
+        container(glyphs).width(Length::Fixed(140.0)),
+        edit,
+        container(shown).width(Length::Fixed(SHOW_WIDTH)),
+        container(controls).width(Length::Fixed(CONTROLS_WIDTH)),
+    ]
+    .spacing(10)
+    .align_y(Alignment::Center)
+    .into()
 }
