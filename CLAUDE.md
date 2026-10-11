@@ -18,3 +18,4 @@ A hook runs `cargo check` after each edit to a `.rs` file and reports only failu
   `#[expect(..., reason = "...")]` only where the lint is wrong for that code.
   Functions marked "predates the size lints" are a baseline: shrink them when you touch them.
 - Don't open `Cargo.lock` or anything under `target/`.
+- Never send screenshots to /tmp; they should always go into an untracked directory in the repository directory

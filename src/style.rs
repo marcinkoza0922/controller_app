@@ -99,9 +99,17 @@ pub fn segment(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Sty
         } else {
             None
         };
+        // The accent itself is too dark on the dark chip, so dark mode lifts it most of the way to white.
+        let accent = p.primary.base.color;
+        let selected_text = if p.is_dark {
+            let lift = |c: f32| c + (1.0 - c) * 0.65;
+            Color { r: lift(accent.r), g: lift(accent.g), b: lift(accent.b), ..accent }
+        } else {
+            accent
+        };
         button::Style {
             background,
-            text_color: if selected { p.primary.base.color } else { p.background.weak.text },
+            text_color: if selected { selected_text } else { p.background.weak.text },
             border: Border {
                 width: if selected { 1.0 } else { 0.0 },
                 radius: 6.0.into(),
