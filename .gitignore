@@ -30,3 +30,6 @@ rustc-ice-*.txt
 
 # Reference images for drawing the controller pictures
 /references/
+
+# Screenshots taken while checking the GUI
+/screenshots/
