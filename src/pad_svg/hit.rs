@@ -1,7 +1,7 @@
 //! Which part of the drawing a point falls on, for the debug window's clickable controller.
 
 use super::{
-    BUMPER_HEIGHT, TRIGGER_HEIGHT, face_positions,
+    BUMPER_HEIGHT, TRIGGER_HEIGHT, TRIGGER_REACH, face_positions,
     layout::{DpadKind, Dot, Layout},
 };
 use crate::{
@@ -94,7 +94,7 @@ fn shoulder(l: &Layout, x: f32, y: f32) -> Option<Part> {
     let (trigger_top, bumper_top) = (l.trigger_top(), l.bumper_top());
     let sides = [(l.shoulders.0, Trigger::Left, Button::LeftBumper), (l.shoulders.1, Trigger::Right, Button::RightBumper)];
     sides.into_iter().find_map(|(cx, trigger, bumper)| {
-        if (cx - w / 4.0..=cx + w / 4.0).contains(&x) && (trigger_top..=trigger_top + TRIGGER_HEIGHT).contains(&y) {
+        if (cx - w * TRIGGER_REACH..=cx + w * TRIGGER_REACH).contains(&x) && (trigger_top..=trigger_top + TRIGGER_HEIGHT).contains(&y) {
             return Some(Part::Trigger(trigger, trigger_value_at(trigger_top, y)));
         }
         let on_bumper = (cx - w / 2.0..=cx + w / 2.0).contains(&x) && (bumper_top..=bumper_top + BUMPER_HEIGHT).contains(&y);
@@ -114,7 +114,7 @@ fn dpad_at(l: &Layout, x: f32, y: f32) -> Option<Part> {
         (false, _, false) => Button::DpadDown,
     };
     match l.dpad_kind {
-        DpadKind::Cross if dx.abs() <= reach && dy.abs() <= reach => Some(Part::Button(direction(dx, dy))),
+        DpadKind::Cross | DpadKind::Arrows if dx.abs() <= reach && dy.abs() <= reach => Some(Part::Button(direction(dx, dy))),
         DpadKind::Disc if dx.hypot(dy) <= reach => Some(Part::Button(direction(dx, dy))),
         DpadKind::Buttons => [Button::DpadUp, Button::DpadDown, Button::DpadLeft, Button::DpadRight]
             .into_iter()

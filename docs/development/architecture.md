@@ -151,7 +151,7 @@ Quick test loop: `padwight debug --headless &`, then `padwight debug --wait 3000
 | `gui/checks.rs` | What "Save & apply" checks before writing: names, references, and rules. |
 | `gui/widgets.rs`, `gui/tracking.rs`, `gui/overlays.rs`, `gui/ring_preview.rs`, `gui/logs.rs` | Shared widgets and smaller tabs. |
 | `gui/tab_icons.rs` | The glyph before each editor tab; Profiles and Buttons take the controller in use's family colors. |
-| `pad_svg.rs`, `pad_svg/layout.rs`, `pad_svg/labels.rs` | The live controller picture. `layout.rs` places each model's outline, sticks, D-pad, buttons and marks (traced from pictures of the real pads); `labels.rs` places the mapping labels and their leader lines. |
+| `pad_svg.rs`, `pad_svg/layout.rs`, `pad_svg/models.rs`, `pad_svg/parts.rs`, `pad_svg/labels.rs` | The live controller picture. `models.rs` holds each model's outline (mirrored, so both halves match), its shell color, and where its sticks, D-pad, buttons and marks sit, traced from the pictures in `references/controller images`; `layout.rs` defines what a model can have; `parts.rs` draws the shell, shoulders, sticks, D-pad and buttons; `labels.rs` places the mapping labels and their leader lines. |
 
 ## Configuration and state
 
